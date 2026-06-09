@@ -26,6 +26,12 @@ Manual curation pass (what `scar harvest` ranking would need to automate). Top c
 - H6 (comment archaeology) returned zero — pattern/filter bug or genuinely comment-poor YAML repo; needs fixing before the heuristic can be judged.
 - Curated yield: **~12 real candidates / 91 raw ≈ 13% precision raw, but ~100% of the 12 look genuinely scar-worthy.** The harvest thesis holds only WITH a ranking/curation layer — raw output would fail the noise test on day one. This matches SPEC.md §6's "precision over recall" warning and makes the ranking layer a v0 requirement, not a nice-to-have.
 
-## Gate 0.1 verdict: pending repo-owner judgment
+## Gate 0.1 verdict: ✅ PASSED (2026-06-09)
 
 Pass condition: ≥1 "damn, I'd forgotten that" from someone who knows the repo.
+
+Repo owner's judgment: **"I honestly forgot about this issue: LiteLLM must not schedule on bifrost — spread across ragnarok hosts only. All look correct at quick glance."**
+
+- ≥1 forgotten-knowledge hit: ✓ (candidate #1 — and the owner had the litellm config open in their editor at the time, i.e., the scar would have been *live-relevant* that very session)
+- No false positives identified in the curated 12 (quick-glance review): ✓
+- Caveat carried forward: pass applies to the CURATED list. Raw output (13% precision) would have failed. Ranking/curation layer is confirmed as a v0 requirement.

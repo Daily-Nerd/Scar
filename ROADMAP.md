@@ -6,7 +6,7 @@ Restructured after the adversarial review (see [STRESS-TEST.md](STRESS-TEST.md))
 
 | # | Experiment | Gate (pass/kill) | Cost |
 |---|-----------|------------------|------|
-| 0.1 | Prototype `scar harvest` (reverts, add-then-remove deps, reopened issues, comment archaeology); run on 5 real aging repos | ≥1 "I'd forgotten that" reaction per repo from someone who knows it; harvest precision subjectively >50% | 1 week |
+| 0.1 | Prototype `scar harvest` (reverts, add-then-remove deps, reopened issues, comment archaeology); run on 5 real aging repos | ≥1 "I'd forgotten that" reaction per repo from someone who knows it; harvest precision subjectively >50% | ✅ **PASSED 2026-06-09** on homelab-apps — owner forgot the litellm/bifrost placement deadend; 12/12 curated candidates correct. Raw precision 13% → ranking layer is a v0 requirement ([results](experiments/harvest/CURATED.md)). 4 more repos pending for full gate. |
 | 0.2 | Prototype anchors (tree-sitter symbols + content fingerprints); replay real historical refactor commits against them | ≥80% anchor survival across rename + file-split refactors | 1 week |
 | 0.3 | **Fence honor test**: hand-write fences on a real repo, wire a PreToolUse hook, A/B agent sessions hook-on vs hook-off on tasks that tempt fence-bulldozing | Hook measurably reduces fence violations without degrading task completion | ✅ **PASSED 2026-06-09** — 6/6 control violations vs 0/6 treatment ([results](experiments/fence-honor/RESULTS.md)) |
 | 0.4 | Auto-authorship trial: 2 weeks of normal agent-assisted work with the stop-hook drafting `deadend` candidates | ≥5 human-kept scars; false-positive rate <15% (skeptic's bar, adopted) | 2 weeks, overlaps |
