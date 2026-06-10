@@ -1,14 +1,15 @@
 ---
+id: 2
 type: deadend
 title: Agent-direct global hook installation — blocked by permission classifier
 severity: medium
 confidence: 0.8
 created: 2026-06-09
-authors: ["claude-code"]
+authors: ["claude-code", kibukx]
 anchors:
   - path: hook/
   - pattern: "settings\\.json.{0,80}hooks|hooks.{0,80}settings\\.json"
-status: candidate
+status: active
 ---
 
 Tried twice this session to install SCAR hooks into ~/.claude/settings.json
