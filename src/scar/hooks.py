@@ -38,6 +38,12 @@ def _state_dir() -> Path:
 
 
 def _read_payload() -> dict:
+    if sys.stdin.isatty():
+        # interactive invocation: never hang waiting for a payload that
+        # only a hook harness would pipe in (found live within the hour)
+        print("scar hook expects a hook payload on stdin (it is run by the "
+              "agent harness, not by hand). Try: echo '{}' | scar hook <kind>")
+        return {}
     try:
         return json.load(sys.stdin)
     except (json.JSONDecodeError, OSError, ValueError):

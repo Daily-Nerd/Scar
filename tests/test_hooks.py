@@ -83,6 +83,18 @@ def test_precheck_never_crashes_on_garbage_stdin(repo, monkeypatch, capsys):
     assert out_json(capsys) is None
 
 
+def test_hook_on_interactive_tty_explains_instead_of_hanging(repo, monkeypatch, capsys):
+    """Found live: `scar hook precheck` in a terminal blocks forever waiting
+    for stdin. A tty invocation must print a hint and exit immediately."""
+    class FakeTty(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr("sys.stdin", FakeTty())
+    assert main(["hook", "precheck"]) == 0
+    out = capsys.readouterr().out
+    assert "stdin" in out and "hookSpecificOutput" not in out
+
+
 # --- session-notice (SessionStart) ---
 
 def test_session_notice_announces_convention_with_counts(repo, monkeypatch, capsys):
