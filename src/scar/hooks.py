@@ -37,13 +37,15 @@ def _state_dir() -> Path:
                                str(Path.home() / ".claude" / "scar-state")))
 
 
-def _read_payload() -> dict:
+def _read_payload() -> dict | None:
+    """Hook payload from stdin; None means 'tty — hint printed, do nothing'."""
     if sys.stdin.isatty():
         # interactive invocation: never hang waiting for a payload that
-        # only a hook harness would pipe in (found live within the hour)
+        # only a hook harness would pipe in, and never mix the human hint
+        # with machine JSON (both found live)
         print("scar hook expects a hook payload on stdin (it is run by the "
               "agent harness, not by hand). Try: echo '{}' | scar hook <kind>")
-        return {}
+        return None
     try:
         return json.load(sys.stdin)
     except (json.JSONDecodeError, OSError, ValueError):
@@ -57,6 +59,8 @@ def _emit(event: str, context: str) -> None:
 
 def precheck() -> int:
     payload = _read_payload()
+    if payload is None:
+        return 0
     tool_input = payload.get("tool_input", {})
     target = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not target:
@@ -88,6 +92,8 @@ def precheck() -> int:
 
 def session_notice() -> int:
     payload = _read_payload()
+    if payload is None:
+        return 0
     cwd = Path(payload.get("cwd") or os.getcwd())
     store = ScarStore.discover(cwd)
     if store is None:
@@ -152,7 +158,7 @@ def _analyze_transcript(path: str) -> dict | None:
 
 def stop_drafter() -> int:
     payload = _read_payload()
-    if payload.get("stop_hook_active"):
+    if payload is None or payload.get("stop_hook_active"):
         return 0
     session = payload.get("session_id", "unknown")
     state = _state_dir()

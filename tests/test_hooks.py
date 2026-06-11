@@ -95,6 +95,18 @@ def test_hook_on_interactive_tty_explains_instead_of_hanging(repo, monkeypatch, 
     assert "stdin" in out and "hookSpecificOutput" not in out
 
 
+def test_session_notice_on_tty_hints_and_emits_nothing(repo, monkeypatch, capsys):
+    """Found live: session-notice printed the hint THEN emitted JSON anyway
+    via the cwd fallback. Tty means hint + stop — never mixed output."""
+    class FakeTty(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr("sys.stdin", FakeTty())
+    assert main(["hook", "session-notice"]) == 0
+    out = capsys.readouterr().out
+    assert "stdin" in out and "hookSpecificOutput" not in out
+
+
 # --- session-notice (SessionStart) ---
 
 def test_session_notice_announces_convention_with_counts(repo, monkeypatch, capsys):
