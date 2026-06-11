@@ -34,14 +34,18 @@ def find_scars_dir(start: Path):
     return None, None
 
 
+SKIP_NAMES = {"readme.md", "template.md"}
+
+
 def parse_scar(path: Path):
+    """Returns a scar dict, the string 'unparseable', or None (inactive/skip)."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
     m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
     if not m:
-        return None
+        return "unparseable"  # knowledge exists but can never fire — must be loud
     front, body = m.groups()
 
     def field(name, default=""):
@@ -108,18 +112,21 @@ def main():
         for k in ("content", "new_string", "new_source")
     )
 
-    hits = []
+    hits, broken = [], []
     for f in sorted(scars_dir.glob("*.md")):
-        if f.name.lower() == "readme.md":
+        if f.name.lower() in SKIP_NAMES or f.name.startswith("_"):
             continue
         scar = parse_scar(f)
+        if scar == "unparseable":
+            broken.append(f.name)
+            continue
         if not scar:
             continue
         m = match(scar, rel_path, new_content)
         if m > 0:
             rank = m * SEVERITY_WEIGHT.get(scar["severity"], 2) * scar["confidence"]
             hits.append((rank, scar))
-    if not hits:
+    if not hits and not broken:
         return
 
     hits.sort(key=lambda h: -h[0])
@@ -129,13 +136,22 @@ def main():
             f"[{s['type']} #{s['id']} | severity: {s['severity']} | "
             f"confidence: {s['confidence']}] {s['title']} ({s['file']})\n{s['body']}"
         )
-    context = (
-        "SCAR pre-edit check — this repository records negative knowledge "
-        f"anchored to code you are about to modify ({len(hits)} match(es), "
-        f"top {min(len(hits), MAX_SCARS)} shown). Honor these unless the user "
-        "explicitly overrides them; full records in .scars/.\n\n"
-        + "\n\n".join(blocks)
-    )
+    parts = []
+    if hits:
+        parts.append(
+            "SCAR pre-edit check — this repository records negative knowledge "
+            f"anchored to code you are about to modify ({len(hits)} match(es), "
+            f"top {min(len(hits), MAX_SCARS)} shown). Honor these unless the user "
+            "explicitly overrides them; full records in .scars/.\n\n"
+            + "\n\n".join(blocks)
+        )
+    if broken:
+        parts.append(
+            f"SCAR warning: {len(broken)} scar file(s) are unparseable and can "
+            f"NEVER fire: {', '.join(broken)}. Their knowledge is silently dead. "
+            f"Fix the YAML frontmatter (copy {scars_dir}/template.md) or tell the user."
+        )
+    context = "\n\n".join(parts)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

@@ -36,13 +36,16 @@ def main():
     if not scars_dir:
         return
 
-    active = 0
+    active, broken = 0, []
     for f in scars_dir.glob("*.md"):
-        if f.name.lower() == "readme.md":
+        if f.name.lower() in ("readme.md", "template.md") or f.name.startswith("_"):
             continue
         try:
             text = f.read_text(encoding="utf-8")
         except OSError:
+            continue
+        if not text.startswith("---\n"):
+            broken.append(f.name)
             continue
         m = re.search(r"^status:\s*(\S+)", text, re.MULTILINE)
         if not m or m.group(1) == "active":
@@ -53,14 +56,19 @@ def main():
     state = (f"{active} active scar(s)" if active
              else "0 scars yet — the convention is live, be the first to record one")
     pending = f", {candidates} candidate(s) pending review" if candidates else ""
+    warn = (f" WARNING: {len(broken)} unparseable scar file(s) that can never "
+            f"fire: {', '.join(broken)} — fix their frontmatter." if broken else "")
     context = (
         f"SCAR: this repository records negative knowledge in {scars_dir} "
-        f"({state}{pending}). Relevant scars are injected automatically before "
-        "you edit anchored code — honor them unless the user overrides. "
+        f"({state}{pending}).{warn} Relevant scars are injected automatically "
+        "before you edit anchored code — honor them unless the user overrides. "
         "Reciprocal duty: when you abandon an approach (deadend), keep "
         "intentional-looking weirdness (fence), or discover non-obvious "
-        "coupling (landmine), write a short candidate to "
-        f"{scars_dir}/candidates/ for human review. Format: {scars_dir}/README.md."
+        "coupling (landmine), record it. Contract: COPY "
+        f"{scars_dir}/template.md (YAML frontmatter is mandatory — scars "
+        "without it never fire), write to "
+        f"{scars_dir}/candidates/<slug>.md with status: candidate, and never "
+        "write directly into .scars/ — only a human reviewer promotes."
     )
     print(json.dumps({
         "hookSpecificOutput": {

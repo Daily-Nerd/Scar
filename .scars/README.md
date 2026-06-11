@@ -6,12 +6,19 @@ intentional (`fence`), and changes that break non-obvious things elsewhere
 (`landmine`).
 
 Before "cleaning up" anything these files anchor to — read the scar first.
-Every scar carries evidence (commit hashes in this repo's history). If a scar
-is stale, challenge it: update or archive it with a note, don't ignore it.
+Every scar carries evidence (commits, PRs, incidents). If a scar is stale,
+challenge it: update or archive it with a note, don't ignore it.
 
-Format: YAML frontmatter + Markdown body, one scar per file,
-`{seq}-{slug}.{type}.md`. Spec: github.com/<pending> (SCAR project, concept
-stage — this repo is the first production scar graph).
+## The contract (humans and agents)
 
-Provenance: harvested from 470 commits of git history on 2026-06-09
-(`scar harvest` prototype), curated, and confirmed by the repo owner.
+1. **New scars start as candidates.** Copy `template.md`, write to
+   `candidates/<slug>.md` with `status: candidate`. Never write directly
+   into `.scars/` — only a human reviewer promotes.
+2. **YAML frontmatter is mandatory.** A scar without it is unparseable and
+   will NEVER fire in any tool. The hooks warn loudly when they find one.
+3. **Promotion** = human review: move to `NNNN-<slug>.<type>.md` (next free
+   number), set `status: active`, add the reviewer to `authors`.
+4. **Evidence required.** A scar without a commit/PR/incident reference is
+   an opinion and can be challenged on sight.
+
+Format details: `template.md`. Project: SCAR (fabcap repo, concept stage).
