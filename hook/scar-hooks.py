@@ -15,6 +15,7 @@ Usage:
 """
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -41,7 +42,15 @@ HOOKS = [
 
 
 def find_scar() -> str | None:
-    return shutil.which("scar")
+    # scar 0003: never bind hooks to a venv shim — it dies with the venv.
+    # With $VIRTUAL_ENV active its bin/ shadows PATH, so search without it.
+    venv = os.environ.get("VIRTUAL_ENV")
+    if not venv:
+        return shutil.which("scar")
+    venv = Path(venv).resolve()
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not Path(d).resolve().is_relative_to(venv)]
+    return shutil.which("scar", path=os.pathsep.join(dirs))
 
 
 def load_settings():
@@ -84,6 +93,9 @@ def install(dry):
     scar_path = find_scar()
     if not scar_path:
         print("scar binary not found on PATH.")
+        if os.environ.get("VIRTUAL_ENV"):
+            print("Note: an active venv is ignored on purpose — hooks must "
+                  "bind to a stable install, not a venv shim (scar 0003).")
         print("Install it first:  cd <scar-repo> && uv tool install -e .")
         return 1
     settings = load_settings()
