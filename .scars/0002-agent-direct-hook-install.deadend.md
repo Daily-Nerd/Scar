@@ -9,6 +9,9 @@ authors: ["claude-code", kibukx]
 anchors:
   - path: hook/
   - pattern: "settings\\.json.{0,80}hooks|hooks.{0,80}settings\\.json"
+evidence:
+  - commit: faad8f6
+  - commit: bcd3864
 status: active
 ---
 
