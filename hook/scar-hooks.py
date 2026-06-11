@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """SCAR hook lifecycle manager: install, uninstall, status.
 
-Manages the three SCAR hooks in ~/.claude/ (Claude Code):
-  - scar-precheck.py        PreToolUse   inject scars before edits
-  - scar-session-notice.py  SessionStart announce convention + counts
-  - scar-stop-drafter.py    Stop         draft deadend candidates
+Registers the three SCAR hooks in ~/.claude/settings.json as `scar hook
+<kind>` commands (absolute path to the scar binary — hook environments do not
+guarantee PATH). Migrates installs from the legacy standalone-script era:
+their settings entries and ~/.claude/hooks/ copies are removed on install.
 
-Idempotent: install skips/updates existing entries; uninstall removes only
-SCAR-owned entries (matched by script filename in the command). settings.json
-is backed up before every mutation.
+Run BY THE USER, never by an agent (see scar 0002): consent is the execution.
 
 Usage:
   python3 scar-hooks.py install   [--dry-run]
@@ -17,61 +15,37 @@ Usage:
 """
 
 import json
+import re
 import shutil
 import sys
 import time
 from pathlib import Path
 
-SRC_DIR = Path(__file__).resolve().parent
 CLAUDE_DIR = Path.home() / ".claude"
 HOOKS_DIR = CLAUDE_DIR / "hooks"
 SETTINGS = CLAUDE_DIR / "settings.json"
 
+LEGACY_SCRIPTS = ("scar-precheck.py", "scar-session-notice.py", "scar-stop-drafter.py")
+OURS_RE = re.compile(r"(scar[^ ]*) hook (precheck|session-notice|stop-drafter)"
+                     r"|" + "|".join(re.escape(s) for s in LEGACY_SCRIPTS))
+
 HOOKS = [
-    {
-        "script": "scar-precheck.py",
-        "event": "PreToolUse",
-        "entry": {
-            "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-            "hooks": [{
-                "type": "command",
-                "command": "python3 ~/.claude/hooks/scar-precheck.py",
-                "timeout": 10,
-                "statusMessage": "Checking scars...",
-            }],
-        },
-    },
-    {
-        "script": "scar-session-notice.py",
-        "event": "SessionStart",
-        "entry": {
-            "hooks": [{
-                "type": "command",
-                "command": "python3 ~/.claude/hooks/scar-session-notice.py",
-                "timeout": 10,
-                "statusMessage": "Checking scar conventions...",
-            }],
-        },
-    },
-    {
-        "script": "scar-stop-drafter.py",
-        "event": "Stop",
-        "entry": {
-            "hooks": [{
-                "type": "command",
-                "command": "python3 ~/.claude/hooks/scar-stop-drafter.py",
-                "timeout": 15,
-                "statusMessage": "Checking for abandoned approaches...",
-            }],
-        },
-    },
+    {"kind": "precheck", "event": "PreToolUse",
+     "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+     "timeout": 10, "status": "Checking scars..."},
+    {"kind": "session-notice", "event": "SessionStart",
+     "matcher": None, "timeout": 10, "status": "Checking scar conventions..."},
+    {"kind": "stop-drafter", "event": "Stop",
+     "matcher": None, "timeout": 15, "status": "Checking for abandoned approaches..."},
 ]
 
 
+def find_scar() -> str | None:
+    return shutil.which("scar")
+
+
 def load_settings():
-    if not SETTINGS.exists():
-        return {}
-    return json.loads(SETTINGS.read_text(encoding="utf-8"))
+    return json.loads(SETTINGS.read_text(encoding="utf-8")) if SETTINGS.exists() else {}
 
 
 def save_settings(settings, dry):
@@ -83,35 +57,58 @@ def save_settings(settings, dry):
     print(f"  settings.json written (backup: {backup.name})")
 
 
-def is_ours(group, script):
-    return any(script in h.get("command", "")
+def is_ours(group) -> bool:
+    return any(OURS_RE.search(h.get("command", ""))
                for h in group.get("hooks", []) if isinstance(h, dict))
 
 
+def _entry(spec, scar_path):
+    hook = {"type": "command", "command": f"{scar_path} hook {spec['kind']}",
+            "timeout": spec["timeout"], "statusMessage": spec["status"]}
+    group = {"hooks": [hook]}
+    if spec["matcher"]:
+        group["matcher"] = spec["matcher"]
+    return group
+
+
+def _remove_legacy_scripts(dry):
+    for name in LEGACY_SCRIPTS:
+        f = HOOKS_DIR / name
+        if f.exists():
+            print(f"[migrate] remove legacy script {f}")
+            if not dry:
+                f.unlink()
+
+
 def install(dry):
+    scar_path = find_scar()
+    if not scar_path:
+        print("scar binary not found on PATH.")
+        print("Install it first:  cd <scar-repo> && uv tool install -e .")
+        return 1
     settings = load_settings()
     hooks_cfg = settings.setdefault("hooks", {})
     changed = False
-    HOOKS_DIR.mkdir(parents=True, exist_ok=True)
     for spec in HOOKS:
-        src, dst = SRC_DIR / spec["script"], HOOKS_DIR / spec["script"]
-        action = "update" if dst.exists() else "copy"
-        same = dst.exists() and src.read_bytes() == dst.read_bytes()
-        print(f"[{spec['script']}] script: {'up-to-date' if same else action}")
-        if not same and not dry:
-            shutil.copy2(src, dst)
-            dst.chmod(0o755)
         groups = hooks_cfg.setdefault(spec["event"], [])
-        if any(is_ours(g, spec["script"]) for g in groups):
-            print(f"[{spec['script']}] settings: already registered ({spec['event']})")
+        ours = [g for g in groups if is_ours(g)]
+        desired = _entry(spec, scar_path)
+        if ours == [desired]:
+            print(f"[{spec['kind']}] settings: up-to-date ({spec['event']})")
+            continue
+        if ours:
+            print(f"[{spec['kind']}] settings: migrate legacy entry -> scar hook {spec['kind']}")
+            hooks_cfg[spec["event"]] = [g for g in groups if not is_ours(g)]
         else:
-            print(f"[{spec['script']}] settings: register under {spec['event']}")
-            groups.append(spec["entry"])
-            changed = True
+            print(f"[{spec['kind']}] settings: register under {spec['event']}")
+        hooks_cfg[spec["event"]].append(desired)
+        changed = True
+    _remove_legacy_scripts(dry)
     if changed:
         save_settings(settings, dry)
     print("install: done" + (" (dry-run, nothing written)" if dry else
-          ". Hooks reload automatically; open /hooks to verify."))
+          f". All hooks route through {scar_path}."))
+    return 0
 
 
 def uninstall(dry):
@@ -120,43 +117,39 @@ def uninstall(dry):
     changed = False
     for spec in HOOKS:
         groups = hooks_cfg.get(spec["event"], [])
-        keep = [g for g in groups if not is_ours(g, spec["script"])]
+        keep = [g for g in groups if not is_ours(g)]
         if len(keep) != len(groups):
-            print(f"[{spec['script']}] settings: removing from {spec['event']}")
+            print(f"[{spec['kind']}] settings: removing from {spec['event']}")
             hooks_cfg[spec["event"]] = keep
             if not keep:
                 del hooks_cfg[spec["event"]]
             changed = True
-        dst = HOOKS_DIR / spec["script"]
-        if dst.exists():
-            print(f"[{spec['script']}] script: remove {dst}")
-            if not dry:
-                dst.unlink()
+    _remove_legacy_scripts(dry)
     if changed:
         save_settings(settings, dry)
     print("uninstall: done" + (" (dry-run, nothing written)" if dry else
           ". Scars themselves (.scars/ in repos) are untouched."))
+    return 0
 
 
 def status():
-    settings = load_settings()
-    hooks_cfg = settings.get("hooks", {})
+    scar_path = find_scar()
+    print(f"scar binary: {scar_path or 'NOT FOUND (uv tool install -e .)'}")
+    hooks_cfg = load_settings().get("hooks", {})
     for spec in HOOKS:
-        script_ok = (HOOKS_DIR / spec["script"]).exists()
-        reg = any(is_ours(g, spec["script"])
-                  for g in hooks_cfg.get(spec["event"], []))
-        src_same = script_ok and \
-            (SRC_DIR / spec["script"]).read_bytes() == (HOOKS_DIR / spec["script"]).read_bytes()
-        state = ("installed" if script_ok and reg else
-                 "partial" if script_ok or reg else "not installed")
-        extra = "" if not script_ok else (" (current)" if src_same else " (outdated copy)")
-        print(f"{spec['script']:28} {spec['event']:13} {state}{extra}")
+        ours = [g for g in hooks_cfg.get(spec["event"], []) if is_ours(g)]
+        cmds = [h.get("command", "") for g in ours for h in g.get("hooks", [])]
+        legacy = any(any(s in c for s in LEGACY_SCRIPTS) for c in cmds)
+        state = ("legacy (run install to migrate)" if legacy
+                 else "installed" if ours else "not installed")
+        print(f"{spec['kind']:16} {spec['event']:13} {state}")
+    return 0
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     dry = "--dry-run" in args
     cmd = next((a for a in args if not a.startswith("-")), "status")
-    {"install": lambda: install(dry),
-     "uninstall": lambda: uninstall(dry),
-     "status": status}.get(cmd, status)()
+    sys.exit({"install": lambda: install(dry),
+              "uninstall": lambda: uninstall(dry),
+              "status": status}.get(cmd, status)())

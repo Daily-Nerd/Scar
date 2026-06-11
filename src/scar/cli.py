@@ -199,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
 
+    p = sub.add_parser("hook", help="Claude Code hook handlers (payload on stdin)")
+    p.add_argument("kind", choices=["precheck", "session-notice", "stop-drafter"])
+
     p = sub.add_parser("inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path", required=True)
     p.add_argument("--content", default="")
@@ -206,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--hook-event", default="PreToolUse")
 
     args = parser.parse_args(argv)
+    if args.command == "hook":
+        from .hooks import HANDLERS  # hot path: imports nothing beyond library
+        return HANDLERS[args.kind]()
     handler = {
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
