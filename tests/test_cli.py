@@ -96,6 +96,20 @@ def test_inject_silent_when_no_match(repo, capsys):
     assert capsys.readouterr().out.strip() == ""
 
 
+def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):
+    """Asking a parent directory for its history must include scars anchored
+    deeper inside it — found live: `scar why research` missed a landmine
+    anchored at research/experiments/track-a/."""
+    init_scars(repo)
+    deep = CANDIDATE.replace("  - path: src/", "  - path: src/experiments/track-a/")
+    (repo / ".scars" / "candidates" / "deep.md").write_text(deep)
+    main(["promote", "deep", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["why", "src"]) == 0
+    assert "Tried X, failed" in capsys.readouterr().out
+
+
 def test_no_scars_dir_commands_fail_gracefully(repo, capsys):
     assert main(["status"]) == 1
     assert ".scars" in capsys.readouterr().out

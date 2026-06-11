@@ -111,7 +111,10 @@ def _cmd_why(args) -> int:
             s = parse_scar_text(f.read_text(encoding="utf-8"))
         except ParseError:
             continue
-        if any(rel.startswith(p.rstrip("/")) for p in s.path_anchors):
+        # bidirectional: query under an anchor (editing inside protected dir)
+        # OR anchor under the query (asking a parent dir for its history)
+        if any(rel.startswith(p.rstrip("/")) or p.rstrip("/").startswith(rel)
+               for p in s.path_anchors):
             found += 1
             print(f"[{s.status} {s.type} #{s.id}] {s.title}  ({f.name})")
             print("  " + s.body[:300].replace("\n", "\n  ") + "\n")
