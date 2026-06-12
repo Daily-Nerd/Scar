@@ -1,0 +1,1 @@
+2026-06-12 false trigger: meta-session — we tuned the revert-language detector itself, so assistant prose ('revert language', 'reverting' in test fixtures/PR text) matched REVERT_RE; nothing abandoned (tool_errors were expected CLI probes/rejections). First post-tune FP pattern: self-referential sessions about the drafter trip the drafter.

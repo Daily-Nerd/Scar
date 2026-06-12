@@ -101,16 +101,24 @@ class ScarStore:
         return [f for f in sorted(self.scars_dir.glob("*.md"))
                 if f.name.lower() not in SKIP_NAMES and not f.name.startswith("_")]
 
-    def active(self) -> list[tuple[Path, Scar]]:
+    def parsed(self) -> list[tuple[Path, Scar]]:
         out = []
         for f in self._scar_files():
             try:
-                scar = parse_scar_text(f.read_text(encoding="utf-8"))
+                out.append((f, parse_scar_text(f.read_text(encoding="utf-8"))))
             except (ParseError, OSError):
                 continue
-            if scar.status == "active":
-                out.append((f, scar))
         return out
+
+    def active(self) -> list[tuple[Path, Scar]]:
+        return [(f, s) for f, s in self.parsed() if s.status == "active"]
+
+    def firing(self) -> list[tuple[Path, Scar]]:
+        """Scars that still inject: active, plus challenged (disputed but
+        not yet resolved by a human — suppressing them would let a mere
+        objection silently delete knowledge)."""
+        return [(f, s) for f, s in self.parsed()
+                if s.status in ("active", "challenged")]
 
     def broken(self) -> list[Path]:
         out = []
@@ -137,6 +145,20 @@ class ScarStore:
             except (ParseError, OSError):
                 continue
         return max(ids, default=0) + 1
+
+    def transition(self, scar_id: int, new_status: str, reason: str, date: str) -> Path:
+        """Flip a scar's status in place, appending the reason as an evidence
+        note. The file keeps its name and id — archived/challenged scars stay
+        findable (`scar why`); orphaned != deleted, ever."""
+        for f, s in self.parsed():
+            if s.id == scar_id:
+                if s.status == new_status:
+                    raise ValueError(f"scar #{scar_id} is already {new_status}")
+                s.status = new_status
+                s.evidence.append(f"note: {new_status} {date}: {reason}")
+                f.write_text(s.to_text(), encoding="utf-8")
+                return f
+        raise ValueError(f"no scar with id {scar_id}")
 
     def promote(self, candidate: Path, reviewer: str) -> Path:
         text = candidate.read_text(encoding="utf-8")
