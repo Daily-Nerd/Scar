@@ -75,6 +75,15 @@ Wiring the Claude Code hook (auto-injects scars before any agent edit):
 
 ```bash
 scar hook install
+scar hook status
+```
+
+Hooks are advisory and are installed only by this explicit user command. To
+stop all automatic injection and drafting while keeping the repository's
+`.scars/` records:
+
+```bash
+scar hook uninstall
 ```
 
 Wiring MCP-capable agents:

@@ -201,6 +201,15 @@ def _cmd_agent(args) -> int:
     return 0
 
 
+def _cmd_hook_lifecycle(args) -> int:
+    from .installer import install, status, uninstall
+    if args.kind == "install":
+        return install(dry=args.dry_run)
+    if args.kind == "uninstall":
+        return uninstall(dry=args.dry_run)
+    return status()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scar",
                                      description="version control for negative knowledge")
@@ -233,8 +242,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
 
-    p = sub.add_parser("hook", help="Claude Code hook handlers (payload on stdin)")
-    p.add_argument("kind", choices=["precheck", "session-notice", "stop-drafter"])
+    p = sub.add_parser("hook", help="install, remove, inspect, or run Claude Code hooks")
+    p.add_argument("kind", choices=["install", "uninstall", "status",
+                                    "precheck", "session-notice", "stop-drafter"])
+    p.add_argument("--dry-run", action="store_true",
+                   help="show lifecycle changes without writing settings")
 
     sub.add_parser("mcp", help="run the SCAR MCP stdio server")
 
@@ -256,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         from .mcp import serve
         return serve()
     if args.command == "hook":
+        if args.kind in ("install", "uninstall", "status"):
+            return _cmd_hook_lifecycle(args)
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
         return HANDLERS[args.kind]()
     if args.command in ("challenge", "archive"):
