@@ -42,7 +42,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
   - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file
   - MCP server — planned, so any agent can query the scar graph
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
-- Scars are **advisory, never blocking, by default**. Stale knowledge is challenged via `scar challenge`, and every scar can carry expiry conditions ("valid until we drop Postgres 12").
+- Scars are **advisory, never blocking, by default**. Every scar can carry expiry conditions ("valid until we drop Postgres 12") and a `challenged` status exists in the format; the lifecycle commands (`scar challenge`, `scar archive`, expiry review surfacing) are planned — see the roadmap issue.
 
 ## Install
 
