@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Daily-Nerd/Scar/compare/v0.2.0...v0.3.0) (2026-06-12)
+
+
+### Features
+
+* **agents:** multi-agent scar integration — AGENTS.md, MCP server, agent helpers ([#21](https://github.com/Daily-Nerd/Scar/issues/21)) ([52c817f](https://github.com/Daily-Nerd/Scar/commit/52c817fc963f8f829b70de60b772c1097c6f0334))
+
 ## [0.2.0](https://github.com/Daily-Nerd/Scar/compare/v0.1.1...v0.2.0) (2026-06-12)
 
 
