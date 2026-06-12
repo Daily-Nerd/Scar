@@ -13,6 +13,7 @@ anchors:
 evidence:
   - commit: 5c63b14
   - note: "produced a fake 0% anchor-survival run before diagnosis (gate 0.2)"
+  - note: "history rewritten at v0.1.0 public release; pre-release SHAs resolve on GitHub by URL but not in fresh clones"
 expires:
   condition: "resolver layer gains integration tests over its git invocations"
   review_after: 2027-06-09

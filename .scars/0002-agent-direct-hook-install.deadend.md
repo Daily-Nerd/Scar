@@ -12,6 +12,7 @@ anchors:
 evidence:
   - commit: faad8f6
   - commit: bcd3864
+  - note: "history rewritten at v0.1.0 public release; pre-release SHAs resolve on GitHub by URL but not in fresh clones"
 status: active
 ---
 
