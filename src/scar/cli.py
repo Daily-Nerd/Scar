@@ -182,7 +182,9 @@ def _cmd_inject(args) -> int:
     if args.diff:
         try:
             diff_text = Path(args.diff).read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError, ValueError):
+            # ValueError covers NUL-byte paths; a hook must never crash on
+            # whatever lands in --diff — fall back to treating it as text
             diff_text = args.diff
         matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
     elif args.path:

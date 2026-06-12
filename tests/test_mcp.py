@@ -47,6 +47,33 @@ def test_scar_query_returns_structured_matches(tmp_path):
     assert data["matches"][0]["matched_by"] == ["path"]
 
 
+def test_unknown_tool_raises_clean_error():
+    import pytest
+    with pytest.raises(ValueError, match="unknown tool"):
+        _handle("tools/call", {"name": "scar_nuke", "arguments": {}})
+
+
+def test_draft_default_confidence_matches_model_default(tmp_path):
+    from scar.model import Scar, parse_scar_text
+    init_scars(tmp_path)
+    _handle("tools/call", {
+        "name": "scar_draft",
+        "arguments": {
+            "repo": str(tmp_path), "type": "deadend", "title": "Defaults check",
+            "anchors": [{"path": "src/"}], "body": "Body.",
+        },
+    })
+    cand = next((tmp_path / ".scars" / "candidates").glob("defaults-check*.md"))
+    drafted = parse_scar_text(cand.read_text())
+    assert drafted.confidence == Scar().confidence
+
+
+def test_server_version_matches_package():
+    from importlib.metadata import version
+    info = _handle("initialize", {})
+    assert info["serverInfo"]["version"] == version("scar-cli")
+
+
 def test_scar_draft_writes_candidate_only(tmp_path):
     init_scars(tmp_path)
     result = _handle("tools/call", {

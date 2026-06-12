@@ -90,6 +90,13 @@ def test_inject_emits_hook_json(repo, capsys):
     assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
 
 
+def test_inject_diff_with_binary_file_never_crashes(repo, capsys, tmp_path):
+    init_scars(repo)
+    bad = tmp_path / "binary.diff"
+    bad.write_bytes(b"\xff\xfe\x00garbage\x80")
+    assert main(["inject", "--diff", str(bad)]) == 0
+
+
 def test_inject_silent_when_no_match(repo, capsys):
     init_scars(repo)
     assert main(["inject", "--path", "docs/x.md", "--content", ""]) == 0

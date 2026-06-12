@@ -19,6 +19,14 @@ from .model import Scar
 from .store import ScarStore
 
 
+def _version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("scar-cli")
+    except Exception:  # uninstalled source checkout — version is cosmetic here
+        return "0.0.0"
+
+
 def _store(repo: str | None) -> ScarStore:
     start = Path(repo).expanduser().resolve() if repo else Path.cwd()
     store = ScarStore.discover(start)
@@ -78,8 +86,8 @@ def _scar_from_args(args: dict[str, Any]) -> Scar:
     return Scar(
         type=str(args.get("type", "deadend")),
         title=str(args.get("title", "")),
-        severity=str(args.get("severity", "medium")),
-        confidence=float(args.get("confidence", 0.6)),
+        severity=str(args.get("severity", Scar.severity)),
+        confidence=float(args.get("confidence", Scar.confidence)),
         created=str(args.get("created") or time.strftime("%Y-%m-%d")),
         authors=[str(a) for a in args.get("authors", ["agent"])],
         path_anchors=path_anchors,
@@ -204,15 +212,17 @@ def _handle(method: str, params: dict[str, Any]) -> dict[str, Any] | None:
         return {
             "protocolVersion": params.get("protocolVersion", "2025-06-18"),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "scar", "version": "0.2.0"},
+            "serverInfo": {"name": "scar", "version": _version()},
         }
     if method == "tools/list":
         return {"tools": TOOLS}
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
-        return {"scar_query": _query, "scar_why": _why,
-                "scar_draft": _draft}[name](args)
+        tools = {"scar_query": _query, "scar_why": _why, "scar_draft": _draft}
+        if name not in tools:
+            raise ValueError(f"unknown tool: {name}")
+        return tools[name](args)
     if method == "ping":
         return {}
     if method.startswith("notifications/"):
