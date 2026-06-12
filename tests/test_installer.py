@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from scar import installer
+from scar.cli import main
+
 _SPEC = importlib.util.spec_from_file_location(
     "scar_hooks", Path(__file__).parent.parent / "hook" / "scar-hooks.py")
 scar_hooks = importlib.util.module_from_spec(_SPEC)
@@ -64,3 +67,38 @@ def test_install_explains_venv_shadowing_when_no_global_scar(
     assert scar_hooks.install(dry=True) == 1
     out = capsys.readouterr().out
     assert "VIRTUAL_ENV" in out or "venv" in out
+
+
+@pytest.fixture
+def isolated_settings(tmp_path, monkeypatch):
+    claude = tmp_path / ".claude"
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "HOOKS_DIR", claude / "hooks")
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "find_scar", lambda: "/stable/bin/scar")
+    return claude / "settings.json"
+
+
+def test_cli_hook_install_then_uninstall(isolated_settings, capsys):
+    assert main(["hook", "install"]) == 0
+    settings = isolated_settings.read_text(encoding="utf-8")
+    assert settings.count("/stable/bin/scar hook") == 3
+
+    assert main(["hook", "uninstall"]) == 0
+    settings = isolated_settings.read_text(encoding="utf-8")
+    assert "/stable/bin/scar hook" not in settings
+    assert "Scars themselves (.scars/ in repos) are untouched" in capsys.readouterr().out
+
+
+def test_cli_hook_dry_run_does_not_create_settings(isolated_settings):
+    assert main(["hook", "install", "--dry-run"]) == 0
+    assert not isolated_settings.exists()
+
+
+def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
+    assert main(["hook", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "precheck" in out
+    assert "session-notice" in out
+    assert "stop-drafter" in out
+    assert out.count("not installed") == 3
