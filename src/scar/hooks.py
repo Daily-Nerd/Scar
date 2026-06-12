@@ -74,7 +74,8 @@ def precheck() -> int:
     broken = store.broken()
     parts = []
     if hits:
-        blocks = [f"[{s.type} #{s.id} | severity: {s.severity} | confidence: "
+        blocks = [f"[{'challenged ' if s.status == 'challenged' else ''}{s.type} "
+                  f"#{s.id} | severity: {s.severity} | confidence: "
                   f"{s.confidence}] {s.title}\n{s.body[:MAX_BODY_CHARS]}" for s in hits]
         parts.append(
             "SCAR pre-edit check — negative knowledge anchored to code you are "

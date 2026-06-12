@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from .lint import lint_text
@@ -58,8 +59,16 @@ def _cmd_status(_args) -> int:
     print(f"{store.scars_dir}: {len(active)} active, {len(cands)} candidate(s) pending review")
     for f, s in active:
         print(f"  [{s.type} #{s.id} | {s.severity}] {s.title}")
+    for f, s in store.parsed():
+        if s.status == "challenged":
+            print(f"  [challenged {s.type} #{s.id}] {s.title}")
     for c in cands:
         print(f"  candidate: {c.name}")
+    today = time.strftime("%Y-%m-%d")
+    due = [s for _, s in store.firing() if s.review_after and s.review_after < today]
+    for s in due:
+        print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
+              "re-verify, then update the date or archive")
     if broken:
         print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
               + ", ".join(b.name for b in broken))
@@ -94,8 +103,26 @@ def _cmd_check(args) -> int:
         print(f"no scars anchored to {args.path}")
         return 0
     for s in hits:
-        print(f"[{s.type} #{s.id} | severity: {s.severity} | confidence: {s.confidence}] {s.title}")
+        label = f"challenged {s.type}" if s.status == "challenged" else s.type
+        print(f"[{label} #{s.id} | severity: {s.severity} | confidence: {s.confidence}] {s.title}")
         print("  " + s.body[:200].replace("\n", "\n  "))
+    return 0
+
+
+def _cmd_transition(args, new_status: str) -> int:
+    store = _require_store()
+    if store is None:
+        return 1
+    try:
+        path = store.transition(args.id, new_status, reason=args.reason,
+                                date=time.strftime("%Y-%m-%d"))
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    verb = ("still fires, marked as disputed — resolve by archiving or "
+            "re-validating" if new_status == "challenged"
+            else "never fires again; history kept (scar why still shows it)")
+    print(f"{new_status} -> {path.relative_to(store.root)} ({verb})")
     return 0
 
 
@@ -134,7 +161,8 @@ def _cmd_inject(args) -> int:
     parts = []
     if hits:
         blocks = [
-            f"[{s.type} #{s.id} | severity: {s.severity} | confidence: {s.confidence}] "
+            f"[{'challenged ' if s.status == 'challenged' else ''}{s.type} #{s.id} "
+            f"| severity: {s.severity} | confidence: {s.confidence}] "
             f"{s.title}\n{s.body[:MAX_BODY_CHARS]}" for s in hits
         ]
         parts.append(
@@ -196,6 +224,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("why", help="history of pain for a path (any status)")
     p.add_argument("path")
 
+    p = sub.add_parser("challenge", help="dispute a scar (still fires, marked challenged)")
+    p.add_argument("id", type=int)
+    p.add_argument("--reason", required=True, help="why the scar may no longer hold")
+
+    p = sub.add_parser("archive", help="retire a scar (never fires; history kept)")
+    p.add_argument("id", type=int)
+    p.add_argument("--reason", required=True, help="why it is retired (e.g. expiry condition met)")
+
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
 
@@ -212,6 +248,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "hook":
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
         return HANDLERS[args.kind]()
+    if args.command in ("challenge", "archive"):
+        status = {"challenge": "challenged", "archive": "archived"}[args.command]
+        return _cmd_transition(args, status)
     handler = {
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,

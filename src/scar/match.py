@@ -36,13 +36,13 @@ def _anchor_strength(scar: Scar, rel_path: str, new_content: str) -> float:
 
 def rank_for_edit(store: ScarStore, target: Path, new_content: str,
                   top_k: int = DEFAULT_TOP_K) -> list[Scar]:
-    """Top-k active scars relevant to editing `target` with `new_content`."""
+    """Top-k firing scars (active + challenged) relevant to editing `target`."""
     try:
         rel_path = str(Path(target).resolve().relative_to(store.root))
     except ValueError:
         return []
     ranked = []
-    for _, scar in store.active():
+    for _, scar in store.firing():
         strength = _anchor_strength(scar, rel_path, new_content)
         if strength > 0:
             rank = strength * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
