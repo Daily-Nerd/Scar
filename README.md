@@ -40,7 +40,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 - Enforcement happens **at the moment of action**:
   - `scar check <path>` — CLI gate for humans and CI
   - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file
-  - MCP server — planned, so any agent can query the scar graph
+  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
 - Scars are **advisory, never blocking, by default** — and stale knowledge has a lifecycle: `scar challenge <id> --reason` disputes a scar (it still fires, marked as disputed), `scar archive <id> --reason` retires it (never fires again; `scar why` keeps the history), and `scar lint`/`scar status` surface any scar whose `review_after` date has passed. Nothing expires automatically — archiving is a human decision, same governance as promotion.
 
@@ -76,6 +76,22 @@ Wiring the Claude Code hook (auto-injects scars before any agent edit):
 ```bash
 scar hook install
 ```
+
+Wiring MCP-capable agents:
+
+```bash
+scar agent doctor
+scar agent config opencode   # or: codex, cursor, windsurf
+```
+
+The MCP server runs as:
+
+```bash
+scar mcp
+```
+
+It exposes `scar_query`, `scar_why`, and `scar_draft`. Drafting writes only to
+`.scars/candidates/`; active enforcement still requires human promotion.
 
 ## Quality discipline
 

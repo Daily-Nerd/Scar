@@ -96,6 +96,35 @@ def test_inject_silent_when_no_match(repo, capsys):
     assert capsys.readouterr().out.strip() == ""
 
 
+def test_inject_accepts_unified_diff(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["inject", "--diff", diff]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_agent_config_prints_opencode_mcp_snippet(repo, capsys):
+    assert main(["agent", "config", "opencode"]) == 0
+    out = capsys.readouterr().out
+    assert '"command": ["scar", "mcp"]' in out
+
+
+def test_agent_doctor_reports_agents_file(repo, capsys):
+    (repo / "AGENTS.md").write_text("# rules\n")
+    assert main(["agent", "doctor"]) == 0
+    assert "AGENTS.md: present" in capsys.readouterr().out
+
+
 def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):
     """Asking a parent directory for its history must include scars anchored
     deeper inside it — found live: `scar why research` missed a landmine
