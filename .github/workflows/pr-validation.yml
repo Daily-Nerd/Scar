@@ -12,6 +12,9 @@ permissions:
 jobs:
   validate:
     name: PR convention
+    # release-please PRs are bot-generated changelog/version bumps; the
+    # issue-first convention governs human contributions, not the release cycle
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
