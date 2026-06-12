@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .lint import lint_text
-from .match import rank_matches_for_diff, rank_matches_for_edit
+from .match import rank_matches_for_diff, rank_matches_for_paths
 from .model import Scar
 from .store import ScarStore
 
@@ -132,15 +132,8 @@ def _query(args: dict[str, Any]) -> dict[str, Any]:
         matches = rank_matches_for_diff(store, str(args["diff"]), top_k=top_k)
     else:
         paths = args.get("paths") or ([args["path"]] if args.get("path") else [])
-        content = str(args.get("content", ""))
-        best = {}
-        for path in paths:
-            for match in rank_matches_for_edit(store, store.root / str(path), content,
-                                               top_k=top_k):
-                key = match.scar.id if match.scar.id is not None else match.source.as_posix()
-                if key not in best or match.rank > best[key].rank:
-                    best[key] = match
-        matches = sorted(best.values(), key=lambda m: -m.rank)[:top_k]
+        matches = rank_matches_for_paths(store, [str(p) for p in paths],
+                                         str(args.get("content", "")), top_k=top_k)
     return _json_result({"matches": [m.to_dict() for m in matches],
                          "broken": [str(p.relative_to(store.root))
                                     for p in store.broken()]})
@@ -149,12 +142,8 @@ def _query(args: dict[str, Any]) -> dict[str, Any]:
 def _why(args: dict[str, Any]) -> dict[str, Any]:
     store = _store(args.get("repo"))
     rel = str((store.root / str(args.get("path", "."))).resolve().relative_to(store.root))
-    records = []
-    for source, scar in store.parsed():
-        if any(rel.startswith(p.rstrip("/")) or p.rstrip("/").startswith(rel)
-               for p in scar.path_anchors):
-            records.append({"source": str(source.relative_to(store.root)),
-                            **scar.__dict__})
+    records = [{"source": str(source.relative_to(store.root)), **scar.__dict__}
+               for source, scar in store.scars_for_path(rel)]
     return _json_result({"path": rel, "records": records})
 
 

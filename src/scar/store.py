@@ -146,6 +146,15 @@ class ScarStore:
                 continue
         return max(ids, default=0) + 1
 
+    def scars_for_path(self, rel: str) -> list[tuple[Path, Scar]]:
+        """History of pain for a repo-relative path, any status. Bidirectional:
+        query under an anchor (editing inside a protected dir) OR anchor under
+        the query (asking a parent dir for its history)."""
+        rel = rel.rstrip("/")
+        return [(f, s) for f, s in self.parsed()
+                if any(rel.startswith(p.rstrip("/")) or p.rstrip("/").startswith(rel)
+                       for p in s.path_anchors)]
+
     def transition(self, scar_id: int, new_status: str, reason: str, date: str) -> Path:
         """Flip a scar's status in place, appending the reason as an evidence
         note. The file keeps its name and id — archived/challenged scars stay

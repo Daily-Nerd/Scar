@@ -18,9 +18,8 @@ import time
 from pathlib import Path
 
 from .match import rank_for_edit
+from .render import injection_context
 from .store import ScarStore
-
-MAX_BODY_CHARS = 700
 
 REVERT_RE = re.compile(
     r"revert(ing|ed)?\b|roll(ing|ed)? back|undo(ing)? (the|that|my)|"
@@ -71,23 +70,9 @@ def precheck() -> int:
     new_content = " ".join(str(tool_input.get(k, ""))
                            for k in ("content", "new_string", "new_source"))
     hits = rank_for_edit(store, Path(target), new_content)
-    broken = store.broken()
-    parts = []
-    if hits:
-        blocks = [f"[{'challenged ' if s.status == 'challenged' else ''}{s.type} "
-                  f"#{s.id} | severity: {s.severity} | confidence: "
-                  f"{s.confidence}] {s.title}\n{s.body[:MAX_BODY_CHARS]}" for s in hits]
-        parts.append(
-            "SCAR pre-edit check — negative knowledge anchored to code you are "
-            f"about to modify ({len(hits)} match(es)). Honor these unless the "
-            "user explicitly overrides; full records in .scars/.\n\n" + "\n\n".join(blocks))
-    if broken:
-        parts.append(
-            f"SCAR warning: {len(broken)} scar file(s) unparseable and can NEVER "
-            f"fire: {', '.join(b.name for b in broken)}. Their knowledge is "
-            f"silently dead. Fix the frontmatter (copy {store.scars_dir}/template.md).")
-    if parts:
-        _emit("PreToolUse", "\n\n".join(parts))
+    context = injection_context(hits, store.broken(), store.scars_dir)
+    if context:
+        _emit("PreToolUse", context)
     return 0
 
 

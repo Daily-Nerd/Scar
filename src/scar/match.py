@@ -28,24 +28,15 @@ class ScarMatch:
     path: str
 
     def to_dict(self) -> dict:
-        return {
-            "id": self.scar.id,
-            "type": self.scar.type,
-            "title": self.scar.title,
-            "severity": self.scar.severity,
-            "confidence": self.scar.confidence,
-            "status": self.scar.status,
-            "body": self.scar.body,
-            "anchors": {
-                "paths": self.scar.path_anchors,
-                "patterns": self.scar.pattern_anchors,
-            },
-            "matched_by": list(self.matched_by),
-            "anchor_strength": self.anchor_strength,
-            "rank": self.rank,
-            "path": self.path,
-            "source": str(self.source),
-        }
+        # copy the whole Scar so a future model field can never silently
+        # vanish from MCP responses (guarded by a fields() test)
+        d = dict(self.scar.__dict__)
+        d["anchors"] = {"paths": d.pop("path_anchors"),
+                        "patterns": d.pop("pattern_anchors")}
+        d.update(matched_by=list(self.matched_by),
+                 anchor_strength=self.anchor_strength,
+                 rank=self.rank, path=self.path, source=str(self.source))
+        return d
 
 
 def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, tuple[str, ...]]:
@@ -69,6 +60,33 @@ def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, 
     return score, tuple(dict.fromkeys(matched))
 
 
+def _match_target(firing: list, root: Path, rel_path: str,
+                  new_content: str) -> list[ScarMatch]:
+    """Rank one target against an already-loaded firing set (no disk I/O)."""
+    ranked: list[ScarMatch] = []
+    for source, scar in firing:
+        strength, matched_by = _anchor_signal(scar, rel_path, new_content)
+        if strength > 0:
+            rank = strength * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
+            ranked.append(ScarMatch(scar=scar, source=source.relative_to(root),
+                                    rank=rank, anchor_strength=strength,
+                                    matched_by=matched_by, path=rel_path))
+    ranked.sort(key=lambda m: -m.rank)
+    return ranked
+
+
+def merge_best_matches(match_lists: list[list[ScarMatch]],
+                       top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
+    """Dedup matches across targets, keeping each scar's best rank."""
+    best: dict[int | str, ScarMatch] = {}
+    for matches in match_lists:
+        for match in matches:
+            key = match.scar.id if match.scar.id is not None else match.source.as_posix()
+            if key not in best or match.rank > best[key].rank:
+                best[key] = match
+    return sorted(best.values(), key=lambda m: -m.rank)[:top_k]
+
+
 def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Top-k firing scar matches relevant to editing `target`."""
@@ -76,16 +94,21 @@ def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
         rel_path = str(Path(target).resolve().relative_to(store.root))
     except ValueError:
         return []
-    ranked: list[ScarMatch] = []
-    for source, scar in store.firing():
-        strength, matched_by = _anchor_signal(scar, rel_path, new_content)
-        if strength > 0:
-            rank = strength * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
-            ranked.append(ScarMatch(scar=scar, source=source.relative_to(store.root),
-                                    rank=rank, anchor_strength=strength,
-                                    matched_by=matched_by, path=rel_path))
-    ranked.sort(key=lambda m: -m.rank)
-    return ranked[:top_k]
+    return _match_target(store.firing(), store.root, rel_path, new_content)[:top_k]
+
+
+def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,
+                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
+    """Best matches across several paths — one store walk, not one per path."""
+    firing = store.firing()
+    lists = []
+    for path in paths:
+        try:
+            rel = str((store.root / str(path)).resolve().relative_to(store.root))
+        except ValueError:
+            continue
+        lists.append(_match_target(firing, store.root, rel, new_content)[:top_k])
+    return merge_best_matches(lists, top_k)
 
 
 def rank_for_edit(store: ScarStore, target: Path, new_content: str,
@@ -117,12 +140,8 @@ def _diff_targets(diff_text: str) -> list[tuple[str, str]]:
 
 def rank_matches_for_diff(store: ScarStore, diff_text: str,
                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
-    """Top-k firing scar matches across a unified diff."""
-    best: dict[int | str, ScarMatch] = {}
-    for rel_path, added_content in _diff_targets(diff_text):
-        for match in rank_matches_for_edit(store, store.root / rel_path, added_content,
-                                           top_k=top_k):
-            key = match.scar.id if match.scar.id is not None else match.source.as_posix()
-            if key not in best or match.rank > best[key].rank:
-                best[key] = match
-    return sorted(best.values(), key=lambda m: -m.rank)[:top_k]
+    """Top-k firing scar matches across a unified diff (one store walk)."""
+    firing = store.firing()
+    lists = [_match_target(firing, store.root, rel_path, added)[:top_k]
+             for rel_path, added in _diff_targets(diff_text)]
+    return merge_best_matches(lists, top_k)

@@ -14,34 +14,9 @@ import time
 from pathlib import Path
 
 from .lint import lint_text
-from .match import ScarMatch, rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
-from .model import ParseError, parse_scar_text
+from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
+from .render import injection_context, label_line
 from .store import ScarStore, init_scars
-
-MAX_BODY_CHARS = 700  # ~120 words — the fatigue budget is a format guarantee
-
-
-def _render_matches(matches: list[ScarMatch], broken: list[Path],
-                    store: ScarStore) -> str:
-    parts = []
-    if matches:
-        blocks = [
-            f"[{'challenged ' if m.scar.status == 'challenged' else ''}{m.scar.type} "
-            f"#{m.scar.id} | severity: {m.scar.severity} | confidence: "
-            f"{m.scar.confidence}] {m.scar.title}\n{m.scar.body[:MAX_BODY_CHARS]}"
-            for m in matches
-        ]
-        parts.append(
-            "SCAR pre-edit check — negative knowledge anchored to code you are "
-            f"about to modify ({len(matches)} match(es)). Honor these unless the "
-            "user explicitly overrides; full records in .scars/.\n\n"
-            + "\n\n".join(blocks))
-    if broken:
-        parts.append(
-            f"SCAR warning: {len(broken)} scar file(s) unparseable and can NEVER "
-            f"fire: {', '.join(b.name for b in broken)}. Fix frontmatter "
-            f"(copy {store.scars_dir}/template.md).")
-    return "\n\n".join(parts)
 
 
 def _require_store(start: Path | None = None) -> ScarStore | None:
@@ -126,8 +101,7 @@ def _cmd_check(args) -> int:
         print(f"no scars anchored to {args.path}")
         return 0
     for s in hits:
-        label = f"challenged {s.type}" if s.status == "challenged" else s.type
-        print(f"[{label} #{s.id} | severity: {s.severity} | confidence: {s.confidence}] {s.title}")
+        print(label_line(s))
         print("  " + s.body[:200].replace("\n", "\n  "))
     return 0
 
@@ -155,20 +129,11 @@ def _cmd_why(args) -> int:
     if store is None:
         return 1
     rel = str(Path(args.path).resolve().relative_to(store.root))
-    found = 0
-    for f in store._scar_files():
-        try:
-            s = parse_scar_text(f.read_text(encoding="utf-8"))
-        except ParseError:
-            continue
-        # bidirectional: query under an anchor (editing inside protected dir)
-        # OR anchor under the query (asking a parent dir for its history)
-        if any(rel.startswith(p.rstrip("/")) or p.rstrip("/").startswith(rel)
-               for p in s.path_anchors):
-            found += 1
-            print(f"[{s.status} {s.type} #{s.id}] {s.title}  ({f.name})")
-            print("  " + s.body[:300].replace("\n", "\n  ") + "\n")
-    if not found:
+    records = store.scars_for_path(rel)
+    for f, s in records:
+        print(f"[{s.status} {s.type} #{s.id}] {s.title}  ({f.name})")
+        print("  " + s.body[:300].replace("\n", "\n  ") + "\n")
+    if not records:
         print(f"no recorded pain for {rel}")
     return 0
 
@@ -192,8 +157,8 @@ def _cmd_inject(args) -> int:
                                         args.content or "", top_k=args.top_k)
     else:
         matches = []
-    broken = store.broken()
-    context = _render_matches(matches, broken, store)
+    context = injection_context([m.scar for m in matches], store.broken(),
+                                store.scars_dir)
     if context:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": args.hook_event, "additionalContext": context}}))
