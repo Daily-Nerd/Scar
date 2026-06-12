@@ -20,7 +20,7 @@ Public at [github.com/Daily-Nerd/Scar](https://github.com/Daily-Nerd/Scar), `sca
 - ✅ `SCAR-FORMAT.md` v0.1 published; one parser/serializer (`model.py`), one renderer (`render.py`)
 - ✅ CLI: `init, lint, status, promote, check, why, challenge, archive, harvest, hook, mcp, agent, inject` — lifecycle commands (`challenge`/`archive`, expiry review surfacing) shipped beyond the original plan
 - ✅ Claude Code plugin: PreToolUse injection + stop-hook candidate drafting, both field-validated (gates 0.3, 0.4)
-- ⚠️ **Python, not Go/Rust** — zero-dependency stdlib hits the same goal the compiled binary was chasing for (~20ms hook startup, trivial install via `uv tool install scar-cli`); a rewrite is not planned unless profiling says otherwise
+- ⚠️ **Python, not Go/Rust** — zero-dependency stdlib hits the goal the compiled binary was chasing (~20ms hook startup, trivial install via `uv tool install scar-cli`); a rewrite is not planned unless profiling says otherwise
 - ❌ No `add` command — copy `template.md` + `scar promote` covers authoring; revisit only on user friction
 - ❌ Lore trailer ingestion in `harvest` — moved to Phase 2, optional
 - ✅ Dogfooding: 6 repos, including this one (the repo's own scars caught its own release-process bug)
