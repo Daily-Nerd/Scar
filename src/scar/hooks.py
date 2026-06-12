@@ -152,7 +152,12 @@ def _analyze_transcript(path: str) -> dict | None:
     thrash = max(edits_per_file.values(), default=0)
     signals = {"revert_language": revert_hits, "user_corrections": user_neg,
                "tool_errors": errors, "max_edits_one_file": thrash}
-    triggered = (revert_hits >= 1) or (user_neg >= 2) or (errors >= 5 and thrash >= 4)
+    # Trigger on assistant revert/abandon language only. Field data (gate 0.4,
+    # 6 firings): revert_language >= 1 was present in both true positives and
+    # absent in all four false positives; the user_corrections and
+    # tool_errors+thrash paths went 0/4 (normal debugging, policy denials).
+    # The other signals stay in the log so future FN evidence can re-add a path.
+    triggered = revert_hits >= 1
     return signals if triggered else None
 
 

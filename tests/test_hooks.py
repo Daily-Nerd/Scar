@@ -172,6 +172,38 @@ def test_stop_drafter_silent_on_calm_session(repo, monkeypatch, capsys, tmp_path
     assert out_json(capsys) is None
 
 
+def test_stop_drafter_silent_on_error_storm_without_revert(repo, monkeypatch, capsys, tmp_path):
+    """Gate 0.4 FP pattern: tool errors + edit thrash are normal debugging,
+    not abandonment (3 of 4 field FPs entered through this path)."""
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    lines = [{"type": "assistant", "message": {"content": [
+        {"type": "tool_result", "is_error": True}]}} for _ in range(6)]
+    lines += [{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Edit",
+         "input": {"file_path": "src/thing.py"}}]}} for _ in range(5)]
+    t = transcript(tmp_path, lines)
+    feed(monkeypatch, {"session_id": "s5", "transcript_path": str(t), "cwd": str(repo)})
+    assert main(["hook", "stop-drafter"]) == 0
+    assert out_json(capsys) is None
+
+
+def test_stop_drafter_silent_on_user_corrections_alone(repo, monkeypatch, capsys, tmp_path):
+    """Gate 0.4 FP pattern: user corrections without assistant revert language
+    were policy denials and cwd misses, not abandoned approaches."""
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    t = transcript(tmp_path, [
+        {"type": "user", "message": {"content": [
+            {"type": "text", "text": "that doesn't work"}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "text", "text": "still broken, try again"}]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Fixed — the path was wrong, corrected it."}]}},
+    ])
+    feed(monkeypatch, {"session_id": "s6", "transcript_path": str(t), "cwd": str(repo)})
+    assert main(["hook", "stop-drafter"]) == 0
+    assert out_json(capsys) is None
+
+
 def test_stop_drafter_logs_firing(repo, monkeypatch, capsys, tmp_path):
     state = tmp_path / "state"
     monkeypatch.setenv("SCAR_STATE_DIR", str(state))
