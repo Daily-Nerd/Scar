@@ -11,7 +11,8 @@ anchors:
   - pattern: "shutil\\.which\\([\"']scar[\"']\\)"
 evidence:
   - note: 2026-06-11 session: user ran `source .venv/bin/activate` then `python3 fabcap/hook/scar-hooks.py install` intending to rebind global hooks to ~/.local/bin/scar; installer reported 'up-to-date' and left all 3 hooks on fabcap/.venv/bin/scar
-status: active
+  - note: archived 2026-06-11: fix shipped in #8 with 4 installer tests guarding regression
+status: archived
 ---
 
 `install()` resolves the scar binary with `shutil.which("scar")` and writes that

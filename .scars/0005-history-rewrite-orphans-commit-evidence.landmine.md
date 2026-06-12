@@ -1,19 +1,20 @@
 ---
+id: 5
 type: landmine
 title: rewriting git history orphans commit-SHA evidence in scars — receipts break in fresh clones
 severity: medium
 confidence: 0.9
 created: 2026-06-11
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: .scars/
   - pattern: "push.{0,30}(--force|\\+[a-zA-Z]).{0,40}main|filter-repo|checkout --orphan"
 evidence:
-  - note: "v0.1.0 public release (2026-06-11): fresh-start force-push orphaned 3 commit SHAs cited by scars 0001 and 0002; SHAs still resolve on GitHub by URL but fail in any fresh clone, and GitHub may GC them eventually"
+  - note: v0.1.0 public release (2026-06-11): fresh-start force-push orphaned 3 commit SHAs cited by scars 0001 and 0002; SHAs still resolve on GitHub by URL but fail in any fresh clone, and GitHub may GC them eventually
 expires:
   condition: "evidence schema gains a resolvable form (full URL or archived diff) or lint warns on bare SHAs at promotion"
   review_after: 2027-06-11
-status: candidate
+status: active
 ---
 
 Scars cite commit SHAs as evidence receipts. Those receipts implicitly assume

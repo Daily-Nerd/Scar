@@ -11,7 +11,8 @@ anchors:
   - pattern: "_field\(front"
 evidence:
   - note: Observed 2026-06-11 promoting 5 candidates in context-as-program (PR 3 there restores the data by hand). All 5 lost their expires block; one also lost evidence because its note contained escaped quotes.
-status: active
+  - note: archived 2026-06-11: expires.condition met by #10: parser reads nested keys and quote evidence, roundtrip test guards it
+status: archived
 ---
 
 promote() does parse -> mutate -> to_text. Two asymmetries make that lossy.
