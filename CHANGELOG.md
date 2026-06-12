@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/Daily-Nerd/Scar/compare/v0.3.0...v0.4.0) (2026-06-12)
+
+
+### Features
+
+* **format:** reserve optional receipt_id field ([#29](https://github.com/Daily-Nerd/Scar/issues/29)) ([47ce933](https://github.com/Daily-Nerd/Scar/commit/47ce933cde02fa1155d0474e98101804cb7b1a80))
+
+
+### Bug Fixes
+
+* **hooks:** expose lifecycle commands ([#31](https://github.com/Daily-Nerd/Scar/issues/31)) ([dba2c0d](https://github.com/Daily-Nerd/Scar/commit/dba2c0d1c1bd8a0f73880bfab0ff17187eec2fb9)), closes [#30](https://github.com/Daily-Nerd/Scar/issues/30)
+
+
+### Documentation
+
+* **roadmap:** truth pass — gates resolved, Phase 1 shipped, Phase 2 in progress ([#26](https://github.com/Daily-Nerd/Scar/issues/26)) ([7701a97](https://github.com/Daily-Nerd/Scar/commit/7701a97610f470e7726e7f5fc86932a5101eb255))
+
 ## [0.3.0](https://github.com/Daily-Nerd/Scar/compare/v0.2.0...v0.3.0) (2026-06-12)
 
 
