@@ -67,6 +67,9 @@ def test_roundtrip_preserves_fields():
     assert (s2.id, s2.type, s2.title, s2.status) == (7, "deadend", "Redis sessions failed", "active")
     assert s2.path_anchors == s.path_anchors
     assert s2.body == s.body
+    assert s2.expires_condition == s.expires_condition
+    assert s2.review_after == s.review_after
+    assert s2.evidence == s.evidence
 
 
 def test_to_text_can_override_status_and_id():
@@ -74,3 +77,24 @@ def test_to_text_can_override_status_and_id():
     s.id, s.status = 12, "candidate"
     s2 = parse_scar_text(s.to_text())
     assert s2.id == 12 and s2.status == "candidate"
+
+
+def test_evidence_with_inner_quotes_roundtrips():
+    text = """\
+---
+type: landmine
+title: Test with quotes
+severity: high
+confidence: 0.9
+status: active
+evidence:
+  - note: "This has \"inner\" quotes"
+---
+
+Body.
+"""
+    s = parse_scar_text(text)
+    assert len(s.evidence) == 1
+    assert 'inner' in s.evidence[0]
+    s2 = parse_scar_text(s.to_text())
+    assert s2.evidence == s.evidence

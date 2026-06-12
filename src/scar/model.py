@@ -66,7 +66,7 @@ class Scar:
 
 
 def _field(front: str, name: str, default: str = "") -> str:
-    m = re.search(rf"^{name}:\s*(.+?)\s*$", front, re.MULTILINE)
+    m = re.search(rf"^\s*{name}:\s*(.+?)\s*$", front, re.MULTILINE)
     return m.group(1) if m else default
 
 
@@ -90,8 +90,8 @@ def parse_scar_text(text: str) -> Scar:
     authors = [a.strip().strip('"').strip("'")
                for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
 
-    evidence = [f"{m1.group(1)}: {m1.group(2)}" for m1 in re.finditer(
-        r"^\s*-\s*(commit|pr|incident|note):\s*\"?([^\"\n]+?)\"?\s*$", front, re.MULTILINE)]
+    evidence = [f"{m1.group(1)}: {m1.group(2).strip().strip('\"')}" for m1 in re.finditer(
+        r"^\s*-\s*(commit|pr|incident|note):\s*(.+)\s*$", front, re.MULTILINE)]
 
     return Scar(
         type=_field(front, "type", "deadend"),
