@@ -47,6 +47,17 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
 | `expires.review_after` | recommended | ISO date | forces periodic freshness contact |
 | `status` | yes | `candidate` \| `active` \| `challenged` \| `archived` \| `orphaned` \| `template` | lifecycle §5 |
+| `receipt_id` | reserved | string ref | **reserved — not yet parsed.** Optional pointer to a cryptographic provenance receipt; see note below. |
+
+`receipt_id` is a forward-compatibility reservation, not a live field. Scar's
+trust model is social by design (git history, `authors`, evidence-by-reference);
+that is sufficient within one repo or org. It does **not** carry across orgs that
+share no git history — the future cross-org / org-graph layer where "this dead end
+hit N teams" must be attributable. `receipt_id` reserves the slot for a signed,
+content-addressed receipt (e.g. [veritrail](https://github.com/Daily-Nerd/veritrail))
+bound to an authorship (`scar_draft`) or promotion event. No tool emits, requires,
+or validates it today, and the line-wise parser ignores it like any unknown key —
+so existing scars are unaffected. It will not become required in v0.x.
 
 Body: prose after the frontmatter, 5–15 lines. What happened, why, what a
 future editor must do instead — written for a reader with zero context.
