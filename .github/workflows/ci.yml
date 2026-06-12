@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests + scar lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      # Dogfood: the repo's own scar graph must always parse and lint clean.
+      # A malformed scar silently never fires (the daimon 0004 incident) —
+      # this gate makes that class of rot unmergeable.
+      - name: scar lint
+        run: uv run scar lint

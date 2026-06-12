@@ -1,0 +1,18 @@
+# python / uv
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# experiments produce local run artifacts
+experiments/fence-honor/runs/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+.claude/
