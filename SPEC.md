@@ -81,7 +81,10 @@ scar why <path>           # human-readable history of pain for a file/dir
 scar challenge <id>       # open a challenge: contest staleness with evidence
 scar harvest              # mine git history, emit candidate scars to .scars/candidates/
 scar status               # active/orphaned/challenged/expiring counts; repo health
-scar inject --diff <d>    # machine mode: top-k scars for a diff as JSON/markdown (hook backend)
+scar inject --path <p>    # machine mode: top-k scars for one edit as hook JSON
+scar inject --diff <d>    # machine mode: top-k scars for a unified diff as hook JSON
+scar mcp                  # stdio MCP server for MCP-capable agents
+scar agent config <name>  # print setup snippets for supported agent runtimes
 ```
 
 ## 4. Agent integration
@@ -98,7 +101,7 @@ Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X a
 
 ### 4.2 MCP server
 
-`scar-mcp` exposes: `scar_query(paths|symbols|pattern)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Works for any MCP-capable agent — Cursor, Windsurf, custom.
+`scar mcp` exposes: `scar_query(paths|content|diff)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Works for any MCP-capable agent — Codex, Cursor, Windsurf, opencode, custom.
 
 ### 4.3 Ranking and the fatigue budget
 

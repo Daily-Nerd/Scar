@@ -90,10 +90,46 @@ def test_inject_emits_hook_json(repo, capsys):
     assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
 
 
+def test_inject_diff_with_binary_file_never_crashes(repo, capsys, tmp_path):
+    init_scars(repo)
+    bad = tmp_path / "binary.diff"
+    bad.write_bytes(b"\xff\xfe\x00garbage\x80")
+    assert main(["inject", "--diff", str(bad)]) == 0
+
+
 def test_inject_silent_when_no_match(repo, capsys):
     init_scars(repo)
     assert main(["inject", "--path", "docs/x.md", "--content", ""]) == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_inject_accepts_unified_diff(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["inject", "--diff", diff]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_agent_config_prints_opencode_mcp_snippet(repo, capsys):
+    assert main(["agent", "config", "opencode"]) == 0
+    out = capsys.readouterr().out
+    assert '"command": ["scar", "mcp"]' in out
+
+
+def test_agent_doctor_reports_agents_file(repo, capsys):
+    (repo / "AGENTS.md").write_text("# rules\n")
+    assert main(["agent", "doctor"]) == 0
+    assert "AGENTS.md: present" in capsys.readouterr().out
 
 
 def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):

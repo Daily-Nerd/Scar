@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from scar.match import rank_for_edit
+from scar.match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
 from scar.store import ScarStore, init_scars
 
 FENCE = """\
@@ -92,3 +92,25 @@ def test_archived_scars_never_fire(tmp_path):
     f = tmp_path / ".scars" / "0001-vendor.fence.md"
     f.write_text(FENCE.replace("status: active", "status: archived"))
     assert rank_for_edit(store, tmp_path / "payments" / "retry.py", "") == []
+
+
+def test_structured_match_explains_source_and_signal(tmp_path):
+    store = make_repo(tmp_path)
+    hits = rank_matches_for_edit(store, tmp_path / "brand" / "new.py", "import redis")
+    assert hits[0].source.as_posix() == ".scars/0002-redis.deadend.md"
+    assert hits[0].matched_by == ("content_pattern",)
+    assert hits[0].to_dict()["anchors"]["patterns"] == ["redis"]
+
+
+def test_diff_matching_uses_added_lines(tmp_path):
+    store = make_repo(tmp_path)
+    diff = """\
+diff --git a/services/session.py b/services/session.py
+--- a/services/session.py
++++ b/services/session.py
+@@ -0,0 +1,2 @@
++import redis
++client = redis.Redis()
+"""
+    hits = rank_matches_for_diff(store, diff)
+    assert [m.scar.id for m in hits] == [2]

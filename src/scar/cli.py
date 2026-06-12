@@ -14,11 +14,34 @@ import time
 from pathlib import Path
 
 from .lint import lint_text
-from .match import rank_for_edit
+from .match import ScarMatch, rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
 from .model import ParseError, parse_scar_text
 from .store import ScarStore, init_scars
 
 MAX_BODY_CHARS = 700  # ~120 words — the fatigue budget is a format guarantee
+
+
+def _render_matches(matches: list[ScarMatch], broken: list[Path],
+                    store: ScarStore) -> str:
+    parts = []
+    if matches:
+        blocks = [
+            f"[{'challenged ' if m.scar.status == 'challenged' else ''}{m.scar.type} "
+            f"#{m.scar.id} | severity: {m.scar.severity} | confidence: "
+            f"{m.scar.confidence}] {m.scar.title}\n{m.scar.body[:MAX_BODY_CHARS]}"
+            for m in matches
+        ]
+        parts.append(
+            "SCAR pre-edit check — negative knowledge anchored to code you are "
+            f"about to modify ({len(matches)} match(es)). Honor these unless the "
+            "user explicitly overrides; full records in .scars/.\n\n"
+            + "\n\n".join(blocks))
+    if broken:
+        parts.append(
+            f"SCAR warning: {len(broken)} scar file(s) unparseable and can NEVER "
+            f"fire: {', '.join(b.name for b in broken)}. Fix frontmatter "
+            f"(copy {store.scars_dir}/template.md).")
+    return "\n\n".join(parts)
 
 
 def _require_store(start: Path | None = None) -> ScarStore | None:
@@ -152,32 +175,28 @@ def _cmd_why(args) -> int:
 
 def _cmd_inject(args) -> int:
     """Machine mode for hooks: JSON additionalContext or silence."""
-    store = ScarStore.discover(Path(args.path).resolve())
+    start = Path(args.path).resolve() if args.path else Path.cwd()
+    store = ScarStore.discover(start)
     if store is None:
         return 0  # hooks must never fail the edit
-    hits = rank_for_edit(store, Path(args.path).resolve(), args.content or "",
-                         top_k=args.top_k)
+    if args.diff:
+        try:
+            diff_text = Path(args.diff).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            # ValueError covers NUL-byte paths; a hook must never crash on
+            # whatever lands in --diff — fall back to treating it as text
+            diff_text = args.diff
+        matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+    elif args.path:
+        matches = rank_matches_for_edit(store, Path(args.path).resolve(),
+                                        args.content or "", top_k=args.top_k)
+    else:
+        matches = []
     broken = store.broken()
-    parts = []
-    if hits:
-        blocks = [
-            f"[{'challenged ' if s.status == 'challenged' else ''}{s.type} #{s.id} "
-            f"| severity: {s.severity} | confidence: {s.confidence}] "
-            f"{s.title}\n{s.body[:MAX_BODY_CHARS]}" for s in hits
-        ]
-        parts.append(
-            "SCAR pre-edit check — negative knowledge anchored to code you are "
-            f"about to modify ({len(hits)} match(es)). Honor these unless the "
-            "user explicitly overrides; full records in .scars/.\n\n"
-            + "\n\n".join(blocks))
-    if broken:
-        parts.append(
-            f"SCAR warning: {len(broken)} scar file(s) unparseable and can NEVER "
-            f"fire: {', '.join(b.name for b in broken)}. Fix frontmatter "
-            f"(copy {store.scars_dir}/template.md).")
-    if parts:
+    context = _render_matches(matches, broken, store)
+    if context:
         print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": args.hook_event, "additionalContext": "\n\n".join(parts)}}))
+            "hookEventName": args.hook_event, "additionalContext": context}}))
     return 0
 
 
@@ -200,6 +219,20 @@ def _cmd_harvest(args) -> int:
         for c in result[key]:
             print(fmt(c))
         print()
+    return 0
+
+
+def _cmd_agent(args) -> int:
+    from .agent import config, doctor
+    if args.agent_command == "doctor":
+        for line in doctor(Path.cwd()):
+            print(line)
+        return 0
+    try:
+        print(config(args.target))
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     return 0
 
 
@@ -238,13 +271,25 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("hook", help="Claude Code hook handlers (payload on stdin)")
     p.add_argument("kind", choices=["precheck", "session-notice", "stop-drafter"])
 
+    sub.add_parser("mcp", help="run the SCAR MCP stdio server")
+
+    p = sub.add_parser("agent", help="agent integration helpers")
+    agent_sub = p.add_subparsers(dest="agent_command", required=True)
+    agent_sub.add_parser("doctor", help="show local agent integration readiness")
+    cfg = agent_sub.add_parser("config", help="print config for an agent runtime")
+    cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
+
     p = sub.add_parser("inject", help="machine mode for hooks: JSON or silence")
-    p.add_argument("--path", required=True)
+    p.add_argument("--path")
     p.add_argument("--content", default="")
+    p.add_argument("--diff", help="unified diff text, or path to a diff file")
     p.add_argument("--top-k", type=int, default=3)
     p.add_argument("--hook-event", default="PreToolUse")
 
     args = parser.parse_args(argv)
+    if args.command == "mcp":
+        from .mcp import serve
+        return serve()
     if args.command == "hook":
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
         return HANDLERS[args.kind]()
@@ -255,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
         "inject": _cmd_inject, "harvest": _cmd_harvest,
+        "agent": _cmd_agent,
     }[args.command]
     return handler(args)
 
