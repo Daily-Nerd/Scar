@@ -114,3 +114,44 @@ diff --git a/services/session.py b/services/session.py
 """
     hits = rank_matches_for_diff(store, diff)
     assert [m.scar.id for m in hits] == [2]
+
+
+def test_match_to_dict_carries_every_scar_field(tmp_path):
+    """A new Scar field must never silently vanish from MCP responses."""
+    from dataclasses import fields
+    from scar.model import Scar
+    store = make_repo(tmp_path)
+    d = rank_matches_for_edit(store, tmp_path / "payments" / "x.py", "")[0].to_dict()
+    renamed = {"path_anchors", "pattern_anchors"}  # carried as anchors.paths/.patterns
+    for f in fields(Scar):
+        if f.name in renamed:
+            continue
+        assert f.name in d, f"Scar.{f.name} missing from ScarMatch.to_dict()"
+    assert d["anchors"] == {"paths": ["payments/"], "patterns": []}
+
+
+def test_diff_ranking_parses_store_once(tmp_path, monkeypatch):
+    """Inject hot path: one store walk per diff, not one per diff file."""
+    store = make_repo(tmp_path)
+    calls = {"n": 0}
+    original = ScarStore.parsed
+
+    def counting(self):
+        calls["n"] += 1
+        return original(self)
+
+    monkeypatch.setattr(ScarStore, "parsed", counting)
+    diff = """\
+diff --git a/payments/a.py b/payments/a.py
+--- a/payments/a.py
++++ b/payments/a.py
+@@ -0,0 +1 @@
++x = 1
+diff --git a/payments/b.py b/payments/b.py
+--- a/payments/b.py
++++ b/payments/b.py
+@@ -0,0 +1 @@
++import redis
+"""
+    matches = rank_matches_for_diff(store, diff)
+    assert matches and calls["n"] == 1

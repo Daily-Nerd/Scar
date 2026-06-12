@@ -95,3 +95,15 @@ def test_promote_refuses_scar_with_lint_errors(repo):
     store = ScarStore.discover(repo)
     with pytest.raises(ValueError, match="lint"):
         store.promote(cand, reviewer="kibukx")
+
+
+def test_scars_for_path_is_bidirectional(repo):
+    (repo / ".scars" / "0001-x.deadend.md").write_text(
+        CANDIDATE.replace("status: candidate", "status: active").replace(
+            "type: deadend", "type: deadend").replace("title: Tried X, failed",
+                                                      "title: Tried X, failed") )
+    store = ScarStore.discover(repo)
+    # query under the anchor (src/deep under src/) AND anchor under the query (root)
+    assert store.scars_for_path("src/deep/file.py")
+    assert store.scars_for_path("")  # repo root: every anchor is under it
+    assert not store.scars_for_path("docs/readme.md")
