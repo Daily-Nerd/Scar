@@ -1,6 +1,7 @@
 """CLI surface: each command's contract, exercised through main()."""
 
 import json
+import subprocess
 
 import pytest
 
@@ -149,3 +150,188 @@ def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):
 def test_no_scars_dir_commands_fail_gracefully(repo, capsys):
     assert main(["status"]) == 1
     assert ".scars" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Orphan surfaces (Issue #33). A firing scar with a dead path anchor and an
+# empty (or absent) git index is, by construction, an orphan.
+# ---------------------------------------------------------------------------
+
+ORPHAN_SCAR = """\
+---
+id: 1
+type: deadend
+title: Anchored to a path that no longer exists
+severity: medium
+confidence: 0.8
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/long_gone/
+evidence:
+  - commit: abc1234
+status: active
+---
+
+The module this anchored to was deleted.
+"""
+
+NO_ANCHOR_SCAR = """\
+---
+id: 2
+type: fence
+title: Scar that protects nothing
+severity: low
+confidence: 0.5
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+evidence:
+  - commit: def5678
+status: active
+---
+
+No anchors at all.
+"""
+
+
+def test_lint_warns_on_detected_orphan_exit_zero(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    assert main(["lint"]) == 0  # warning only, never fails by default
+    out = capsys.readouterr().out
+    assert "orphan" in out.lower()
+    assert "#1" in out
+    assert "src/long_gone/" in out  # which anchor is dead
+
+
+def test_lint_fail_orphans_flag_exits_one(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    assert main(["lint", "--fail-orphans"]) == 1
+    assert "orphan" in capsys.readouterr().out.lower()
+
+
+def test_lint_no_anchor_scar_labeled_distinctly(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0002-empty.fence.md").write_text(NO_ANCHOR_SCAR)
+    main(["lint"])
+    out = capsys.readouterr().out.lower()
+    assert "no anchors" in out  # distinct from "all anchors dead"
+
+
+PERSISTED_ORPHAN = ORPHAN_SCAR.replace("status: active", "status: orphaned").replace("id: 1", "id: 3")
+
+MULTI_ANCHOR_ORPHAN = """\
+---
+id: 5
+type: deadend
+title: Both anchors dead
+severity: high
+confidence: 0.9
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/dead_dir/
+  - pattern: "OldClassName"
+evidence:
+  - commit: aaa1111
+status: active
+---
+
+Both the path and the pattern are gone.
+"""
+
+
+def test_orphan_command_lists_failed_anchors_readonly(repo, capsys):
+    init_scars(repo)
+    f = repo / ".scars" / "0005-both.deadend.md"
+    f.write_text(MULTI_ANCHOR_ORPHAN)
+    before = f.read_text()
+    assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    assert "#5" in out
+    assert "src/dead_dir/" in out
+    assert "OldClassName" in out
+    assert f.read_text() == before  # read-only: file untouched
+
+
+def test_orphan_apply_persists_status_with_dated_note(repo, capsys, monkeypatch):
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-06-13")
+    init_scars(repo)
+    f = repo / ".scars" / "0005-both.deadend.md"
+    f.write_text(MULTI_ANCHOR_ORPHAN)
+    assert main(["orphan", "--apply", "--id", "5", "--reason", "module deleted in #99"]) == 0
+    text = f.read_text()
+    assert "status: orphaned" in text
+    assert "2026-06-13" in text
+    assert "module deleted in #99" in text
+    assert "src/dead_dir/" in text  # failed anchors recorded in the note
+
+
+def test_orphan_apply_rejects_unknown_id(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0005-both.deadend.md").write_text(MULTI_ANCHOR_ORPHAN)
+    assert main(["orphan", "--apply", "--id", "999", "--reason", "x"]) == 1
+    assert "not orphan-detected" in capsys.readouterr().out
+
+
+DEAD_ANCHOR_CANDIDATE = """\
+---
+type: deadend
+title: Anchored to a vanished path
+severity: medium
+confidence: 0.7
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/never_existed/
+evidence:
+  - commit: abc1234
+status: candidate
+---
+
+Why X failed.
+"""
+
+
+def test_promote_warns_when_anchors_all_dead_but_succeeds(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "dead.md").write_text(DEAD_ANCHOR_CANDIDATE)
+    rc = main(["promote", "dead", "--reviewer", "k"])
+    out = capsys.readouterr().out
+    assert rc == 0  # advisory is NON-blocking
+    assert (repo / ".scars" / "0001-dead.deadend.md").exists()
+    assert "anchor" in out.lower() and "advisory" in out.lower()
+
+
+def test_lint_reverse_hint_fires_when_orphaned_anchors_return(tmp_path, monkeypatch, capsys):
+    """A persisted-orphaned scar whose anchor path is tracked again should
+    surface a 're-activate' hint."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    init_scars(tmp_path)
+    # anchor path now exists and is tracked → anchors live again
+    (tmp_path / "src" / "revived").mkdir(parents=True)
+    (tmp_path / "src" / "revived" / "mod.py").write_text("x = 1\n")
+    revived = ORPHAN_SCAR.replace("status: active", "status: orphaned") \
+        .replace("src/long_gone/", "src/revived/")
+    (tmp_path / ".scars" / "0001-back.deadend.md").write_text(revived)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "live again" in out and "#1" in out
+
+
+def test_status_reports_detected_and_persisted_orphan_counts(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)        # detected
+    (repo / ".scars" / "0003-already.deadend.md").write_text(PERSISTED_ORPHAN)  # persisted
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "1 orphan-detected" in out
+    assert "1 orphaned" in out  # persisted, separately counted
