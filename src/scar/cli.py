@@ -15,6 +15,12 @@ from pathlib import Path
 
 from .lint import lint_text
 from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
+from .model import parse_scar_text
+from .orphan import (
+    anchors_all_dead,
+    build_repo_context,
+    detect_orphans,
+)
 from .render import injection_context, label_line
 from .store import ScarStore, init_scars
 
@@ -33,7 +39,20 @@ def _cmd_init(_args) -> int:
     return 0
 
 
-def _cmd_lint(_args) -> int:
+def _orphan_reason(finding) -> str:
+    """Human description of why a finding is an orphan — distinguishes a scar
+    with NO anchors (protects nothing) from one whose every anchor went dead."""
+    if not finding.dead_path_anchors and not finding.dead_pattern_anchors:
+        return "no anchors — scar protects nothing"
+    dead = []
+    if finding.dead_path_anchors:
+        dead.append("paths: " + ", ".join(finding.dead_path_anchors))
+    if finding.dead_pattern_anchors:
+        dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
+    return "all anchors dead (" + "; ".join(dead) + ")"
+
+
+def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
         return 1
@@ -45,8 +64,24 @@ def _cmd_lint(_args) -> int:
             print(f"{f.relative_to(store.root)}: {finding}")
         if any(fi.level == "error" for fi in findings):
             failed += 1
-    print(f"lint: {len(files)} file(s), {failed} with errors")
-    return 1 if failed else 0
+
+    ctx = build_repo_context(store.root)
+    orphans = detect_orphans(store, ctx)
+    for of in orphans:
+        print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
+
+    # reverse hint: persisted-orphaned scars whose anchors resolve again
+    for _f, s in store.parsed():
+        if s.status == "orphaned" and not anchors_all_dead(s, ctx):
+            print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
+                  "again — consider re-activating (scar challenge/archive note)")
+
+    print(f"lint: {len(files)} file(s), {failed} with errors, {len(orphans)} orphan(s)")
+    if failed:
+        return 1
+    if orphans and getattr(args, "fail_orphans", False):
+        return 1
+    return 0
 
 
 def _cmd_status(_args) -> int:
@@ -67,6 +102,19 @@ def _cmd_status(_args) -> int:
     for s in due:
         print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
               "re-verify, then update the date or archive")
+
+    # Orphans: detected (firing scars whose anchors all died — not yet persisted)
+    # and persisted (already flipped to status: orphaned, invisible until now).
+    ctx = build_repo_context(store.root)
+    detected = detect_orphans(store, ctx)
+    persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
+    print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
+          f"{len(persisted)} orphaned (persisted)")
+    for of in detected:
+        print(f"    orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
+    for s in persisted:
+        print(f"    orphaned [{s.type} #{s.id}] {s.title}")
+
     if broken:
         print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
               + ", ".join(b.name for b in broken))
@@ -88,6 +136,14 @@ def _cmd_promote(args) -> int:
         print(str(exc))
         return 1
     print(f"promoted -> {new_path.relative_to(store.root)}")
+
+    # Non-blocking advisory: a freshly promoted scar whose anchors already
+    # resolve to nothing is born orphan-detected. Promote still succeeds — the
+    # reviewer may anchor to code that does not exist yet on purpose.
+    promoted = parse_scar_text(new_path.read_text(encoding="utf-8"))
+    if anchors_all_dead(promoted, build_repo_context(store.root)):
+        print("  advisory: this scar's anchors resolve to nothing in the current "
+              "tree (born orphan-detected) — confirm the anchors are right")
     return 0
 
 
@@ -120,6 +176,47 @@ def _cmd_transition(args, new_status: str) -> int:
             "re-validating" if new_status == "challenged"
             else "never fires again; history kept (scar why still shows it)")
     print(f"{new_status} -> {path.relative_to(store.root)} ({verb})")
+    return 0
+
+
+def _cmd_orphan(args) -> int:
+    """List firing scars whose every anchor is dead. Read-only by default;
+    --apply persists status: orphaned via store.transition() (human-only)."""
+    store = _require_store()
+    if store is None:
+        return 1
+    ctx = build_repo_context(store.root)
+    findings = detect_orphans(store, ctx)
+
+    if not args.apply:
+        if not findings:
+            print("no orphan-detected scars")
+            return 0
+        for of in findings:
+            print(f"orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
+        print(f"{len(findings)} orphan(s) detected — review, then "
+              "`scar orphan --apply --id N --reason ...` to persist")
+        return 0
+
+    # --apply: persist. Human-only (never wire into CI/lint).
+    if args.id is None:
+        print("--apply requires --id N (persist one reviewed orphan at a time)")
+        return 1
+    target = next((of for of in findings if of.scar_id == args.id), None)
+    if target is None:
+        ids = ", ".join(str(of.scar_id) for of in findings) or "(none)"
+        print(f"scar #{args.id} is not orphan-detected; detected ids: {ids}")
+        return 1
+    note = f"{args.reason} [orphan: {_orphan_reason(target)}]"
+    try:
+        path = store.transition(args.id, "orphaned", reason=note,
+                                date=time.strftime("%Y-%m-%d"))
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    print(f"orphaned -> {path.relative_to(store.root)} "
+          "(never fires again; history kept, anchors-live-again hint will surface "
+          "if the code returns)")
     return 0
 
 
@@ -216,7 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="create .scars/ layout in the current repo")
-    sub.add_parser("lint", help="validate every scar and candidate")
+    p = sub.add_parser("lint", help="validate every scar and candidate")
+    p.add_argument("--fail-orphans", action="store_true",
+                   help="exit non-zero when any scar is orphan-detected")
     sub.add_parser("status", help="counts, titles, broken-file warnings")
 
     p = sub.add_parser("promote", help="review a candidate into an active scar")
@@ -238,6 +337,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("archive", help="retire a scar (never fires; history kept)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why it is retired (e.g. expiry condition met)")
+
+    p = sub.add_parser("orphan", help="list scars whose anchors all went dead")
+    p.add_argument("--apply", action="store_true",
+                   help="persist status: orphaned (human review only — never CI)")
+    p.add_argument("--id", type=int, default=None,
+                   help="with --apply: the detected scar id to persist")
+    p.add_argument("--reason", default="anchors no longer resolve",
+                   help="with --apply: why it is being orphaned (recorded in the note)")
 
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
@@ -278,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
-        "inject": _cmd_inject, "harvest": _cmd_harvest,
+        "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
         "agent": _cmd_agent,
     }[args.command]
     return handler(args)

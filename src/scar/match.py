@@ -39,22 +39,35 @@ class ScarMatch:
         return d
 
 
+def _path_anchor_matches(anchor: str, rel_path: str) -> bool:
+    """One path anchor vs one path: prefix match. THE shared rule — orphan
+    detection imports this so detection and injection can never disagree."""
+    return rel_path.startswith(anchor.rstrip("/"))
+
+
+def _pattern_anchor_matches(pattern: str, text: str) -> bool:
+    """One pattern anchor vs one text (path OR content): case-insensitive
+    regex search. Invalid regex -> False (lint's job; never crash the read
+    path). THE shared rule — orphan detection imports this too."""
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return False
+    return bool(rx.search(text))
+
+
 def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, tuple[str, ...]]:
     score = 0.0
     matched: list[str] = []
     for p in scar.path_anchors:
-        if rel_path.startswith(p.rstrip("/")):
+        if _path_anchor_matches(p, rel_path):
             score = max(score, 2.0)
             matched.append("path")
     for pat in scar.pattern_anchors:
-        try:
-            rx = re.compile(pat, re.IGNORECASE)
-        except re.error:
-            continue  # lint's job; never crash the read path
-        if rx.search(rel_path):
+        if _pattern_anchor_matches(pat, rel_path):
             score = max(score, 1.5)
             matched.append("path_pattern")
-        if new_content and rx.search(new_content):
+        if new_content and _pattern_anchor_matches(pat, new_content):
             score = max(score, 2.5)
             matched.append("content_pattern")
     return score, tuple(dict.fromkeys(matched))
