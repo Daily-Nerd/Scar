@@ -10,9 +10,9 @@ anchors:
   - path: hook/
   - path: src/scar/installer.py
 evidence:
-  - commit: faad8f6
-  - commit: bcd3864
-  - note: "history rewritten at v0.1.0 public release; pre-release SHAs resolve on GitHub by URL but not in fresh clones"
+  - note: "orphaned receipt — pre-v0.1.0 installer commit faad8f6 at github.com/Daily-Nerd/Scar/commit/faad8f6 (unreachable in fresh clones)"
+  - note: "orphaned receipt — pre-v0.1.0 hooks commit bcd3864 at github.com/Daily-Nerd/Scar/commit/bcd3864 (unreachable in fresh clones)"
+  - note: "both SHAs orphaned by the fresh-start force-push at the v0.1.0 public release; resolve on GitHub by URL until GC, not in fresh clones"
 status: active
 ---
 

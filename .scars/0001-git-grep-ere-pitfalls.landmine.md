@@ -11,9 +11,7 @@ anchors:
   - path: src/scar/harvest.py
   - pattern: "git.{0,20}grep"
 evidence:
-  - commit: 5c63b14
-  - note: "produced a fake 0% anchor-survival run before diagnosis (gate 0.2)"
-  - note: "history rewritten at v0.1.0 public release; pre-release SHAs resolve on GitHub by URL but not in fresh clones"
+  - note: "orphaned receipt — pre-v0.1.0 commit 5c63b14 produced a fake 0% anchor-survival run before diagnosis (gate 0.2); resolves at github.com/Daily-Nerd/Scar/commit/5c63b14 until GC, not in fresh clones (rewritten at the v0.1.0 release)"
 expires:
   condition: "resolver layer gains integration tests over its git invocations"
   review_after: 2027-06-09
