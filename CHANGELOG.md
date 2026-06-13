@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/Daily-Nerd/Scar/compare/v0.4.0...v0.5.0) (2026-06-13)
+
+
+### Features
+
+* **harvest:** precision@N reporting CLI — close the measurement loop ([#53](https://github.com/Daily-Nerd/Scar/issues/53)) ([100bd1d](https://github.com/Daily-Nerd/Scar/commit/100bd1d46bbac981a3629b74c237fc0584f5ce05))
+* **harvest:** ranking layer — heuristic scorer + label-capture instrument ([#39](https://github.com/Daily-Nerd/Scar/issues/39)) ([7369f73](https://github.com/Daily-Nerd/Scar/commit/7369f738d3fe356a0290cbf05f0654a48587ee9f))
+* **lifecycle:** lint warns on evidence commit SHAs unreachable from HEAD ([#44](https://github.com/Daily-Nerd/Scar/issues/44)) ([714357e](https://github.com/Daily-Nerd/Scar/commit/714357e9b6366ec67d71d086cf62d8dafbcae976))
+* **lifecycle:** orphan detection — resolution failure, loud in CI ([#34](https://github.com/Daily-Nerd/Scar/issues/34)) ([421a12a](https://github.com/Daily-Nerd/Scar/commit/421a12aae25cc46f6aa40593a6274bb755d4b81b))
+* **lifecycle:** partial-anchor rot — surface dead anchors on firing scars ([#40](https://github.com/Daily-Nerd/Scar/issues/40)) ([85fd57e](https://github.com/Daily-Nerd/Scar/commit/85fd57e397055576bd754c3d606417274d6a9d5c))
+
+
+### Bug Fixes
+
+* **scars:** drop [#6](https://github.com/Daily-Nerd/Scar/issues/6) orphaned receipt, broaden scar [#5](https://github.com/Daily-Nerd/Scar/issues/5) for squash-merge ([#51](https://github.com/Daily-Nerd/Scar/issues/51)) ([4c63ac5](https://github.com/Daily-Nerd/Scar/commit/4c63ac50c648d8ec47190c6045987a276c9fb9bf))
+* **scars:** re-anchor 3 ghost pattern anchors to real code ([#42](https://github.com/Daily-Nerd/Scar/issues/42)) ([00a2fcb](https://github.com/Daily-Nerd/Scar/commit/00a2fcb5c41c165f260019ec95bc636b18d17491))
+* **scars:** replace 3 orphaned bare commit-SHA receipts with self-contained notes ([#46](https://github.com/Daily-Nerd/Scar/issues/46)) ([a224619](https://github.com/Daily-Nerd/Scar/commit/a224619f47387cce401039bf9ddbb93cb3841641))
+
 ## [0.4.0](https://github.com/Daily-Nerd/Scar/compare/v0.3.0...v0.4.0) (2026-06-12)
 
 
