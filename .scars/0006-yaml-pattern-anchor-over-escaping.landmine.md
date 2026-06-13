@@ -12,7 +12,6 @@ anchors:
   - path: .scars/
 evidence:
   - pr: 40
-  - commit: f12354f
   - note: scar 1 grep pattern matched only its own body, never experiments/anchor-survival/RESULTS.md
 expires:
   condition: "pattern anchors are authored through a validated path (e.g. scar draft) that escapes regex correctly, OR lint rejects a pattern whose only pre-exclusion match is the scar's own file"
