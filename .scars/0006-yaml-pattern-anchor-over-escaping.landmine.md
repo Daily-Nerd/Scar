@@ -1,24 +1,23 @@
 ---
-id: 0
+id: 6
 type: landmine
 title: Pattern anchors over-escape through YAML double-quotes and silently only self-match
 severity: medium
 confidence: 0.9
 created: 2026-06-13
-authors: ["claude-code"]
+authors: ["claude-code", "kibukx"]
 anchors:
   - path: src/scar/orphan.py
   - path: src/scar/match.py
   - path: .scars/
 evidence:
   - pr: 40
-  - issue: 41
   - commit: f12354f
-  - note: "scar 1 grep pattern matched only its own body, never experiments/anchor-survival/RESULTS.md"
+  - note: scar 1 grep pattern matched only its own body, never experiments/anchor-survival/RESULTS.md
 expires:
   condition: "pattern anchors are authored through a validated path (e.g. scar draft) that escapes regex correctly, OR lint rejects a pattern whose only pre-exclusion match is the scar's own file"
   review_after: 2027-06-13
-status: candidate
+status: active
 ---
 
 A regex written in a scar's `pattern:` field passes through YAML double-quoted
