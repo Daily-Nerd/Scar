@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from scar.harvest import harvest
+from scar.harvest import harvest, score_candidate, candidate_id, precision_at_n
 
 
 def git(repo, *args):
@@ -61,3 +61,194 @@ def test_clean_repo_yields_empty_sections(tmp_path):
     git(tmp_path, "commit", "-qm", "feat: initial")
     result = harvest(tmp_path)
     assert result["reverts"] == [] and result["deleted_components"] == []
+
+
+# ---------------------------------------------------------------------------
+# Ranking / scoring tests
+# ---------------------------------------------------------------------------
+
+def test_score_is_deterministic():
+    """Same candidate dict → same score across repeated calls."""
+    candidate = {"commit": "abc12345", "date": "2024-03-01",
+                 "subject": "Revert #123 broken deploy"}
+    s1 = score_candidate("revert", candidate)
+    s2 = score_candidate("revert", candidate)
+    assert s1 == s2
+
+
+def test_revert_with_pr_ref_outscores_bare_revert():
+    """A revert linked to a PR/issue (#123) should score higher than a bare one."""
+    base = {"commit": "aaa11111", "date": "2025-01-01", "subject": "Revert broken deploy"}
+    linked = {"commit": "bbb22222", "date": "2025-01-01", "subject": "Revert #456 broken deploy"}
+    assert score_candidate("revert", linked) > score_candidate("revert", base)
+
+
+def test_deleted_component_many_files_outscores_few():
+    """Deleted component with files_deleted > threshold outscores one below threshold."""
+    few = {"component": "apps/small", "died": "2025-01-01",
+           "death_commit": "abc", "death_subject": "rm small", "files_deleted": 1}
+    many = {"component": "apps/big", "died": "2025-01-01",
+            "death_commit": "def", "death_subject": "rm big", "files_deleted": 10}
+    assert score_candidate("deleted_component", many) > score_candidate("deleted_component", few)
+
+
+def test_flapping_more_oscillations_outscores_fewer():
+    """Flapping with oscillation_count=3 outscores oscillation_count=1."""
+    low = {"file": "deploy.yaml", "key": "replicas", "sequence": "1->3->1",
+           "commits": ["a", "b", "c"], "oscillation_count": 1}
+    high = {"file": "deploy.yaml", "key": "replicas", "sequence": "1->3->1->3->1->3->1",
+            "commits": ["a", "b", "c", "d", "e", "f", "g"], "oscillation_count": 3}
+    assert score_candidate("flapping", high) > score_candidate("flapping", low)
+
+
+@pytest.fixture
+def flapping_history(tmp_path):
+    """History with 4 oscillation cycles for the same key (1→3→1→3→1→3→1→3→1)."""
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    comp = tmp_path / "apps" / "svc"
+    comp.mkdir(parents=True)
+    (comp / "deploy.yaml").write_text("replicas: 1\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "feat: initial")
+    for _ in range(4):
+        (comp / "deploy.yaml").write_text("replicas: 3\n")
+        git(tmp_path, "commit", "-qam", "scale up")
+        (comp / "deploy.yaml").write_text("replicas: 1\n")
+        git(tmp_path, "commit", "-qam", "scale down")
+    return tmp_path
+
+
+def test_flapping_oscillation_count_gt_1(flapping_history):
+    """_flapping must count all A→B→A cycles, not just detect the first one."""
+    result = harvest(flapping_history)
+    flaps = result["flapping"]
+    assert len(flaps) >= 1
+    rep = next(f for f in flaps if f["key"] == "replicas")
+    # 4 up+down pairs = 4 oscillation cycles
+    assert rep["oscillation_count"] >= 2, (
+        f"Expected oscillation_count >= 2 for 4 cycles, got {rep['oscillation_count']}"
+    )
+
+
+def test_comment_do_not_outscores_generic_xxx():
+    """A 'DO NOT delete' comment should outscore a generic XXX comment."""
+    generic = {"location": "src/foo.py:10", "text": "XXX fix this later"}
+    specific = {"location": "src/bar.py:20", "text": "DO NOT delete — load-bearing init"}
+    assert score_candidate("comment", specific) > score_candidate("comment", generic)
+
+
+def test_comment_base_below_revert_and_deleted_bases():
+    """comment base score (no bonus) is below revert base and deleted_component base.
+
+    Raw grep results are the noisiest signal, so even a generic XXX comment
+    must rank below a plain revert or a plain deleted component (same 'no bonus' conditions).
+    """
+    generic_comment = {"location": "src/foo.py:10", "text": "XXX old hack"}
+    plain_revert = {"commit": "aaa11111", "date": "2020-01-01", "subject": "Revert something"}
+    plain_deleted = {"component": "apps/old", "died": "2020-01-01",
+                     "death_commit": "bbb", "death_subject": "rm old", "files_deleted": 1}
+    comment_score = score_candidate("comment", generic_comment)
+    assert comment_score < score_candidate("revert", plain_revert)
+    assert comment_score < score_candidate("deleted_component", plain_deleted)
+
+
+@pytest.fixture
+def multi_history(tmp_path):
+    """Richer history: 2 reverts (one with PR ref, one bare) to verify sort order."""
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "a.txt").write_text("x")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "feat: initial")
+    # bare revert (lower score)
+    git(tmp_path, "commit", "-q", "--allow-empty", "-m", "Revert broken thing")
+    # linked revert (higher score — PR ref)
+    git(tmp_path, "commit", "-q", "--allow-empty", "-m", "Revert #99 broken deploy")
+    return tmp_path
+
+
+def test_harvest_sections_sorted_by_score_descending(multi_history):
+    """Each section in harvest() output with >=2 items must be sorted score descending."""
+    result = harvest(multi_history)
+    reverts = result["reverts"]
+    # Fixture produces 2 reverts — verify they are sorted
+    assert len(reverts) >= 2, "Expected at least 2 reverts in multi_history fixture"
+    scores = [c["score"] for c in reverts]
+    assert scores == sorted(scores, reverse=True), (
+        f"Reverts not sorted by score descending: {scores}"
+    )
+
+
+def test_every_candidate_has_score_and_id(history):
+    """Every candidate dict returned by harvest() must have score: float and id: str."""
+    result = harvest(history)
+    for section_name, candidates in result.items():
+        for c in candidates:
+            assert "score" in c, f"Missing 'score' in {section_name} candidate: {c}"
+            assert isinstance(c["score"], float), (
+                f"score must be float, got {type(c['score'])} in {section_name}"
+            )
+            assert "id" in c, f"Missing 'id' in {section_name} candidate: {c}"
+            assert isinstance(c["id"], str), (
+                f"id must be str, got {type(c['id'])} in {section_name}"
+            )
+            assert len(c["id"]) == 10, (
+                f"id must be 10 hex chars, got len={len(c['id'])} in {section_name}"
+            )
+
+
+def test_stable_candidate_id():
+    """Same candidate across two calls → identical id; different candidates → different ids."""
+    revert_a = {"commit": "abc12345", "date": "2025-01-01", "subject": "Revert X"}
+    revert_b = {"commit": "xyz99999", "date": "2025-02-01", "subject": "Revert Y"}
+
+    id_a1 = candidate_id("revert", revert_a)
+    id_a2 = candidate_id("revert", revert_a)
+    id_b = candidate_id("revert", revert_b)
+
+    assert id_a1 == id_a2, "Same candidate must produce the same id across calls"
+    assert id_a1 != id_b, "Different candidates must produce different ids"
+
+    # Also verify across types — same field content but different signal type → different id
+    deleted = {"component": "abc12345", "died": "2025-01-01",
+               "death_commit": "a", "death_subject": "rm", "files_deleted": 1}
+    assert candidate_id("revert", revert_a) != candidate_id("deleted_component", deleted)
+
+
+def test_precision_at_n():
+    """precision_at_n returns fraction of labeled top-N that are 'keep'; unlabeled excluded.
+
+    Contract enforced by this test:
+    - Candidates are taken by position (caller pre-sorts by score desc).
+    - Only candidates with an id present in the labels dict are counted.
+    - Unlabeled candidates are excluded from BOTH numerator and denominator.
+    - If no labeled candidates appear in top-N, returns 0.0.
+
+    Fixture: 5 candidates ranked [A, B, C, D, E].
+    Labels: A=keep, B=discard, D=keep (C and E are unlabeled).
+    N=3 → top-3 = [A, B, C].  Labeled subset = [A, B].  Kept = [A].
+    Expected precision@3 = 1/2 = 0.5.
+    """
+    ranked = [
+        {"id": "A", "score": 5.0},
+        {"id": "B", "score": 4.0},
+        {"id": "C", "score": 3.0},  # unlabeled
+        {"id": "D", "score": 2.0},
+        {"id": "E", "score": 1.0},  # unlabeled
+    ]
+    labels = {"A": "keep", "B": "discard", "D": "keep"}
+
+    assert precision_at_n(ranked, labels, n=3) == 0.5
+
+    # N=5 → top-5 = [A, B, C, D, E]. Labeled = [A, B, D]. Kept = [A, D]. P = 2/3.
+    result = precision_at_n(ranked, labels, n=5)
+    assert abs(result - 2 / 3) < 1e-9
+
+    # N=1 → top-1 = [A]. Labeled = [A]. Kept = [A]. P = 1.0.
+    assert precision_at_n(ranked, labels, n=1) == 1.0
+
+    # All unlabeled in top-N → returns 0.0 (not a division by zero)
+    assert precision_at_n(ranked, {}, n=3) == 0.0

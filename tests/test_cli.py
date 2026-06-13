@@ -335,3 +335,159 @@ def test_status_reports_detected_and_persisted_orphan_counts(repo, capsys):
     out = capsys.readouterr().out
     assert "1 orphan-detected" in out
     assert "1 orphaned" in out  # persisted, separately counted
+
+
+# ---------------------------------------------------------------------------
+# Harvest ranking surfaces + label instrument (Issue #38, batch 2)
+# ---------------------------------------------------------------------------
+
+def _git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), *args], check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.fixture
+def harvest_repo(tmp_path):
+    """Synthetic git history yielding harvest candidates across sections:
+    a deleted component, a revert-shaped commit, and a flapping value."""
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(work.parent, "init", "-q", "-b", "main", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    comp = work / "apps" / "shortlived"
+    comp.mkdir(parents=True)
+    (comp / "deploy.yaml").write_text("replicas: 1\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "feat: add shortlived app")
+    (comp / "deploy.yaml").write_text("replicas: 3\n")
+    _git(work, "commit", "-qam", "feat: scale up")
+    (comp / "deploy.yaml").write_text("replicas: 1\n")
+    _git(work, "commit", "-qam", "fix: revert replicas, instance broke")
+    (comp / "deploy.yaml").unlink()
+    comp.rmdir()
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "chore: remove shortlived app")
+    return work
+
+
+def test_harvest_prints_id_and_score_per_candidate(harvest_repo, capsys):
+    """Each candidate line must surface its stable id and score so a human can
+    reference it (the id is what `scar harvest --label` consumes)."""
+    assert main(["harvest", str(harvest_repo)]) == 0
+    out = capsys.readouterr().out
+    from scar.harvest import harvest
+    result = harvest(harvest_repo)
+    # pick any non-empty section's first candidate; its id and score must print
+    for section in result.values():
+        for c in section:
+            assert c["id"] in out, f"id {c['id']} not surfaced in harvest output"
+            # score printed to one decimal, e.g. "3.0"
+            assert f"{c['score']:.1f}" in out, f"score {c['score']} not surfaced"
+
+
+def test_harvest_top_k_returns_n_highest_across_sections(harvest_repo, capsys):
+    """--top-k N shows exactly the N highest-scoring candidates across ALL
+    sections, ranked by raw score (no cross-type normalization)."""
+    from scar.harvest import harvest
+    result = harvest(harvest_repo)
+    all_cands = [c for section in result.values() for c in section]
+    expected = sorted(all_cands, key=lambda c: c["score"], reverse=True)[:2]
+
+    assert main(["harvest", str(harvest_repo), "--top-k", "2"]) == 0
+    out = capsys.readouterr().out
+    # exactly the 2 highest ids appear; the rest do not
+    for c in expected:
+        assert c["id"] in out, f"top-k missed expected id {c['id']}"
+    excluded = [c for c in all_cands if c not in expected]
+    for c in excluded:
+        assert c["id"] not in out, f"top-k leaked excluded id {c['id']}"
+    # ranked descending: first expected id appears before the second
+    assert out.index(expected[0]["id"]) < out.index(expected[1]["id"])
+
+
+def _first_candidate_id(repo):
+    from scar.harvest import harvest
+    result = harvest(repo)
+    for section in result.values():
+        for c in section:
+            return c["id"]
+    raise AssertionError("fixture produced no candidates")
+
+
+def test_harvest_label_appends_jsonl_line(harvest_repo, tmp_path, capsys, monkeypatch):
+    """--label <id> keep appends one well-formed JSONL line with all fields."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-06-13")
+    cid = _first_candidate_id(harvest_repo)
+
+    assert main(["harvest", str(harvest_repo), "--label", cid, "keep",
+                 "--note", "real deadend"]) == 0
+    lines = labels.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["id"] == cid
+    assert rec["label"] == "keep"
+    assert rec["note"] == "real deadend"
+    assert rec["date"] == "2026-06-13"
+    assert "repo" in rec
+
+
+def test_harvest_label_creates_parent_dir(harvest_repo, tmp_path, monkeypatch):
+    """The labels dir/file is created on first write if missing."""
+    import scar.cli as cli
+    labels = tmp_path / "nested" / "experiments" / "harvest" / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    cid = _first_candidate_id(harvest_repo)
+    assert not labels.parent.exists()
+    assert main(["harvest", str(harvest_repo), "--label", cid, "discard"]) == 0
+    assert labels.exists()
+
+
+def test_harvest_label_appends_not_overwrites(harvest_repo, tmp_path, monkeypatch):
+    """A second --label appends; it does not clobber the first line."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    cid = _first_candidate_id(harvest_repo)
+    main(["harvest", str(harvest_repo), "--label", cid, "keep"])
+    main(["harvest", str(harvest_repo), "--label", cid, "discard"])
+    assert len(labels.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_harvest_label_rejects_unknown_id(harvest_repo, tmp_path, capsys, monkeypatch):
+    """An id not present in the current harvest is rejected; nothing appended."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    assert main(["harvest", str(harvest_repo), "--label", "deadbeef00", "keep"]) == 1
+    out = capsys.readouterr().out
+    assert "not a harvest candidate" in out.lower() or "unknown" in out.lower()
+    assert not labels.exists()
+
+
+def test_harvest_label_rejects_bogus_label(harvest_repo, tmp_path, capsys, monkeypatch):
+    """Only keep/discard are valid; a third value is rejected (precision_at_n
+    contract depends on exactly these two)."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    cid = _first_candidate_id(harvest_repo)
+    assert main(["harvest", str(harvest_repo), "--label", cid, "maybe"]) == 1
+    out = capsys.readouterr().out
+    assert "keep" in out.lower() and "discard" in out.lower()
+    assert not labels.exists()
+
+
+def test_harvest_label_date_is_monkeypatchable(harvest_repo, tmp_path, monkeypatch):
+    """The date field comes from time.strftime, monkeypatchable for determinism."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "1999-12-31")
+    cid = _first_candidate_id(harvest_repo)
+    main(["harvest", str(harvest_repo), "--label", cid, "keep"])
+    rec = json.loads(labels.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["date"] == "1999-12-31"

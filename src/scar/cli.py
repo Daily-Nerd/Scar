@@ -262,24 +262,107 @@ def _cmd_inject(args) -> int:
     return 0
 
 
+# Per-section display: section key -> (heading, one-line formatter). The
+# formatters omit the leading "- " and the [id score] prefix; _cmd_harvest
+# adds those uniformly so both the sectioned and --top-k views match.
+_HARVEST_SECTIONS = [
+    ("reverts", "Revert-shaped commits (deadend candidates)",
+     lambda c: f"`{c['commit']}` {c['date']} — {c['subject']}"),
+    ("deleted_components", "Components tried then deleted (deadend candidates)",
+     lambda c: f"**{c['component']}** died {c['died']} (`{c['death_commit']}` {c['death_subject']})"),
+    ("flapping", "Flapping values A->B->A (fence candidates)",
+     lambda c: f"`{c['file']}` **{c['key']}**: {c['sequence']}"),
+    ("comments", "Comment archaeology (fence candidates)",
+     lambda c: f"`{c['location']}` — {c['text']}"),
+]
+_HARVEST_FMT = {key: fmt for key, _title, fmt in _HARVEST_SECTIONS}
+
+
+def _harvest_line(section_key: str, c: dict) -> str:
+    """One rendered candidate line: id + score prefix the human-readable body.
+    The id is what `scar harvest --label` consumes; score is the rank key."""
+    return f"- [{c['id']} score {c['score']:.1f}] {_HARVEST_FMT[section_key](c)}"
+
+
+# Labels JSONL lives under the harvested repo at experiments/harvest/labels.jsonl
+# (instrument/data, committed like the anchor-survival experiment). Tests set
+# LABELS_PATH_OVERRIDE to a tmp path so they never touch the real file.
+LABELS_PATH_OVERRIDE: Path | None = None
+_VALID_LABELS = ("keep", "discard")
+
+
+def _labels_path(repo: Path) -> Path:
+    """Resolve where label judgements are appended. Override wins (tests);
+    otherwise experiments/harvest/labels.jsonl under the harvested repo root."""
+    if LABELS_PATH_OVERRIDE is not None:
+        return LABELS_PATH_OVERRIDE
+    return repo / "experiments" / "harvest" / "labels.jsonl"
+
+
+def _harvest_candidate_ids(repo: Path) -> set[str]:
+    """All candidate ids the current harvest of `repo` produces — the valid set
+    --label may reference (mirrors orphan --apply validating --id)."""
+    from .harvest import harvest
+    result = harvest(repo)
+    return {c["id"] for cands in result.values() for c in cands}
+
+
+def _harvest_label(repo: Path, args) -> int:
+    cid, label = args.label
+    if label not in _VALID_LABELS:
+        print(f"invalid label '{label}'; use one of: {', '.join(_VALID_LABELS)} "
+              "(precision@N counts only keep/discard — a third value corrupts it)")
+        return 1
+    if cid not in _harvest_candidate_ids(repo):
+        print(f"id '{cid}' is not a harvest candidate of {repo.name} — "
+              "run `scar harvest` to list valid ids; nothing recorded")
+        return 1
+    record = {
+        "id": cid,
+        "label": label,
+        "note": args.note,
+        "date": time.strftime("%Y-%m-%d"),
+        "repo": repo.name,
+    }
+    path = _labels_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+    print(f"recorded {label} for {cid} -> {path}")
+    return 0
+
+
 def _cmd_harvest(args) -> int:
     from .harvest import harvest  # subprocess-heavy; import only when used
-    result = harvest(Path(args.repo).resolve())
+    repo = Path(args.repo).resolve()
+
+    if args.label is not None:
+        return _harvest_label(repo, args)
+
+    result = harvest(repo)
     total = sum(len(v) for v in result.values())
-    print(f"# Harvest candidates — {Path(args.repo).resolve().name} "
+
+    if args.top_k is not None:
+        # Cross-section ranking by RAW score, no normalization. The per-type
+        # base constants (comment < flapping < deleted < revert) are an
+        # intentional precision prior: signal type predicts precision, so a
+        # revert outranks a grep hit by design. Normalizing would erase that.
+        flat = [(key, c) for key, cands in result.items() for c in cands]
+        flat.sort(key=lambda kc: kc[1]["score"], reverse=True)
+        top = flat[:args.top_k]
+        print(f"# Harvest top {len(top)} — {repo.name} "
+              f"(of {total} raw, cross-section by raw score; "
+              "curation required, expect ~13% precision)\n")
+        for key, c in top:
+            print(_harvest_line(key, c))
+        return 0
+
+    print(f"# Harvest candidates — {repo.name} "
           f"({total} raw; curation required, expect ~13% precision)\n")
-    sections = [("reverts", "Revert-shaped commits (deadend candidates)",
-                 lambda c: f"- `{c['commit']}` {c['date']} — {c['subject']}"),
-                ("deleted_components", "Components tried then deleted (deadend candidates)",
-                 lambda c: f"- **{c['component']}** died {c['died']} (`{c['death_commit']}` {c['death_subject']})"),
-                ("flapping", "Flapping values A->B->A (fence candidates)",
-                 lambda c: f"- `{c['file']}` **{c['key']}**: {c['sequence']}"),
-                ("comments", "Comment archaeology (fence candidates)",
-                 lambda c: f"- `{c['location']}` — {c['text']}")]
-    for key, title, fmt in sections:
+    for key, title, _fmt in _HARVEST_SECTIONS:
         print(f"## {title} ({len(result[key])})")
         for c in result[key]:
-            print(fmt(c))
+            print(_harvest_line(key, c))
         print()
     return 0
 
@@ -348,6 +431,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--top-k", type=int, default=None,
+                   help="show the N highest-scoring candidates across all sections "
+                        "(raw score, no cross-type normalization)")
+    p.add_argument("--label", nargs=2, metavar=("ID", "LABEL"), default=None,
+                   help="record a curation judgement: <id> keep|discard "
+                        "(appends one line to experiments/harvest/labels.jsonl)")
+    p.add_argument("--note", default="", help="with --label: free-text rationale")
 
     p = sub.add_parser("hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
