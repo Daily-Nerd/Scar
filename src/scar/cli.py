@@ -20,6 +20,7 @@ from .orphan import (
     anchors_all_dead,
     build_repo_context,
     detect_orphans,
+    detect_partial_rot,
 )
 from .render import injection_context, label_line
 from .store import ScarStore, init_scars
@@ -39,17 +40,29 @@ def _cmd_init(_args) -> int:
     return 0
 
 
-def _orphan_reason(finding) -> str:
-    """Human description of why a finding is an orphan — distinguishes a scar
-    with NO anchors (protects nothing) from one whose every anchor went dead."""
-    if not finding.dead_path_anchors and not finding.dead_pattern_anchors:
-        return "no anchors — scar protects nothing"
+def _dead_anchor_summary(finding) -> str:
+    """Shared rendering of a finding's dead anchors — used by both orphan and
+    partial-rot surfaces so the two never drift on how a dead anchor reads."""
     dead = []
     if finding.dead_path_anchors:
         dead.append("paths: " + ", ".join(finding.dead_path_anchors))
     if finding.dead_pattern_anchors:
         dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
-    return "all anchors dead (" + "; ".join(dead) + ")"
+    return "; ".join(dead)
+
+
+def _orphan_reason(finding) -> str:
+    """Human description of why a finding is an orphan — distinguishes a scar
+    with NO anchors (protects nothing) from one whose every anchor went dead."""
+    if not finding.dead_path_anchors and not finding.dead_pattern_anchors:
+        return "no anchors — scar protects nothing"
+    return "all anchors dead (" + _dead_anchor_summary(finding) + ")"
+
+
+def _partial_rot_reason(finding) -> str:
+    """Human description of partial rot — which specific anchors went dead while
+    the scar keeps firing on its survivors (#35)."""
+    return "partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
 
 
 def _cmd_lint(args) -> int:
@@ -70,13 +83,21 @@ def _cmd_lint(args) -> int:
     for of in orphans:
         print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
 
+    # partial rot (#35): firing scars with a dead anchor among live ones.
+    # Advisory only — never a blocking gate, even under --fail-orphans.
+    partial = detect_partial_rot(store, ctx)
+    for pr in partial:
+        print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
+              "— re-anchor to restore full coverage")
+
     # reverse hint: persisted-orphaned scars whose anchors resolve again
     for _f, s in store.parsed():
         if s.status == "orphaned" and not anchors_all_dead(s, ctx):
             print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
                   "again — consider re-activating (scar challenge/archive note)")
 
-    print(f"lint: {len(files)} file(s), {failed} with errors, {len(orphans)} orphan(s)")
+    print(f"lint: {len(files)} file(s), {failed} with errors, "
+          f"{len(orphans)} orphan(s), {len(partial)} partial-rot")
     if failed:
         return 1
     if orphans and getattr(args, "fail_orphans", False):
@@ -108,12 +129,16 @@ def _cmd_status(_args) -> int:
     ctx = build_repo_context(store.root)
     detected = detect_orphans(store, ctx)
     persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
+    partial = detect_partial_rot(store, ctx)
     print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
-          f"{len(persisted)} orphaned (persisted)")
+          f"{len(persisted)} orphaned (persisted), "
+          f"{len(partial)} partial-rot (firing, ≥1 anchor dead)")
     for of in detected:
         print(f"    orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
     for s in persisted:
         print(f"    orphaned [{s.type} #{s.id}] {s.title}")
+    for pr in partial:
+        print(f"    partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
 
     if broken:
         print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
@@ -189,13 +214,21 @@ def _cmd_orphan(args) -> int:
     findings = detect_orphans(store, ctx)
 
     if not args.apply:
+        partial = detect_partial_rot(store, ctx)
         if not findings:
             print("no orphan-detected scars")
-            return 0
-        for of in findings:
-            print(f"orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
-        print(f"{len(findings)} orphan(s) detected — review, then "
-              "`scar orphan --apply --id N --reason ...` to persist")
+        else:
+            for of in findings:
+                print(f"orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
+            print(f"{len(findings)} orphan(s) detected — review, then "
+                  "`scar orphan --apply --id N --reason ...` to persist")
+        # Partial rot is advisory and surfaced separately — never persisted as
+        # orphaned (the fix is re-anchoring, not a status transition). #35.
+        for pr in partial:
+            print(f"partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
+        if partial:
+            print(f"{len(partial)} partial-rot — advisory; re-anchor the dead "
+                  "anchor(s). Not an orphan (still firing on survivors).")
         return 0
 
     # --apply: persist. Human-only (never wire into CI/lint).

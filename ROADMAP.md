@@ -29,9 +29,9 @@ Public at [github.com/Daily-Nerd/Scar](https://github.com/Daily-Nerd/Scar), `sca
 
 - ✅ **MCP server** (`scar_query`, `scar_why`, `scar_draft`) — shipped v0.3.0, dependency-free stdio, drafts gated to candidates/. First non-Claude agent (Codex) arrived and contributed the implementation — the deferral condition resolving itself.
 - ✅ Multi-agent surface: committed `AGENTS.md`, `scar inject --diff`, `scar agent doctor/config` for Codex, Cursor, Windsurf, opencode (v0.3.0)
-- 🔶 CI surface: expiry warnings shipped (`lint`/`status`, v0.2.0); **orphan detection is the next milestone** — content-fingerprint drift → `orphaned` status, loud in CI (principle 3 is not yet enforced by code)
-- ⬜ Harvest ranking layer (gate 0.1 verdict: required — raw precision 13% without it)
-- ⬜ Re-anchoring agent workflow: orphaned scar + orphaning diff → proposed new anchors as a PR
+- ✅ CI surface: expiry warnings (`lint`/`status`, v0.2.0); orphan detection — all-anchors-dead firing scars → `orphaned`, loud in CI (#34); partial-rot advisory — firing scars with ≥1 dead anchor among live ones, named in `lint`/`status`/`orphan` (#35). Principle 3 now enforced by code for both total and partial rot.
+- ✅ Harvest ranking layer — heuristic weighted scorer + label-capture instrument, zero-dep, deterministic (#39). Weights remain intuition until real-repo labels calibrate precision.
+- ⬜ Re-anchoring agent workflow: orphaned/partially-rotted scar + orphaning diff → proposed new anchors as a PR
 - ⬜ Editor surfaces (VS Code gutter marks, LSP code lens) — fences visible to humans, not only agents
 - ⬜ Lint warning on evidence commit SHAs unreachable from HEAD (scar #5's expiry condition)
 
