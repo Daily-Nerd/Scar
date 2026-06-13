@@ -18,7 +18,7 @@ status: active
 
 Scars cite commit SHAs as evidence receipts. Those receipts implicitly assume
 the SHA stays reachable in the repo's history forever. Any history rewrite —
-fresh-start orphan branch, force-push, filter-repo scrub — silently breaks
+fresh-start orphan branch, force-push, filter-repo scrub, or a routine squash-/rebase-merge — silently breaks
 that assumption: the scar still lints clean and still fires (anchors are
 paths/patterns, not commits), but `git show <sha>` fails in every fresh clone,
 so the receipt is unverifiable exactly where strangers would check it.
@@ -28,9 +28,15 @@ Observed at the v0.1.0 public release: the fresh-start force-push orphaned
 until after the push because nothing in the toolchain connects "history
 operation" to "evidence integrity."
 
-Before any history rewrite in a repo with scars: grep `.scars/` for
-`commit:` evidence and either (a) amend those scars with a note explaining the
-rewrite, (b) replace bare SHAs with full GitHub commit URLs (survive as
-unreachable objects, at GC's mercy), or (c) inline the relevant diff/fact into
-a note so the scar is self-contained. Longer term: `scar lint` could warn
-when a cited SHA is unreachable from HEAD.
+The everyday trigger is the merge strategy itself: this repo squash-merges, so a
+feature-branch commit — exactly the SHA you cite while drafting a scar mid-PR —
+is orphaned the moment that PR lands. Rebase-merge does the same; only a true
+merge-commit preserves branch SHAs. So PREFER `pr:`/`issue:` evidence (it
+resolves on GitHub regardless of merge strategy) or a SHA already on the default
+branch, and avoid citing transient feature-branch SHAs at all.
+
+Before any deliberate history rewrite: grep `.scars/` for `commit:` evidence and
+either (a) amend with a note explaining the rewrite, (b) replace bare SHAs with
+full GitHub commit URLs (at GC's mercy), or (c) inline the fact so the scar is
+self-contained. `scar lint` now warns when a cited SHA is unreachable from HEAD
+(#43) — but it fires after the fact; the durable fix is not citing branch SHAs.
