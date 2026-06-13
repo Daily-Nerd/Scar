@@ -277,6 +277,43 @@ def precision_at_n(
     return labeled_keep / labeled_total
 
 
+def precision_report(
+    ranked_candidates: list[dict],
+    labels: dict[str, str],
+    ns: list[int],
+) -> dict:
+    """Assemble a precision@N report against a labeled set (pure, for the CLI).
+
+    Returns:
+      total      — number of ranked candidates
+      labeled    — how many of them have a label
+      base_rate  — precision over ALL labeled, ignoring rank (the no-ranking
+                   baseline = precision_at_n at N=total)
+      at         — one entry per requested N (capped at total, deduped, ascending):
+                   {n, precision, lift (= precision − base_rate), labeled_in_top}
+
+    Caller must pass ranked_candidates pre-sorted by score descending.
+    """
+    total = len(ranked_candidates)
+    labeled = sum(1 for c in ranked_candidates if c.get("id", "") in labels)
+    base_rate = precision_at_n(ranked_candidates, labels, total)
+
+    capped_ns = sorted({min(n, total) for n in ns if n > 0})
+    at = []
+    for n in capped_ns:
+        labeled_in_top = sum(
+            1 for c in ranked_candidates[:n] if c.get("id", "") in labels)
+        precision = precision_at_n(ranked_candidates, labels, n)
+        at.append({
+            "n": n,
+            "precision": precision,
+            "lift": precision - base_rate,
+            "labeled_in_top": labeled_in_top,
+        })
+
+    return {"total": total, "labeled": labeled, "base_rate": base_rate, "at": at}
+
+
 # ---------------------------------------------------------------------------
 # harvest() — annotates and ranks each section
 # ---------------------------------------------------------------------------

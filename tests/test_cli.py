@@ -574,6 +574,47 @@ def test_harvest_label_appends_not_overwrites(harvest_repo, tmp_path, monkeypatc
     assert len(labels.read_text(encoding="utf-8").splitlines()) == 2
 
 
+def test_harvest_precision_reports_at_n_and_lift(harvest_repo, tmp_path, capsys, monkeypatch):
+    """--precision reads labels.jsonl, reports precision@N, base rate and lift."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    cid = _first_candidate_id(harvest_repo)
+    assert main(["harvest", str(harvest_repo), "--label", cid, "keep"]) == 0
+    capsys.readouterr()
+
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "precision@" in out
+    assert "base rate" in out
+    assert "lift" in out
+    assert "1 labeled" in out  # exactly one label recorded
+
+
+def test_harvest_precision_no_labels_is_friendly(harvest_repo, tmp_path, capsys, monkeypatch):
+    """With no labels yet, --precision explains how to start and exits 0."""
+    import scar.cli as cli
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", tmp_path / "labels.jsonl")
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "no labels" in out
+    assert "--label" in out
+
+
+def test_harvest_precision_at_override(harvest_repo, tmp_path, capsys, monkeypatch):
+    """--at overrides the default N set."""
+    import scar.cli as cli
+    labels = tmp_path / "labels.jsonl"
+    monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
+    cid = _first_candidate_id(harvest_repo)
+    main(["harvest", str(harvest_repo), "--label", cid, "keep"])
+    capsys.readouterr()
+    assert main(["harvest", str(harvest_repo), "--precision", "--at", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "precision@1" in out
+    assert "precision@5" not in out  # default set suppressed by override
+
+
 def test_harvest_label_rejects_unknown_id(harvest_repo, tmp_path, capsys, monkeypatch):
     """An id not present in the current harvest is rejected; nothing appended."""
     import scar.cli as cli

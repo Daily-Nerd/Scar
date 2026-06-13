@@ -4,7 +4,9 @@ import subprocess
 
 import pytest
 
-from scar.harvest import harvest, score_candidate, candidate_id, precision_at_n
+from scar.harvest import (
+    harvest, score_candidate, candidate_id, precision_at_n, precision_report,
+)
 
 
 def git(repo, *args):
@@ -252,3 +254,45 @@ def test_precision_at_n():
 
     # All unlabeled in top-N → returns 0.0 (not a division by zero)
     assert precision_at_n(ranked, {}, n=3) == 0.0
+
+
+def test_precision_report_computes_lift_over_base_rate():
+    """precision_report assembles precision@N, the base rate (precision over ALL
+    labeled = no-ranking baseline), and lift = precision@N − base_rate.
+
+    Fixture: ranked [A,B,C,D,E]; labels A=keep, B=discard, D=keep (C,E unlabeled).
+    base_rate = keeps / labeled over all = {A,D} / {A,B,D} = 2/3.
+    @1: top=[A], labeled=[A], P=1.0, lift=1/3, labeled_in_top=1.
+    @3: top=[A,B,C], labeled=[A,B], P=1/2, lift=1/2−2/3, labeled_in_top=2.
+    """
+    ranked = [
+        {"id": "A", "score": 5.0},
+        {"id": "B", "score": 4.0},
+        {"id": "C", "score": 3.0},
+        {"id": "D", "score": 2.0},
+        {"id": "E", "score": 1.0},
+    ]
+    labels = {"A": "keep", "B": "discard", "D": "keep"}
+    rep = precision_report(ranked, labels, ns=[1, 3])
+
+    assert rep["total"] == 5
+    assert rep["labeled"] == 3
+    assert abs(rep["base_rate"] - 2 / 3) < 1e-9
+    at = {e["n"]: e for e in rep["at"]}
+    assert at[1]["precision"] == 1.0
+    assert at[1]["labeled_in_top"] == 1
+    assert abs(at[1]["lift"] - (1.0 - 2 / 3)) < 1e-9
+    assert at[3]["precision"] == 0.5
+    assert at[3]["labeled_in_top"] == 2
+    assert abs(at[3]["lift"] - (0.5 - 2 / 3)) < 1e-9
+
+
+def test_precision_report_caps_n_and_dedupes():
+    """N values above the candidate count cap to it and dedupe — asking @5/@10/@20
+    of a 3-candidate harvest yields a single @3 row, not three identical rows."""
+    ranked = [{"id": x, "score": 1.0} for x in ("A", "B", "C")]
+    rep = precision_report(ranked, {}, ns=[5, 10, 20])
+    assert [e["n"] for e in rep["at"]] == [3]
+    assert rep["total"] == 3
+    assert rep["labeled"] == 0
+    assert rep["base_rate"] == 0.0
