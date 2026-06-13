@@ -326,6 +326,31 @@ _SECTION_TYPES = {
 }
 
 
+def _candidate_path(signal_type: str, c: dict) -> str:
+    """Repo-relative path a candidate points at ('' if it has none, e.g. reverts)."""
+    if signal_type == "comment":
+        return c.get("location", "").split(":", 1)[0]
+    if signal_type == "deleted_component":
+        return c.get("component", "")
+    if signal_type == "flapping":
+        return c.get("file", "")
+    return ""
+
+
+def _in_scars(path: str) -> bool:
+    """True if a candidate path lives under the repo's own .scars/ tree.
+
+    Harvest must not re-surface a repo's own negative knowledge as a fresh
+    candidate. Comment-archaeology is the loud case — scar bodies quote the very
+    DO-NOT/load-bearing/intentional prose the grep hunts for, so every promoted
+    scar self-matches (same self-ref class as #35). Excluded uniformly (#55).
+
+    Matches `.scars` as any path segment, not just the root — nested scar trees
+    (e.g. an experiment fixture's own .scars/) are the same self-ref noise.
+    """
+    return ".scars" in path.split("/")
+
+
 def _annotate_and_sort(candidates: list[dict], signal_type: str,
                        now_months: int | None = None) -> list[dict]:
     """Add 'score' and 'id' fields to each candidate, then sort by score desc."""
@@ -344,6 +369,14 @@ def harvest(repo: Path) -> dict[str, list[dict]]:
         "deleted_components": _deleted_components(repo),
         "flapping": _flapping(repo),
         "comments": _comment_archaeology(repo),
+    }
+    # Drop a repo's own .scars/ tree — self-ref noise, never a fresh candidate
+    # (#55). Filtered in code, not via a git grep pathspec (landmine #1: a
+    # zero-match pathspec silently empties the whole result set).
+    raw = {
+        section: [c for c in candidates
+                  if not _in_scars(_candidate_path(_SECTION_TYPES[section], c))]
+        for section, candidates in raw.items()
     }
     return {
         section: _annotate_and_sort(candidates, _SECTION_TYPES[section], now_months)
