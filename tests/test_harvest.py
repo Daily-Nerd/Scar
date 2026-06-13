@@ -65,6 +65,46 @@ def test_clean_repo_yields_empty_sections(tmp_path):
     assert result["reverts"] == [] and result["deleted_components"] == []
 
 
+def test_excludes_scars_dir_from_candidates(tmp_path):
+    """Scar #55: harvest must not surface candidates pointing into .scars/.
+
+    Comment-archaeology greps DO-NOT/load-bearing/intentional prose, and a
+    repo's own scar bodies are full of exactly that. Without an exclusion every
+    promoted scar self-matches and reads as a fresh candidate (same self-ref
+    class as #35). .scars/** must produce zero candidates across all detectors.
+    """
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    # real code comment — SHOULD still be harvested
+    (tmp_path / "app.py").write_text(
+        "# DO NOT remove this init — load-bearing\nx = 1\n")
+    # promoted scar bodies full of trigger prose — must NOT be harvested,
+    # at the repo root AND nested (e.g. a fixture's own .scars/ tree).
+    body = ("---\ntype: deadend\n---\n"
+            "This is intentional. DO NOT remove; load-bearing workaround.\n")
+    root_scars = tmp_path / ".scars"
+    root_scars.mkdir()
+    (root_scars / "0001-x.deadend.md").write_text(body)
+    nested_scars = tmp_path / "experiments" / "fixture" / ".scars"
+    nested_scars.mkdir(parents=True)
+    (nested_scars / "0001-y.fence.md").write_text(body)
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "feat: code + scars")
+
+    result = harvest(tmp_path)
+    locations = [c["location"] for c in result["comments"]]
+    assert any(loc.startswith("app.py") for loc in locations), \
+        "real code comment should still be harvested"
+    all_paths = (
+        locations
+        + [c["component"] for c in result["deleted_components"]]
+        + [c["file"] for c in result["flapping"]]
+    )
+    assert not any(".scars" in p.split("/") for p in all_paths), \
+        "no candidate may point into any .scars/ tree (self-ref noise, #55)"
+
+
 # ---------------------------------------------------------------------------
 # Ranking / scoring tests
 # ---------------------------------------------------------------------------
