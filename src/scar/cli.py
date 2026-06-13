@@ -16,6 +16,7 @@ from pathlib import Path
 from .lint import lint_text
 from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
 from .model import parse_scar_text
+from .evidence import unreachable_evidence
 from .orphan import (
     anchors_all_dead,
     build_repo_context,
@@ -96,8 +97,20 @@ def _cmd_lint(args) -> int:
             print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
                   "again — consider re-activating (scar challenge/archive note)")
 
+    # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
+    # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
+    unreachable = unreachable_evidence(store, store.root)
+    if unreachable is None:
+        print("note: shallow clone — evidence-reachability check skipped "
+              "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
+        unreachable = []
+    for ue in unreachable:
+        print(f"WARNING evidence-unreachable: scar #{ue.scar_id} — commit "
+              f"{ue.sha} {ue.reason}, not reachable from HEAD")
+
     print(f"lint: {len(files)} file(s), {failed} with errors, "
-          f"{len(orphans)} orphan(s), {len(partial)} partial-rot")
+          f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
+          f"{len(unreachable)} unreachable-evidence")
     if failed:
         return 1
     if orphans and getattr(args, "fail_orphans", False):

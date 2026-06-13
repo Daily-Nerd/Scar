@@ -327,6 +327,51 @@ def test_lint_reverse_hint_fires_when_orphaned_anchors_return(tmp_path, monkeypa
     assert "live again" in out and "#1" in out
 
 
+# ---------------------------------------------------------------------------
+# Evidence-reachability surface (Issue #43, scar #5's expiry condition).
+# A commit-SHA receipt that doesn't resolve from HEAD is advisory: warned,
+# counted, never gated. Needs a real git repo (reachability is a git fact).
+# ---------------------------------------------------------------------------
+
+EVIDENCE_SCAR = """\
+---
+id: 1
+type: deadend
+title: Cites a commit that no longer resolves
+severity: medium
+confidence: 0.8
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/
+evidence:
+  - commit: deadbeef
+status: active
+---
+
+The cited SHA was orphaned by a history rewrite.
+"""
+
+
+def test_lint_warns_on_unreachable_evidence_sha(tmp_path, monkeypatch, capsys):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("x = 1\n")
+    (tmp_path / ".scars" / "0001-stale.deadend.md").write_text(EVIDENCE_SCAR)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    assert main(["lint"]) == 0  # advisory, never fails by default
+    out = capsys.readouterr().out
+    assert "evidence-unreachable" in out.lower()
+    assert "#1" in out
+    assert "deadbeef" in out
+    assert "1 unreachable-evidence" in out  # counted in the summary
+
+
 def test_status_reports_detected_and_persisted_orphan_counts(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)        # detected
