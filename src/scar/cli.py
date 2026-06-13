@@ -378,12 +378,78 @@ def _harvest_label(repo: Path, args) -> int:
     return 0
 
 
+# Below this many labels the heuristic weights are still intuition (see the
+# tuning note in harvest.py) — precision@N is reported but flagged as unstable.
+_CALIBRATION_THRESHOLD = 50
+_DEFAULT_PRECISION_NS = [5, 10, 20]
+
+
+def _load_labels(path: Path) -> dict[str, str]:
+    """Read labels.jsonl into {id: label}; last write wins (a re-label supersedes).
+    Missing file or malformed lines are skipped — reporting must never crash."""
+    labels: dict[str, str] = {}
+    if not path.exists():
+        return labels
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        cid, lab = rec.get("id"), rec.get("label")
+        if cid and lab:
+            labels[cid] = lab
+    return labels
+
+
+def _parse_at(spec: str | None) -> list[int]:
+    """Parse --at '5,10,25' → [5,10,25]; falls back to the default N set."""
+    if not spec:
+        return _DEFAULT_PRECISION_NS
+    ns = [int(t) for t in spec.split(",") if t.strip().isdigit()]
+    return ns or _DEFAULT_PRECISION_NS
+
+
+def _harvest_precision(repo: Path, args) -> int:
+    """Report precision@N of the harvest ranking against labels.jsonl, with the
+    base rate (no-ranking baseline) and lift, so the scorer's value is measurable."""
+    from .harvest import harvest, precision_report
+    result = harvest(repo)
+    flat = [c for cands in result.values() for c in cands]
+    flat.sort(key=lambda c: c["score"], reverse=True)
+
+    labels = _load_labels(_labels_path(repo))
+    if not labels:
+        print(f"no labels yet for {repo.name} — run "
+              f"`scar harvest --label <id> keep|discard` to start "
+              f"({_labels_path(repo)})")
+        return 0
+
+    rep = precision_report(flat, labels, _parse_at(args.at))
+    print(f"# Harvest precision — {repo.name} "
+          f"({rep['total']} candidates, {rep['labeled']} labeled)")
+    print(f"base rate (all labeled): {rep['base_rate']:.2f}")
+    for e in rep["at"]:
+        sign = "+" if e["lift"] >= 0 else ""
+        print(f"precision@{e['n']}: {e['precision']:.2f}  "
+              f"(lift {sign}{e['lift']:.2f}, {e['labeled_in_top']}/{e['n']} labeled)")
+    if rep["labeled"] < _CALIBRATION_THRESHOLD:
+        print(f"note: {rep['labeled']} labels — weights uncalibrated until "
+              f"~{_CALIBRATION_THRESHOLD}; precision unstable, treat lift as directional")
+    return 0
+
+
 def _cmd_harvest(args) -> int:
     from .harvest import harvest  # subprocess-heavy; import only when used
     repo = Path(args.repo).resolve()
 
     if args.label is not None:
         return _harvest_label(repo, args)
+
+    if args.precision:
+        return _harvest_precision(repo, args)
 
     result = harvest(repo)
     total = sum(len(v) for v in result.values())
@@ -484,6 +550,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="record a curation judgement: <id> keep|discard "
                         "(appends one line to experiments/harvest/labels.jsonl)")
     p.add_argument("--note", default="", help="with --label: free-text rationale")
+    p.add_argument("--precision", action="store_true",
+                   help="report precision@N of the ranking against labels.jsonl "
+                        "(base rate + lift = does ranking beat no-ranking)")
+    p.add_argument("--at", default=None,
+                   help="with --precision: comma-separated N values (default 5,10,20)")
 
     p = sub.add_parser("hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
