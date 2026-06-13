@@ -33,7 +33,7 @@ Public at [github.com/Daily-Nerd/Scar](https://github.com/Daily-Nerd/Scar), `sca
 - ✅ Harvest ranking layer — heuristic weighted scorer + label-capture instrument, zero-dep, deterministic (#39). Weights remain intuition until real-repo labels calibrate precision.
 - ⬜ Re-anchoring agent workflow: orphaned/partially-rotted scar + orphaning diff → proposed new anchors as a PR
 - ⬜ Editor surfaces (VS Code gutter marks, LSP code lens) — fences visible to humans, not only agents
-- ⬜ Lint warning on evidence commit SHAs unreachable from HEAD (scar #5's expiry condition)
+- ✅ Lint warning on evidence commit SHAs unreachable from HEAD (#43) — scar #5's expiry condition, now enforced; advisory in `lint`, skipped on shallow clones
 
 ## Phase 3 — The org graph ⏸ parked by design
 
