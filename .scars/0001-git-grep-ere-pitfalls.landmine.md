@@ -8,8 +8,8 @@ created: 2026-06-09
 authors: ["claude-code", kibukx]
 anchors:
   - path: experiments/anchor-survival/
-  - path: hook/scar-precheck.py
-  - pattern: "git.{0,20}grep.{0,40}\\\\b"
+  - path: src/scar/harvest.py
+  - pattern: "git.{0,20}grep"
 evidence:
   - commit: 5c63b14
   - note: "produced a fake 0% anchor-survival run before diagnosis (gate 0.2)"
