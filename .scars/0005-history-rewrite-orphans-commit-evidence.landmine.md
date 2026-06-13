@@ -8,7 +8,6 @@ created: 2026-06-11
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: .scars/
-  - pattern: "push.{0,30}(--force|\\+[a-zA-Z]).{0,40}main|filter-repo|checkout --orphan"
 evidence:
   - note: v0.1.0 public release (2026-06-11): fresh-start force-push orphaned 3 commit SHAs cited by scars 0001 and 0002; SHAs still resolve on GitHub by URL but fail in any fresh clone, and GitHub may GC them eventually
 expires:

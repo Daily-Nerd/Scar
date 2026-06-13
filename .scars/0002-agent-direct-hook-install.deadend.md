@@ -8,7 +8,7 @@ created: 2026-06-09
 authors: ["claude-code", kibukx]
 anchors:
   - path: hook/
-  - pattern: "settings\\.json.{0,80}hooks|hooks.{0,80}settings\\.json"
+  - path: src/scar/installer.py
 evidence:
   - commit: faad8f6
   - commit: bcd3864
