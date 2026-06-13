@@ -338,6 +338,78 @@ def test_status_reports_detected_and_persisted_orphan_counts(repo, capsys):
 
 
 # ---------------------------------------------------------------------------
+# Partial-rot surfaces (Issue #35). A firing scar with a mix of live and dead
+# anchors is advisory — named, but never an orphan and never a blocking gate.
+# Needs a REAL git repo so a live anchor has a tracked path to resolve against.
+# ---------------------------------------------------------------------------
+
+PARTIAL_ROT_SCAR = """\
+---
+id: 7
+type: landmine
+title: One anchor alive, one rotted
+severity: medium
+confidence: 0.8
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/live/
+  - path: src/gone/
+evidence:
+  - commit: abc1234
+status: active
+---
+
+Protects two things; one of them was deleted.
+"""
+
+
+def _git_repo_with_partial_rot(tmp_path):
+    """Real git repo: src/live/ is tracked (anchor lives), src/gone/ is not
+    (anchor dead) → the scar partially rots."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    init_scars(tmp_path)
+    (tmp_path / "src" / "live").mkdir(parents=True)
+    (tmp_path / "src" / "live" / "mod.py").write_text("x = 1\n")
+    (tmp_path / ".scars" / "0007-rot.landmine.md").write_text(PARTIAL_ROT_SCAR)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+
+def test_lint_surfaces_partial_rot_naming_dead_anchor(tmp_path, monkeypatch, capsys):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0  # advisory only, never fails by default
+    out = capsys.readouterr().out
+    assert "#7" in out
+    assert "src/gone/" in out          # the dead anchor is named
+    assert "src/live/" not in out      # the live anchor is NOT flagged
+    assert "partial" in out.lower()    # labeled as partial rot, not orphan
+    assert "orphan-detected: scar #7" not in out  # never reported as an orphan
+
+
+def test_status_reports_partial_rot_count(tmp_path, monkeypatch, capsys):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "1 partial-rot" in out
+    assert "0 orphan-detected" in out  # a partial-rot scar is NOT an orphan
+
+
+def test_orphan_command_reports_partial_rot_count(tmp_path, monkeypatch, capsys):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    assert "no orphan-detected scars" in out  # zero true orphans
+    assert "1 partial-rot" in out             # but partial rot surfaced separately
+    assert "#7" in out
+
+
+# ---------------------------------------------------------------------------
 # Harvest ranking surfaces + label instrument (Issue #38, batch 2)
 # ---------------------------------------------------------------------------
 

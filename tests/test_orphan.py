@@ -295,3 +295,104 @@ def test_build_repo_context_skips_oversize_files(tmp_path):
     ctx = build_repo_context(tmp_path)
     assert "huge.txt" in ctx.tracked_paths
     assert "huge.txt" not in ctx.file_contents
+
+
+# ---------------------------------------------------------------------------
+# PARTIAL-ROT (#35): a firing scar with ≥1 dead AND ≥1 live anchor.
+# Distinct from orphan detection (which fires only when EVERY anchor is dead).
+# ---------------------------------------------------------------------------
+
+def test_partial_rot_mixed_live_and_dead_reported(tmp_path):
+    """A firing scar with one live and one dead anchor → partial-rot finding
+    naming exactly the dead anchor(s). NOT an orphan."""
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0001-mix.deadend.md": _scar(
+            id=1, status="active",
+            path_anchors=["src/live/", "hook/gone.py"],  # first live, second dead
+        ),
+    })
+    ctx = _make_repo_context(tracked_paths=["src/live/foo.py"])
+    rot = detect_partial_rot(store, ctx)
+    assert len(rot) == 1
+    assert rot[0].scar_id == 1
+    assert rot[0].dead_path_anchors == ["hook/gone.py"]
+    assert rot[0].dead_pattern_anchors == []
+    # and it must NOT show up as an orphan
+    assert detect_orphans(store, ctx) == []
+
+
+def test_fully_live_scar_has_no_partial_rot(tmp_path):
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0002-live.deadend.md": _scar(id=2, status="active",
+                                      path_anchors=["src/a/", "src/b/"]),
+    })
+    ctx = _make_repo_context(tracked_paths=["src/a/x.py", "src/b/y.py"])
+    assert detect_partial_rot(store, ctx) == []
+
+
+def test_fully_dead_scar_is_orphan_not_partial_rot(tmp_path):
+    """Every anchor dead → orphan, and explicitly NOT partial-rot."""
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0003-dead.deadend.md": _scar(id=3, status="active",
+                                      path_anchors=["gone/a/", "gone/b/"]),
+    })
+    ctx = _make_repo_context(tracked_paths=[])
+    assert detect_partial_rot(store, ctx) == []
+    assert len(detect_orphans(store, ctx)) == 1
+
+
+def test_partial_rot_only_scans_firing_statuses(tmp_path):
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0004-arch.deadend.md": _scar(id=4, status="archived",
+                                      path_anchors=["src/live/", "gone/"]),
+        "0005-chal.deadend.md": _scar(id=5, status="challenged",
+                                      path_anchors=["src/live/", "gone/"]),
+    })
+    ctx = _make_repo_context(tracked_paths=["src/live/foo.py"])
+    rot = detect_partial_rot(store, ctx)
+    # archived not scanned; challenged is firing → reported
+    assert [r.scar_id for r in rot] == [5]
+
+
+# ---------------------------------------------------------------------------
+# SELF-REFERENTIAL LIVENESS (#35): a scar must not keep itself alive by
+# quoting, in its own .scars/ body, the very pattern it warns about.
+# ---------------------------------------------------------------------------
+
+def test_pattern_anchor_matching_only_own_file_is_orphan(tmp_path):
+    """A pattern anchor whose ONLY content match is the scar's own .scars file
+    → that match is excluded → scar is orphan-detected (all anchors dead)."""
+    store = _make_store(tmp_path, {
+        "0006-selfref.deadend.md": _scar(id=6, status="active",
+                                         pattern_anchors=["SelfOnlyToken"]),
+    })
+    # The scar's own file is the only tracked content carrying the token.
+    self_rel = ".scars/0006-selfref.deadend.md"
+    ctx = _make_repo_context(
+        tracked_paths=[self_rel, "src/other.py"],
+        contents={self_rel: "SelfOnlyToken appears here",
+                  "src/other.py": "nothing relevant"},
+    )
+    findings = detect_orphans(store, ctx)
+    assert len(findings) == 1
+    assert findings[0].scar_id == 6
+
+
+def test_pattern_anchor_matching_real_code_still_live_despite_own_file(tmp_path):
+    """Self-exclusion must not over-fire: if the pattern also matches REAL
+    tracked code, the scar stays alive (not orphan)."""
+    store = _make_store(tmp_path, {
+        "0007-real.deadend.md": _scar(id=7, status="active",
+                                      pattern_anchors=["SharedToken"]),
+    })
+    self_rel = ".scars/0007-real.deadend.md"
+    ctx = _make_repo_context(
+        tracked_paths=[self_rel, "src/real.py"],
+        contents={self_rel: "SharedToken in prose",
+                  "src/real.py": "x = SharedToken()"},
+    )
+    assert detect_orphans(store, ctx) == []
