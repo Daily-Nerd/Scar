@@ -1,9 +1,23 @@
 """Claude Code plugin manifest validity + skill mirror drift guard."""
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
+
+
+def test_plugin_version_matches_pyproject():
+    # plugin.json carries its own version; release-please bumps only pyproject,
+    # so the two silently drift unless guarded. Regex (not tomllib) keeps this
+    # stdlib-only and Python 3.10-safe.
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', pyproject)
+    assert match, "version not found in pyproject.toml"
+    py_version = match.group(1)
+    plugin = json.loads((ROOT / "plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert plugin["version"] == py_version, (
+        f"plugin.json version {plugin['version']!r} != pyproject {py_version!r}")
 
 
 def test_plugin_manifest_is_valid_and_declares_three_hook_events():
