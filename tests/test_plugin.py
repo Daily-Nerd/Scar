@@ -25,3 +25,19 @@ def test_plugin_skill_mirror_is_byte_identical_to_canonical():
     can_tmpl = (ROOT / "src" / "scar" / "skills" / "scar-authoring" / "assets" / "template.md").read_bytes()
     mir_tmpl = (ROOT / "plugin" / "skills" / "scar-authoring" / "assets" / "template.md").read_bytes()
     assert mir_tmpl == can_tmpl
+
+
+def test_plugin_hooks_use_bare_path_resolved_scar_command():
+    manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text())
+    expected = {
+        "PreToolUse": "scar hook precheck",
+        "SessionStart": "scar hook session-notice",
+        "Stop": "scar hook stop-drafter",
+    }
+    for event, command in expected.items():
+        commands = [h["command"]
+                    for group in manifest["hooks"][event]
+                    for h in group["hooks"]]
+        assert command in commands, f"{event} must use bare '{command}'"
+        for c in commands:
+            assert not c.startswith("/"), f"{event} command must be PATH-resolved, not absolute: {c}"

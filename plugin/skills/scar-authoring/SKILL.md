@@ -8,7 +8,7 @@ description: >
   looks wrong on purpose, or when you discover that changing one thing breaks
   another non-obviously — and you want to record it so the next agent does not
   repeat the pain.
-license: Apache-2.0
+license: MIT
 metadata:
   author: Daily-Nerd
   version: "1.0"
