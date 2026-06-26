@@ -102,3 +102,21 @@ def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
     assert "session-notice" in out
     assert "stop-drafter" in out
     assert out.count("not installed") == 3
+
+
+def test_skill_install_dry_run_reports_target_without_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+    rc = main(["skill", "install", "--dry-run"])
+    assert rc == 0
+    assert not (tmp_path / ".claude" / "skills" / "scar-authoring").exists()
+
+
+def test_skill_install_copies_skill_then_uninstall_removes_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+    assert main(["skill", "install"]) == 0
+    dest = tmp_path / ".claude" / "skills" / "scar-authoring" / "SKILL.md"
+    assert dest.exists() and "scar-authoring" in dest.read_text()
+    assert main(["skill", "uninstall"]) == 0
+    assert not dest.parent.exists()

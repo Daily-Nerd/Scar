@@ -505,6 +505,15 @@ def _cmd_hook_lifecycle(args) -> int:
     return status()
 
 
+def _cmd_skill_lifecycle(args) -> int:
+    from .installer import skill_install, skill_status, skill_uninstall
+    if args.kind == "install":
+        return skill_install(dry=args.dry_run)
+    if args.kind == "uninstall":
+        return skill_uninstall(dry=args.dry_run)
+    return skill_status()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scar",
                                      description="version control for negative knowledge")
@@ -565,6 +574,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
 
+    p = sub.add_parser("skill", help="install, remove, or inspect the scar-authoring skill")
+    p.add_argument("kind", choices=["install", "uninstall", "status"])
+    p.add_argument("--dry-run", action="store_true",
+                   help="show changes without writing to ~/.claude/skills")
+
     sub.add_parser("mcp", help="run the SCAR MCP stdio server")
 
     p = sub.add_parser("agent", help="agent integration helpers")
@@ -590,6 +604,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_hook_lifecycle(args)
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
         return HANDLERS[args.kind]()
+    if args.command == "skill":
+        return _cmd_skill_lifecycle(args)
     if args.command in ("challenge", "archive"):
         status = {"challenge": "challenged", "archive": "archived"}[args.command]
         return _cmd_transition(args, status)
