@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/Daily-Nerd/Scar/compare/v0.6.0...v0.6.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **plugin:** sync plugin.json + uv.lock to 0.6.0 + drift guard ([#63](https://github.com/Daily-Nerd/Scar/issues/63)) ([fe21ed6](https://github.com/Daily-Nerd/Scar/commit/fe21ed6046ea4cabc8abd2ca681e85d02991be6a))
+
 ## [0.6.0](https://github.com/Daily-Nerd/Scar/compare/v0.5.0...v0.6.0) (2026-06-26)
 
 
