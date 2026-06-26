@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/Daily-Nerd/Scar/compare/v0.5.0...v0.6.0) (2026-06-26)
+
+
+### Features
+
+* **agent:** Packaged scar-authoring skill + Claude Code plugin ([#32](https://github.com/Daily-Nerd/Scar/issues/32)) ([#58](https://github.com/Daily-Nerd/Scar/issues/58)) ([b1eaca7](https://github.com/Daily-Nerd/Scar/commit/b1eaca7f702d86a4e5429c8c085c1537f5505d0d))
+
+
+### Bug Fixes
+
+* **harvest:** exclude .scars/ tree from candidates (self-ref noise) ([#56](https://github.com/Daily-Nerd/Scar/issues/56)) ([29c2d61](https://github.com/Daily-Nerd/Scar/commit/29c2d6116e23a748df8455170c311023c6578c5c)), closes [#55](https://github.com/Daily-Nerd/Scar/issues/55)
+
 ## [0.5.0](https://github.com/Daily-Nerd/Scar/compare/v0.4.0...v0.5.0) (2026-06-13)
 
 
