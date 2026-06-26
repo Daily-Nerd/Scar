@@ -120,3 +120,18 @@ def test_skill_install_copies_skill_then_uninstall_removes_it(tmp_path, monkeypa
     assert dest.exists() and "scar-authoring" in dest.read_text()
     assert main(["skill", "uninstall"]) == 0
     assert not dest.parent.exists()
+
+
+def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch):
+    # Reinstall must rmtree the existing dir before copy: a stale file left from
+    # a prior install must NOT survive a second install. Guards against a refactor
+    # to copytree(dirs_exist_ok=True), which would leave orphaned files behind.
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+    assert main(["skill", "install"]) == 0
+    dest = tmp_path / ".claude" / "skills" / "scar-authoring"
+    stale = dest / "STALE-LEFTOVER.txt"
+    stale.write_text("orphan from a previous layout", encoding="utf-8")
+    assert main(["skill", "install"]) == 0
+    assert not stale.exists()
+    assert (dest / "SKILL.md").exists()
