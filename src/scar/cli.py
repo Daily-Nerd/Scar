@@ -480,10 +480,13 @@ def _cmd_harvest(args) -> int:
 
 
 def _cmd_agent(args) -> int:
-    from .agent import config, doctor
+    from .agent import config, doctor, skill
     if args.agent_command == "doctor":
         for line in doctor(Path.cwd()):
             print(line)
+        return 0
+    if args.agent_command == "skill":
+        print(skill())
         return 0
     try:
         print(config(args.target))
@@ -500,6 +503,15 @@ def _cmd_hook_lifecycle(args) -> int:
     if args.kind == "uninstall":
         return uninstall(dry=args.dry_run)
     return status()
+
+
+def _cmd_skill_lifecycle(args) -> int:
+    from .installer import skill_install, skill_status, skill_uninstall
+    if args.kind == "install":
+        return skill_install(dry=args.dry_run)
+    if args.kind == "uninstall":
+        return skill_uninstall(dry=args.dry_run)
+    return skill_status()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -562,6 +574,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
 
+    p = sub.add_parser("skill", help="install, remove, or inspect the scar-authoring skill")
+    p.add_argument("kind", choices=["install", "uninstall", "status"])
+    p.add_argument("--dry-run", action="store_true",
+                   help="show changes without writing to ~/.claude/skills")
+
     sub.add_parser("mcp", help="run the SCAR MCP stdio server")
 
     p = sub.add_parser("agent", help="agent integration helpers")
@@ -569,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_sub.add_parser("doctor", help="show local agent integration readiness")
     cfg = agent_sub.add_parser("config", help="print config for an agent runtime")
     cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
+    agent_sub.add_parser("skill", help="print the scar-authoring skill body")
 
     p = sub.add_parser("inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")
@@ -586,6 +604,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_hook_lifecycle(args)
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
         return HANDLERS[args.kind]()
+    if args.command == "skill":
+        return _cmd_skill_lifecycle(args)
     if args.command in ("challenge", "archive"):
         status = {"challenge": "challenged", "archive": "archived"}[args.command]
         return _cmd_transition(args, status)

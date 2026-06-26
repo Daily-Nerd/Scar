@@ -16,6 +16,8 @@ from pathlib import Path
 CLAUDE_DIR = Path.home() / ".claude"
 HOOKS_DIR = CLAUDE_DIR / "hooks"
 SETTINGS = CLAUDE_DIR / "settings.json"
+SKILLS_DIR = CLAUDE_DIR / "skills"
+SKILL_NAME = "scar-authoring"
 
 LEGACY_SCRIPTS = ("scar-precheck.py", "scar-session-notice.py", "scar-stop-drafter.py")
 OURS_RE = re.compile(r"(scar[^ ]*) hook (precheck|session-notice|stop-drafter)"
@@ -151,4 +153,45 @@ def status() -> int:
         state = ("legacy (run install to migrate)" if legacy
                  else "installed" if ours else "not installed")
         print(f"{spec['kind']:16} {spec['event']:13} {state}")
+    return 0
+
+
+def _skill_source() -> Path:
+    from importlib.resources import files
+    return Path(str(files("scar").joinpath("skills") / SKILL_NAME))
+
+
+def skill_install(dry: bool = False) -> int:
+    src = _skill_source()
+    if not src.is_dir():
+        print(f"skill source not found: {src}")
+        return 1
+    dest = SKILLS_DIR / SKILL_NAME
+    print(f"[skill] install {SKILL_NAME} -> {dest}")
+    if dry:
+        print("install: done (dry-run, nothing written)")
+        return 0
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+    print("install: done.")
+    return 0
+
+
+def skill_uninstall(dry: bool = False) -> int:
+    dest = SKILLS_DIR / SKILL_NAME
+    if not dest.exists():
+        print(f"[skill] {SKILL_NAME}: not installed")
+        return 0
+    print(f"[skill] remove {dest}")
+    if not dry:
+        shutil.rmtree(dest)
+    print("uninstall: done" + (" (dry-run, nothing written)" if dry else "."))
+    return 0
+
+
+def skill_status() -> int:
+    dest = SKILLS_DIR / SKILL_NAME
+    print(f"skill {SKILL_NAME}: {'installed' if dest.exists() else 'not installed'} ({dest})")
     return 0

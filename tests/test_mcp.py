@@ -90,3 +90,14 @@ def test_scar_draft_writes_candidate_only(tmp_path):
     assert data["status"] == "candidate"
     assert data["candidate"].startswith(".scars/candidates/")
     assert not list((tmp_path / ".scars").glob("*.deadend.md"))
+
+
+from scar.mcp import TOOLS
+
+
+def test_scar_draft_description_carries_authoring_digest():
+    draft = next(t for t in TOOLS if t["name"] == "scar_draft")
+    desc = draft["description"]
+    for kind in ("deadend", "fence", "landmine"):
+        assert kind in desc
+    assert "candidate" in desc

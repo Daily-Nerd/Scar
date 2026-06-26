@@ -1,0 +1,11 @@
+{
+  "name": "scar",
+  "owner": { "name": "Daily-Nerd" },
+  "plugins": [
+    {
+      "name": "scar",
+      "source": "./plugin",
+      "description": "Read and author negative-knowledge scars: auto-injected scars before edits, plus the scar-authoring skill."
+    }
+  ]
+}

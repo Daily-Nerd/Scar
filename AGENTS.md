@@ -18,6 +18,23 @@ frontmatter.
 - Do not silently ignore broken scar files. Run `scar lint` when changing scar
   format, parsing, promotion, lifecycle, or candidate-writing behavior.
 
+## Authoring scars
+
+When you abandon an approach (deadend), keep intentional-looking weirdness
+(fence), or discover non-obvious coupling (landmine), record it as a scar.
+The full authoring contract — qualification criteria, the candidates-only write
+path, mandatory YAML frontmatter, and the regex over-escaping trap — is packaged
+as the `scar-authoring` skill.
+
+- **Claude Code:** install the plugin (recommended) or `scar skill install` to
+  drop the skill into `~/.claude/skills/`. It auto-loads on trigger.
+- **MCP agents (Cursor/Windsurf/opencode):** the `scar_draft` tool enforces the
+  candidates-only path and lints before writing; its description carries the
+  digest.
+- **Any runtime / manual:** run `scar agent skill` to print the full skill body
+  and load it into context. The canonical file is
+  `src/scar/skills/scar-authoring/SKILL.md`.
+
 ## Agent Integrations
 
 - MCP-capable agents can launch the local server with `scar mcp`.

@@ -86,6 +86,16 @@ stop all automatic injection and drafting while keeping the repository's
 scar hook uninstall
 ```
 
+**Recommended (Claude Code): install the plugin** so the hooks *and* the
+scar-authoring skill arrive together via the marketplace.
+
+**Fallback / non-marketplace:** `scar hook install` registers the hooks, and
+`scar skill install` drops the authoring skill into `~/.claude/skills/`. Both are
+explicit — you run them, nothing is installed as a side effect.
+
+Non-Claude agents: `scar agent skill` prints the authoring skill for any runtime;
+MCP agents get the digest via the `scar_draft` tool description.
+
 Wiring MCP-capable agents:
 
 ```bash
