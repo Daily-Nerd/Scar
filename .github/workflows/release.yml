@@ -19,7 +19,10 @@ jobs:
       - id: rp
         uses: googleapis/release-please-action@v4
         with:
-          release-type: python
+          # config-file + manifest replace the inline release-type so extra-files
+          # can keep plugin/plugin.json's version in lock-step with pyproject (#62).
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   publish:
     needs: release-please
