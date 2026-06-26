@@ -649,3 +649,11 @@ def test_harvest_label_date_is_monkeypatchable(harvest_repo, tmp_path, monkeypat
     main(["harvest", str(harvest_repo), "--label", cid, "keep"])
     rec = json.loads(labels.read_text(encoding="utf-8").splitlines()[0])
     assert rec["date"] == "1999-12-31"
+
+
+def test_agent_skill_prints_body_with_three_types(repo, capsys):
+    assert main(["agent", "skill"]) == 0
+    out = capsys.readouterr().out
+    assert "name: scar-authoring" in out
+    for kind in ("deadend", "fence", "landmine"):
+        assert kind in out

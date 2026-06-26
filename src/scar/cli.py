@@ -480,10 +480,13 @@ def _cmd_harvest(args) -> int:
 
 
 def _cmd_agent(args) -> int:
-    from .agent import config, doctor
+    from .agent import config, doctor, skill
     if args.agent_command == "doctor":
         for line in doctor(Path.cwd()):
             print(line)
+        return 0
+    if args.agent_command == "skill":
+        print(skill())
         return 0
     try:
         print(config(args.target))
@@ -569,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_sub.add_parser("doctor", help="show local agent integration readiness")
     cfg = agent_sub.add_parser("config", help="print config for an agent runtime")
     cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
+    agent_sub.add_parser("skill", help="print the scar-authoring skill body")
 
     p = sub.add_parser("inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")

@@ -64,3 +64,10 @@ def config(target: str) -> str:
     if target not in CONFIGS:
         raise ValueError(f"unknown target '{target}' (expected: {', '.join(TARGETS)})")
     return CONFIGS[target]
+
+
+def skill() -> str:
+    """Return the full scar-authoring SKILL.md body (packaged, runtime-neutral)."""
+    from importlib.resources import files
+    resource = files("scar").joinpath("skills/scar-authoring/SKILL.md")
+    return resource.read_text(encoding="utf-8")
