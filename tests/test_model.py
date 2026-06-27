@@ -56,6 +56,31 @@ def test_confidence_defaults_when_malformed():
     assert parse_scar_text(text).confidence == 0.5
 
 
+def test_inline_comment_stripped_from_type():
+    # The template ships `type: deadend  # ...`; a copied-but-uncleaned comment
+    # must not become part of the value (else the type fails its enum check).
+    text = VALID.replace("type: deadend", "type: deadend            # tried+failed")
+    assert parse_scar_text(text).type == "deadend"
+
+
+def test_inline_comment_stripped_from_confidence_keeps_value():
+    # Silent-corruption case: a comment used to make float() fail -> reset to 0.5.
+    text = VALID.replace("confidence: 0.9", "confidence: 0.9            # 0..1 how sure")
+    assert parse_scar_text(text).confidence == 0.9
+
+
+def test_inline_comment_stripped_from_severity():
+    text = VALID.replace("severity: high", "severity: high            # low | medium | high | critical")
+    assert parse_scar_text(text).severity == "high"
+
+
+def test_quoted_hash_is_data_not_comment():
+    # A '#' inside a quoted scalar is part of the value, not a comment.
+    text = VALID.replace('condition: "sessions become re-derivable"',
+                         'condition: "drop #legacy sessions"')
+    assert parse_scar_text(text).expires_condition == "drop #legacy sessions"
+
+
 def test_quoted_pattern_anchor_unwrapped():
     s = parse_scar_text(VALID)
     assert '"' not in s.pattern_anchors[0]
