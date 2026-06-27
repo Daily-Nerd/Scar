@@ -67,7 +67,17 @@ class Scar:
 
 def _field(front: str, name: str, default: str = "") -> str:
     m = re.search(rf"^\s*{name}:\s*(.+?)\s*$", front, re.MULTILINE)
-    return m.group(1) if m else default
+    if not m:
+        return default
+    value = m.group(1)
+    # Strip an unquoted inline comment (YAML: a '#' after whitespace starts a
+    # comment). The template ships '# ...' on every field; a copied-but-uncleaned
+    # comment otherwise lands in the value — silently for confidence/severity,
+    # loudly for type. Quoted values are left intact so a '#' inside a quoted
+    # scalar (title, condition) stays data. See issue #69.
+    if '"' not in value and "'" not in value:
+        value = re.sub(r"\s+#.*$", "", value).rstrip()
+    return value
 
 
 def parse_scar_text(text: str) -> Scar:
