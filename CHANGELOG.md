@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/Daily-Nerd/Scar/compare/v0.7.0...v0.8.0) (2026-06-30)
+
+
+### Features
+
+* **cli:** add --version flag to report installed version ([#76](https://github.com/Daily-Nerd/Scar/issues/76)) ([e45805d](https://github.com/Daily-Nerd/Scar/commit/e45805d01d171e2264a37a102f73a5254d5cedeb)), closes [#75](https://github.com/Daily-Nerd/Scar/issues/75)
+* **cli:** Rich output for read commands (TTY-detect + --json) ([#79](https://github.com/Daily-Nerd/Scar/issues/79)) ([3ff9d40](https://github.com/Daily-Nerd/Scar/commit/3ff9d4036138e7c898cae8dc18c9affc26553525))
+
 ## [0.7.0](https://github.com/Daily-Nerd/Scar/compare/v0.6.1...v0.7.0) (2026-06-30)
 
 
