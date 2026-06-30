@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import time
+from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
 
 from .lint import lint_text
@@ -514,9 +515,21 @@ def _cmd_skill_lifecycle(args) -> int:
     return skill_status()
 
 
+def _scar_version() -> str:
+    """Installed package version (pyproject is the source of truth via
+    release-please). 'unknown' when run from a tree that was never installed."""
+    try:
+        return _dist_version("scar-cli")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scar",
                                      description="version control for negative knowledge")
+    # argparse's version action prints and exits during optional parsing, before
+    # the required-subcommand check below — so `scar --version` needs no command.
+    parser.add_argument("--version", action="version", version=f"scar {_scar_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="create .scars/ layout in the current repo")

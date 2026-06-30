@@ -79,7 +79,7 @@ wheels = [
 
 [[package]]
 name = "scar-cli"
-version = "0.6.1"
+version = "0.7.0"
 source = { editable = "." }
 
 [package.dev-dependencies]
