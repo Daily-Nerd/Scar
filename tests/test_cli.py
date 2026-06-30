@@ -63,6 +63,49 @@ def test_version_flag_prints_version_and_exits_zero(capsys):
     assert re.search(r"\d+\.\d+", out)
 
 
+def test_root_parser_uses_rich_help_formatter():
+    from rich_argparse import RichHelpFormatter
+
+    from scar.cli import build_parser
+
+    parser = build_parser()
+    assert parser.formatter_class is RichHelpFormatter
+
+
+def _subparsers_choices(parser):
+    import argparse
+
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices
+    raise AssertionError("no subparsers action found")
+
+
+def test_subparser_uses_rich_help_formatter():
+    from rich_argparse import RichHelpFormatter
+
+    from scar.cli import build_parser
+
+    lint = _subparsers_choices(build_parser())["lint"]
+    assert lint.formatter_class is RichHelpFormatter
+
+
+def test_nested_agent_subparser_uses_rich_help_formatter():
+    from rich_argparse import RichHelpFormatter
+
+    from scar.cli import build_parser
+
+    agent = _subparsers_choices(build_parser())["agent"]
+    config = _subparsers_choices(agent)["config"]
+    assert config.formatter_class is RichHelpFormatter
+
+
+def test_help_still_exits_zero(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+
+
 def test_status_counts(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
