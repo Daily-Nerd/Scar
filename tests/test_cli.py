@@ -52,6 +52,17 @@ def test_lint_broken_scar_exits_nonzero_names_file(repo, capsys):
     assert "0001-bad.deadend.md" in capsys.readouterr().out
 
 
+def test_version_flag_prints_version_and_exits_zero(capsys):
+    import re
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("scar ")
+    assert re.search(r"\d+\.\d+", out)
+
+
 def test_status_counts(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
