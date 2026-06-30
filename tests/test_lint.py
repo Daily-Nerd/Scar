@@ -68,3 +68,32 @@ def test_bad_pattern_regex_is_error():
                        '  - pattern: "([unclosed"')
     findings = lint_text(bad)
     assert any(f.level == "error" and "pattern" in f.message for f in findings)
+
+
+def test_malformed_url_evidence_is_warning():
+    bad = GOOD.replace(
+        "evidence:\n  - commit: abc1234\n",
+        "evidence:\n  - url: not-a-link\n",
+    )
+    findings = lint_text(bad)
+    assert any(f.level == "warning" and "url" in f.message and "not-a-link" in f.message
+               for f in findings)
+    assert not any(f.level == "error" for f in findings)
+
+
+def test_valid_url_evidence_no_warning():
+    ok = GOOD.replace(
+        "evidence:\n  - commit: abc1234\n",
+        "evidence:\n  - url: https://github.com/org/repo/commit/abc1234\n",
+    )
+    findings = lint_text(ok)
+    assert not any("url" in f.message for f in findings)
+
+
+def test_issue_evidence_skips_url_check():
+    ok = GOOD.replace(
+        "evidence:\n  - commit: abc1234\n",
+        "evidence:\n  - issue: 50\n",
+    )
+    findings = lint_text(ok)
+    assert findings == []

@@ -16,6 +16,13 @@ SEVERITIES = ("low", "medium", "high", "critical")
 STATUSES = ("candidate", "active", "challenged", "archived", "orphaned", "template")
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
+_URL_RE = re.compile(r"^https?://")
+
+
+def is_valid_url(value: str) -> bool:
+    """True iff value is an http(s) URL. Used by lint to flag durable-link
+    evidence (url:) that isn't actually a link (#50)."""
+    return bool(_URL_RE.match(value.strip()))
 
 
 class ParseError(ValueError):
