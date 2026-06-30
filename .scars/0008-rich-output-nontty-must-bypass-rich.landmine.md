@@ -1,25 +1,22 @@
 ---
-# COPY THIS FILE — do not edit the template itself.
-# New scars: write to .scars/candidates/<slug>.md with status: candidate.
-# A human reviewer promotes to .scars/NNNN-<slug>.<type>.md with status: active.
-id: 0                      # assigned at promotion (next free NNNN)
-type: landmine             # deadend = tried+failed | fence = looks wrong, intentional | landmine = touching A breaks B
+id: 8
+type: landmine
 title: Read commands' non-tty branch must bypass Rich — Rich wraps to 80 cols and breaks path-substring tests
 severity: high
 confidence: 0.9
 created: 2026-06-30
-authors: ["claude-code"]
+authors: ["claude-code", "kibukx"]
 anchors:
   - path: src/scar/cli.py
   - path: src/scar/output.py
   - pattern: "output\.render\("
 evidence:
   - issue: 78
-  - note: "187-test suite asserts plain substrings like '0001-bad.deadend.md' and long anchor paths on main([...]) under capsys"
+  - note: 187-test suite asserts plain substrings like '0001-bad.deadend.md' and long anchor paths on main([...]) under capsys
 expires:
   condition: "the test suite stops asserting on plain stdout substrings (e.g. moves to asserting structured --json only)"
   review_after: 2027-06-30
-status: candidate
+status: active
 ---
 
 The five read commands (status, lint, check, why, orphan) route output 3 ways:
