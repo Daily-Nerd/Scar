@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/Daily-Nerd/Scar/compare/v0.6.1...v0.7.0) (2026-06-30)
+
+
+### Features
+
+* durable evidence forms (issue:/url:) to survive squash-merge ([#50](https://github.com/Daily-Nerd/Scar/issues/50)) ([#74](https://github.com/Daily-Nerd/Scar/issues/74)) ([d558849](https://github.com/Daily-Nerd/Scar/commit/d558849652c068a9679617c5ed522b3eefffcc78))
+
+
+### Bug Fixes
+
+* **harvest:** exclude vendored/scaffold paths from comment-archaeology ([#72](https://github.com/Daily-Nerd/Scar/issues/72)) ([#73](https://github.com/Daily-Nerd/Scar/issues/73)) ([919add4](https://github.com/Daily-Nerd/Scar/commit/919add4b3503b65f866274d97995088a0aa8612a))
+* **parser:** strip unquoted inline comments in _field ([#70](https://github.com/Daily-Nerd/Scar/issues/70)) ([03ec578](https://github.com/Daily-Nerd/Scar/commit/03ec578290f8dd8ce4ed436367a12eabbdb5c120))
+
 ## [0.6.1](https://github.com/Daily-Nerd/Scar/compare/v0.6.0...v0.6.1) (2026-06-26)
 
 
