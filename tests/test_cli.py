@@ -668,3 +668,116 @@ def test_agent_skill_prints_body_with_three_types(repo, capsys):
     assert "name: scar-authoring" in out
     for kind in ("deadend", "fence", "landmine"):
         assert kind in out
+
+
+# ---------------------------------------------------------------------------
+# Rich output (Issue #78): the five human-facing read commands gain a 3-way
+# surface — --json (machine), Rich (tty), plain (non-tty, byte-preserved). The
+# plain non-tty assertions live in the tests above; here we cover --json keys
+# and that the Rich tty path renders without crashing.
+# ---------------------------------------------------------------------------
+
+
+def _force_tty(monkeypatch):
+    """Force the tty branch so the Rich renderer runs (under capsys stdout is
+    never a real tty). We assert no crash + exit 0, never exact ANSI."""
+    import scar.output as out
+    monkeypatch.setattr(out, "is_tty", lambda: True)
+
+
+def test_status_json_emits_structured_counts(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
+    assert main(["status", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["counts"]["candidates"] == 1
+    assert data["counts"]["active"] == 0
+    assert isinstance(data["active"], list)
+
+
+def test_status_tty_renders_without_crashing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
+    _force_tty(monkeypatch)
+    assert main(["status"]) == 0
+
+
+def test_lint_json_emits_findings_and_summary(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    assert main(["lint", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["files"] >= 1
+    assert any(o["scar_id"] == 1 for o in data["orphans"])
+    assert "failed" in data
+
+
+def test_lint_json_broken_scar_exit_one_and_lists_file(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-bad.deadend.md").write_text("# nope\n")
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert any("0001-bad.deadend.md" in f["file"] for f in data["findings"])
+
+
+def test_lint_tty_renders_without_crashing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    _force_tty(monkeypatch)
+    assert main(["lint"]) == 0
+
+
+def test_check_json_lists_anchored_scars(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["check", "src/thing.py", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["path"] == "src/thing.py"
+    assert any(s["title"] == "Tried X, failed" for s in data["scars"])
+
+
+def test_check_tty_renders_without_crashing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    _force_tty(monkeypatch)
+    assert main(["check", "src/thing.py"]) == 0
+
+
+def test_why_json_lists_records(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["why", "src", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert any(r["title"] == "Tried X, failed" for r in data["records"])
+
+
+def test_why_tty_renders_without_crashing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    _force_tty(monkeypatch)
+    assert main(["why", "src"]) == 0
+
+
+def test_orphan_json_lists_detected(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0005-both.deadend.md").write_text(MULTI_ANCHOR_ORPHAN)
+    assert main(["orphan", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert any(o["scar_id"] == 5 for o in data["orphan_detected"])
+
+
+def test_orphan_tty_renders_without_crashing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0005-both.deadend.md").write_text(MULTI_ANCHOR_ORPHAN)
+    _force_tty(monkeypatch)
+    assert main(["orphan"]) == 0
