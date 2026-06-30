@@ -16,6 +16,13 @@ SEVERITIES = ("low", "medium", "high", "critical")
 STATUSES = ("candidate", "active", "challenged", "archived", "orphaned", "template")
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
+_URL_RE = re.compile(r"^https?://")
+
+
+def is_valid_url(value: str) -> bool:
+    """True iff value is an http(s) URL. Used by lint to flag durable-link
+    evidence (url:) that isn't actually a link (#50)."""
+    return bool(_URL_RE.match(value.strip()))
 
 
 class ParseError(ValueError):
@@ -101,7 +108,7 @@ def parse_scar_text(text: str) -> Scar:
                for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
 
     evidence = [f"{m1.group(1)}: {m1.group(2).strip().strip('\"')}" for m1 in re.finditer(
-        r"^\s*-\s*(commit|pr|incident|note):\s*(.+)\s*$", front, re.MULTILINE)]
+        r"^\s*-\s*(commit|pr|issue|incident|note|url):\s*(.+)\s*$", front, re.MULTILINE)]
 
     return Scar(
         type=_field(front, "type", "deadend"),

@@ -123,3 +123,57 @@ Body.
     assert 'inner' in s.evidence[0]
     s2 = parse_scar_text(s.to_text())
     assert s2.evidence == s.evidence
+
+
+def test_issue_and_url_evidence_parse_and_roundtrip():
+    text = """\
+---
+type: landmine
+title: Durable evidence forms
+severity: medium
+confidence: 0.7
+anchors:
+  - path: src/scar/
+evidence:
+  - pr: 123
+  - issue: 50
+  - url: https://github.com/org/repo/commit/abc1234
+status: active
+---
+
+Body.
+"""
+    s = parse_scar_text(text)
+    assert s.evidence == [
+        "pr: 123",
+        "issue: 50",
+        "url: https://github.com/org/repo/commit/abc1234",
+    ]
+    s2 = parse_scar_text(s.to_text())
+    assert s2.evidence == s.evidence
+
+
+def test_existing_evidence_prefixes_still_parse():
+    text = """\
+---
+type: deadend
+title: keeps old forms
+severity: low
+confidence: 0.5
+anchors:
+  - path: a/
+evidence:
+  - commit: a3f9c21
+  - incident: 2024-prod-outage
+  - note: archived 2025-01-01: superseded
+status: active
+---
+
+Body.
+"""
+    s = parse_scar_text(text)
+    assert s.evidence == [
+        "commit: a3f9c21",
+        "incident: 2024-prod-outage",
+        "note: archived 2025-01-01: superseded",
+    ]
