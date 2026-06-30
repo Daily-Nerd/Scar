@@ -101,7 +101,7 @@ def parse_scar_text(text: str) -> Scar:
                for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
 
     evidence = [f"{m1.group(1)}: {m1.group(2).strip().strip('\"')}" for m1 in re.finditer(
-        r"^\s*-\s*(commit|pr|incident|note):\s*(.+)\s*$", front, re.MULTILINE)]
+        r"^\s*-\s*(commit|pr|issue|incident|note|url):\s*(.+)\s*$", front, re.MULTILINE)]
 
     return Scar(
         type=_field(front, "type", "deadend"),
