@@ -13,7 +13,10 @@ anchors:
   - path: src/module/      # file or directory this protects
   - pattern: "regex"       # optional: fires when matching code appears in ANY new/edited file
 evidence:
-  - commit: abc1234        # at least one receipt: commit, pr, incident, or note
+  - pr: 123                # at least one receipt: pr, issue, url, commit, incident, or note
+  # Prefer pr/issue/url over a bare commit: SHA — feature-branch SHAs orphan on squash-merge.
+  - issue: 50
+  - url: https://github.com/org/repo/commit/abc1234
 expires:
   condition: "what change would make this scar obsolete"
   review_after: 1971-01-01 # force a freshness look even if condition never triggers

@@ -34,8 +34,9 @@ challenge it: update or archive it with a note, don't ignore it.
 2. **YAML frontmatter is mandatory.** A scar without it is unparseable and
    will NEVER fire in any tool. `scar lint` checks; the hooks warn loudly.
 3. **Promotion** = human review: `scar promote candidates/<slug>.md`.
-4. **Evidence required.** A scar without a commit/PR/incident reference is
-   an opinion and can be challenged on sight.
+4. **Evidence required.** A scar without a pr/issue/url/commit/incident
+   reference is an opinion and can be challenged on sight. Prefer durable
+   pr/issue/url refs — feature-branch commit SHAs orphan on squash-merge.
 
 Format details: `template.md`. Project: SCAR.
 """
@@ -56,7 +57,10 @@ anchors:
   - path: src/module/      # file or directory this protects
   - pattern: "regex"       # optional: fires when matching code appears in ANY new/edited file
 evidence:
-  - commit: abc1234        # at least one receipt: commit, pr, incident, or note
+  - pr: 123                # at least one receipt: pr, issue, url, commit, incident, or note
+  # Prefer pr/issue/url over a bare commit: SHA — feature-branch SHAs orphan on squash-merge.
+  - issue: 50
+  - url: https://github.com/org/repo/commit/abc1234
 expires:
   condition: "what change would make this scar obsolete"
   review_after: 1971-01-01

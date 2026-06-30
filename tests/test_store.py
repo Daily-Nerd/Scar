@@ -107,3 +107,18 @@ def test_scars_for_path_is_bidirectional(repo):
     assert store.scars_for_path("src/deep/file.py")
     assert store.scars_for_path("")  # repo root: every anchor is under it
     assert not store.scars_for_path("docs/readme.md")
+
+
+def test_template_documents_durable_evidence_forms():
+    from scar.store import TEMPLATE
+    assert "issue:" in TEMPLATE
+    assert "url:" in TEMPLATE
+    assert "squash" in TEMPLATE.lower()
+
+
+def test_template_with_durable_forms_parses_clean():
+    from scar.store import TEMPLATE
+    from scar.model import parse_scar_text
+    text = TEMPLATE.replace("status: template", "status: active")
+    s = parse_scar_text(text)
+    assert any(e.startswith("issue:") or e.startswith("url:") for e in s.evidence)
