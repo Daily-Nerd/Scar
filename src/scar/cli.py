@@ -14,6 +14,8 @@ import time
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
 
+from rich_argparse import RichHelpFormatter
+
 from .lint import lint_text
 from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
 from .model import parse_scar_text
@@ -729,45 +731,56 @@ def _scar_version() -> str:
         return "unknown"
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Construct the fully-wired argparse parser.
+
+    Subparsers do NOT inherit ``formatter_class`` from their parent, so every
+    ``add_parser`` call is routed through ``_add`` to wire RichHelpFormatter in
+    one place instead of repeating it per command.
+    """
+
+    def _add(subparsers, name, **kw):
+        return subparsers.add_parser(name, formatter_class=RichHelpFormatter, **kw)
+
     parser = argparse.ArgumentParser(prog="scar",
-                                     description="version control for negative knowledge")
+                                     description="version control for negative knowledge",
+                                     formatter_class=RichHelpFormatter)
     # argparse's version action prints and exits during optional parsing, before
     # the required-subcommand check below — so `scar --version` needs no command.
     parser.add_argument("--version", action="version", version=f"scar {_scar_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="create .scars/ layout in the current repo")
-    p = sub.add_parser("lint", help="validate every scar and candidate")
+    _add(sub, "init", help="create .scars/ layout in the current repo")
+    p = _add(sub, "lint", help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    p = sub.add_parser("status", help="counts, titles, broken-file warnings")
+    p = _add(sub, "status", help="counts, titles, broken-file warnings")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = sub.add_parser("promote", help="review a candidate into an active scar")
+    p = _add(sub, "promote", help="review a candidate into an active scar")
     p.add_argument("candidate", help="candidate filename (or unique substring)")
     p.add_argument("--reviewer", default="", help="human reviewer to add to authors")
 
-    p = sub.add_parser("check", help="scars anchored to a path")
+    p = _add(sub, "check", help="scars anchored to a path")
     p.add_argument("path")
     p.add_argument("--content", default="", help="new code to test pattern anchors against")
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = sub.add_parser("why", help="history of pain for a path (any status)")
+    p = _add(sub, "why", help="history of pain for a path (any status)")
     p.add_argument("path")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = sub.add_parser("challenge", help="dispute a scar (still fires, marked challenged)")
+    p = _add(sub, "challenge", help="dispute a scar (still fires, marked challenged)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why the scar may no longer hold")
 
-    p = sub.add_parser("archive", help="retire a scar (never fires; history kept)")
+    p = _add(sub, "archive", help="retire a scar (never fires; history kept)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why it is retired (e.g. expiry condition met)")
 
-    p = sub.add_parser("orphan", help="list scars whose anchors all went dead")
+    p = _add(sub, "orphan", help="list scars whose anchors all went dead")
     p.add_argument("--apply", action="store_true",
                    help="persist status: orphaned (human review only — never CI)")
     p.add_argument("--id", type=int, default=None,
@@ -777,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true",
                    help="emit machine-readable JSON (read mode only)")
 
-    p = sub.add_parser("harvest", help="mine git history for candidate scars")
+    p = _add(sub, "harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
     p.add_argument("--top-k", type=int, default=None,
                    help="show the N highest-scoring candidates across all sections "
@@ -792,33 +805,38 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--at", default=None,
                    help="with --precision: comma-separated N values (default 5,10,20)")
 
-    p = sub.add_parser("hook", help="install, remove, inspect, or run Claude Code hooks")
+    p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "session-notice", "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
 
-    p = sub.add_parser("skill", help="install, remove, or inspect the scar-authoring skill")
+    p = _add(sub, "skill", help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])
     p.add_argument("--dry-run", action="store_true",
                    help="show changes without writing to ~/.claude/skills")
 
-    sub.add_parser("mcp", help="run the SCAR MCP stdio server")
+    _add(sub, "mcp", help="run the SCAR MCP stdio server")
 
-    p = sub.add_parser("agent", help="agent integration helpers")
+    p = _add(sub, "agent", help="agent integration helpers")
     agent_sub = p.add_subparsers(dest="agent_command", required=True)
-    agent_sub.add_parser("doctor", help="show local agent integration readiness")
-    cfg = agent_sub.add_parser("config", help="print config for an agent runtime")
+    _add(agent_sub, "doctor", help="show local agent integration readiness")
+    cfg = _add(agent_sub, "config", help="print config for an agent runtime")
     cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
-    agent_sub.add_parser("skill", help="print the scar-authoring skill body")
+    _add(agent_sub, "skill", help="print the scar-authoring skill body")
 
-    p = sub.add_parser("inject", help="machine mode for hooks: JSON or silence")
+    p = _add(sub, "inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")
     p.add_argument("--content", default="")
     p.add_argument("--diff", help="unified diff text, or path to a diff file")
     p.add_argument("--top-k", type=int, default=3)
     p.add_argument("--hook-event", default="PreToolUse")
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "mcp":
         from .mcp import serve
