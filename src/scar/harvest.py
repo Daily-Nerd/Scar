@@ -351,6 +351,18 @@ def _in_scars(path: str) -> bool:
     return ".scars" in path.split("/")
 
 
+# Vendored dependency trees + tool-scaffold dirs. Their files carry DO-NOT /
+# load-bearing prose the project never wrote (third-party docs, generated
+# config), so comment-archaeology self-matches the same way #55's .scars did.
+# Matched as any path segment — a nested node_modules/ is the same noise (#72).
+_VENDORED_SEGMENTS = frozenset({"node_modules", "vendor", ".tessl", ".kiro"})
+
+
+def _is_vendored(path: str) -> bool:
+    """True if a candidate path lives under a vendored/scaffold tree (#72)."""
+    return bool(_VENDORED_SEGMENTS & set(path.split("/")))
+
+
 def _annotate_and_sort(candidates: list[dict], signal_type: str,
                        now_months: int | None = None) -> list[dict]:
     """Add 'score' and 'id' fields to each candidate, then sort by score desc."""
@@ -370,12 +382,16 @@ def harvest(repo: Path) -> dict[str, list[dict]]:
         "flapping": _flapping(repo),
         "comments": _comment_archaeology(repo),
     }
-    # Drop a repo's own .scars/ tree — self-ref noise, never a fresh candidate
-    # (#55). Filtered in code, not via a git grep pathspec (landmine #1: a
-    # zero-match pathspec silently empties the whole result set).
+    # Drop self-ref noise (#55: a repo's own .scars/ tree) and vendored/scaffold
+    # noise (#72: node_modules, vendor, tool-scaffold docs). Filtered in code,
+    # not via a git grep pathspec (landmine #1: a zero-match pathspec silently
+    # empties the whole result set).
+    def _excluded(section: str, c: dict) -> bool:
+        path = _candidate_path(_SECTION_TYPES[section], c)
+        return _in_scars(path) or _is_vendored(path)
+
     raw = {
-        section: [c for c in candidates
-                  if not _in_scars(_candidate_path(_SECTION_TYPES[section], c))]
+        section: [c for c in candidates if not _excluded(section, c)]
         for section, candidates in raw.items()
     }
     return {

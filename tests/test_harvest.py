@@ -105,6 +105,49 @@ def test_excludes_scars_dir_from_candidates(tmp_path):
         "no candidate may point into any .scars/ tree (self-ref noise, #55)"
 
 
+def test_excludes_vendored_and_scaffold_dirs_from_candidates(tmp_path):
+    """Scar #72: harvest must not surface candidates from vendored/scaffold trees.
+
+    Comment-archaeology greps DO-NOT/load-bearing prose across the whole repo,
+    so third-party doc tiles and dependency trees (node_modules/, vendor/, and
+    tool-scaffold dirs like .tessl/.kiro) match the fence regex with prose the
+    project never wrote. Same path-based pollution class as #55's .scars filter.
+    """
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    # real code comment — SHOULD still be harvested
+    (tmp_path / "app.py").write_text(
+        "# DO NOT remove this init — load-bearing\nx = 1\n")
+    # vendored / scaffold trees full of trigger prose — must NOT be harvested
+    vendored = {
+        "node_modules/pkg/readme.md": "DO NOT edit; load-bearing vendored code.\n",
+        "vendor/lib/notes.md": "This must remain unchanged — load-bearing.\n",
+        ".tessl/tiles/sqlalchemy/docs/dialects.md":
+            "Add ON CONFLICT DO NOTHING clause. DO NOT change.\n",
+        ".kiro/steering/rules.md": "// DO NOT: forget the route guard\n",
+    }
+    for rel, content in vendored.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "feat: code + vendored trees")
+
+    result = harvest(tmp_path)
+    locations = [c["location"] for c in result["comments"]]
+    assert any(loc.startswith("app.py") for loc in locations), \
+        "real code comment should still be harvested"
+    all_paths = (
+        locations
+        + [c["component"] for c in result["deleted_components"]]
+        + [c["file"] for c in result["flapping"]]
+    )
+    vendored_segs = {"node_modules", "vendor", ".tessl", ".kiro"}
+    assert not any(vendored_segs & set(p.split("/")) for p in all_paths), \
+        "no candidate may point into a vendored/scaffold tree (#72)"
+
+
 # ---------------------------------------------------------------------------
 # Ranking / scoring tests
 # ---------------------------------------------------------------------------
