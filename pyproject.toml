@@ -5,7 +5,9 @@ description = "SCAR — version control for negative knowledge (deadends, fences
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = []
+dependencies = [
+    "rich>=15.0.0",
+]
 
 [project.scripts]
 scar = "scar.cli:main"

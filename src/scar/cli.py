@@ -26,6 +26,7 @@ from .orphan import (
 )
 from .render import injection_context, label_line
 from .store import ScarStore, init_scars
+from . import output
 
 
 def _require_store(start: Path | None = None) -> ScarStore | None:
@@ -67,51 +68,198 @@ def _partial_rot_reason(finding) -> str:
     return "partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
 
 
+# ---------------------------------------------------------------------------
+# Rich renderers (Issue #78). These run ONLY on a real tty — never under capsys
+# or when piped, where the legacy plain output is the byte-preserved contract.
+# They consume the same structured data the --json branch emits (or, for check/
+# why, the parsed Scar objects) so the three surfaces never drift in substance.
+# ---------------------------------------------------------------------------
+_TYPE_STYLE = {"deadend": "red", "fence": "yellow", "landmine": "magenta"}
+
+
+def _type_label(t: str) -> str:
+    return f"[{_TYPE_STYLE.get(t, 'white')}]{t}[/]"
+
+
+def _status_rich(data: dict) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = output.console
+    c = data["counts"]
+    console.print(Panel.fit(
+        f"[bold]{data['scars_dir']}[/]\n"
+        f"{c['active']} active · {c['candidates']} candidate(s) pending review",
+        title="scar status"))
+
+    if data["active"]:
+        t = Table(title="Active scars", show_edge=False, expand=False)
+        t.add_column("type"); t.add_column("id", justify="right")
+        t.add_column("severity"); t.add_column("title")
+        for s in data["active"]:
+            t.add_row(_type_label(s["type"]), f"#{s['id']}", s["severity"], s["title"])
+        console.print(t)
+    for s in data["challenged"]:
+        console.print(f"  [dim]challenged[/] {_type_label(s['type'])} #{s['id']} {s['title']}")
+    for name in data["candidates"]:
+        console.print(f"  [cyan]candidate:[/] {name}")
+    for s in data["review_due"]:
+        console.print(f"  [yellow]REVIEW DUE[/] {_type_label(s['type'])} #{s['id']} "
+                      f"review_after {s['review_after']}")
+
+    console.print(f"  [bold]{c['orphan_detected']}[/] orphan-detected · "
+                  f"[bold]{c['orphaned']}[/] orphaned (persisted) · "
+                  f"[bold]{c['partial_rot']}[/] partial-rot")
+    for o in data["orphan_detected"]:
+        console.print(f"    [red]orphan-detected[/] [#{o['scar_id']}] {o['reason']}")
+    for s in data["orphaned"]:
+        console.print(f"    [dim]orphaned[/] {_type_label(s['type'])} #{s['id']} {s['title']}")
+    for pr in data["partial_rot"]:
+        console.print(f"    [yellow]partial-rot[/] [#{pr['scar_id']}] {pr['reason']}")
+    if data["broken"]:
+        console.print(f"  [bold red]WARNING:[/] {len(data['broken'])} unparseable "
+                      f"(can NEVER fire): " + ", ".join(data["broken"]))
+
+
+def _lint_rich(data: dict) -> None:
+    from rich.table import Table
+
+    console = output.console
+    if data["findings"]:
+        t = Table(title="Lint findings", show_edge=False)
+        t.add_column("file"); t.add_column("level"); t.add_column("message")
+        for f in data["findings"]:
+            style = "red" if f["level"] == "error" else "yellow"
+            t.add_row(f["file"], f"[{style}]{f['level']}[/]", f["message"])
+        console.print(t)
+    for o in data["orphans"]:
+        console.print(f"[yellow]WARNING orphan-detected:[/] scar #{o['scar_id']} — {o['reason']}")
+    for pr in data["partial_rot"]:
+        console.print(f"[cyan]HINT partial-rot:[/] scar #{pr['scar_id']} — {pr['reason']}")
+    for h in data["reverse_hints"]:
+        console.print(f"[cyan]HINT:[/] scar #{h['id']} marked orphaned but anchors live again")
+    if data["shallow_clone"]:
+        console.print("[dim]note: shallow clone — evidence-reachability check skipped[/]")
+    for ue in data["unreachable_evidence"]:
+        console.print(f"[yellow]WARNING evidence-unreachable:[/] scar #{ue['scar_id']} — "
+                      f"commit {ue['sha']} {ue['reason']}")
+    style = "red" if data["failed"] else "green"
+    console.print(f"[{style}]lint:[/] {data['files']} file(s), {data['failed']} with errors, "
+                  f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
+                  f"{len(data['unreachable_evidence'])} unreachable-evidence")
+
+
+def _check_rich(path: str, hits) -> None:
+    from rich.panel import Panel
+
+    console = output.console
+    if not hits:
+        console.print(f"[green]no scars anchored to[/] {path}")
+        return
+    for s in hits:
+        title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
+                 f"confidence: {s.confidence}")
+        console.print(Panel(s.body[:200].strip(), title=title,
+                            subtitle=f"[bold]{s.title}[/]", title_align="left"))
+
+
+def _why_rich(rel: str, records) -> None:
+    from rich.panel import Panel
+
+    console = output.console
+    if not records:
+        console.print(f"[green]no recorded pain for[/] {rel}")
+        return
+    console.print(f"[bold]History of pain for[/] {rel}")
+    for f, s in records:
+        title = f"[{s.status}] {_type_label(s.type)} #{s.id} — {s.title}"
+        console.print(Panel(s.body[:300].strip(), title=title, subtitle=f"[dim]{f.name}[/]",
+                            title_align="left"))
+
+
+def _orphan_rich(findings, partial) -> None:
+    console = output.console
+    if not findings:
+        console.print("[green]no orphan-detected scars[/]")
+    else:
+        for of in findings:
+            console.print(f"[red]orphan-detected[/] [#{of.scar_id}] {_orphan_reason(of)}")
+        console.print(f"[bold]{len(findings)}[/] orphan(s) detected — review, then "
+                      "`scar orphan --apply --id N --reason ...` to persist")
+    for pr in partial:
+        console.print(f"[yellow]partial-rot[/] [#{pr.scar_id}] {_partial_rot_reason(pr)}")
+    if partial:
+        console.print(f"[bold]{len(partial)}[/] partial-rot — advisory; re-anchor the dead "
+                      "anchor(s). Not an orphan (still firing on survivors).")
+
+
 def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
         return 1
     failed = 0
     files = store._scar_files() + store.candidates()
+    findings_by_file: list[tuple[str, list]] = []
     for f in files:
         findings = lint_text(f.read_text(encoding="utf-8"))
-        for finding in findings:
-            print(f"{f.relative_to(store.root)}: {finding}")
+        findings_by_file.append((str(f.relative_to(store.root)), findings))
         if any(fi.level == "error" for fi in findings):
             failed += 1
 
     ctx = build_repo_context(store.root)
     orphans = detect_orphans(store, ctx)
-    for of in orphans:
-        print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
-
-    # partial rot (#35): firing scars with a dead anchor among live ones.
-    # Advisory only — never a blocking gate, even under --fail-orphans.
     partial = detect_partial_rot(store, ctx)
-    for pr in partial:
-        print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
-              "— re-anchor to restore full coverage")
-
-    # reverse hint: persisted-orphaned scars whose anchors resolve again
-    for _f, s in store.parsed():
-        if s.status == "orphaned" and not anchors_all_dead(s, ctx):
-            print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
-                  "again — consider re-activating (scar challenge/archive note)")
+    reverse_hints = [s for _f, s in store.parsed()
+                     if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
     unreachable = unreachable_evidence(store, store.root)
-    if unreachable is None:
-        print("note: shallow clone — evidence-reachability check skipped "
-              "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
+    shallow = unreachable is None
+    if shallow:
         unreachable = []
-    for ue in unreachable:
-        print(f"WARNING evidence-unreachable: scar #{ue.scar_id} — commit "
-              f"{ue.sha} {ue.reason}, not reachable from HEAD")
 
-    print(f"lint: {len(files)} file(s), {failed} with errors, "
-          f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
-          f"{len(unreachable)} unreachable-evidence")
+    data = {
+        "files": len(files),
+        "findings": [{"file": rel, "level": fi.level, "message": fi.message}
+                     for rel, fs in findings_by_file for fi in fs],
+        "orphans": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)} for of in orphans],
+        "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
+        "reverse_hints": [{"id": s.id} for s in reverse_hints],
+        "shallow_clone": shallow,
+        "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
+                                 for ue in unreachable],
+        "failed": failed,
+    }
+
+    def plain():
+        for rel, findings in findings_by_file:
+            for finding in findings:
+                print(f"{rel}: {finding}")
+        for of in orphans:
+            print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
+        # partial rot (#35): firing scars with a dead anchor among live ones.
+        # Advisory only — never a blocking gate, even under --fail-orphans.
+        for pr in partial:
+            print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
+                  "— re-anchor to restore full coverage")
+        # reverse hint: persisted-orphaned scars whose anchors resolve again
+        for s in reverse_hints:
+            print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
+                  "again — consider re-activating (scar challenge/archive note)")
+        if shallow:
+            print("note: shallow clone — evidence-reachability check skipped "
+                  "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
+        for ue in unreachable:
+            print(f"WARNING evidence-unreachable: scar #{ue.scar_id} — commit "
+                  f"{ue.sha} {ue.reason}, not reachable from HEAD")
+        print(f"lint: {len(files)} file(s), {failed} with errors, "
+              f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
+              f"{len(unreachable)} unreachable-evidence")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _lint_rich(data), plain=plain)
+
     if failed:
         return 1
     if orphans and getattr(args, "fail_orphans", False):
@@ -119,24 +267,14 @@ def _cmd_lint(args) -> int:
     return 0
 
 
-def _cmd_status(_args) -> int:
+def _cmd_status(args) -> int:
     store = _require_store()
     if store is None:
         return 1
     active, broken, cands = store.active(), store.broken(), store.candidates()
-    print(f"{store.scars_dir}: {len(active)} active, {len(cands)} candidate(s) pending review")
-    for f, s in active:
-        print(f"  [{s.type} #{s.id} | {s.severity}] {s.title}")
-    for f, s in store.parsed():
-        if s.status == "challenged":
-            print(f"  [challenged {s.type} #{s.id}] {s.title}")
-    for c in cands:
-        print(f"  candidate: {c.name}")
+    challenged = [(f, s) for f, s in store.parsed() if s.status == "challenged"]
     today = time.strftime("%Y-%m-%d")
     due = [s for _, s in store.firing() if s.review_after and s.review_after < today]
-    for s in due:
-        print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
-              "re-verify, then update the date or archive")
 
     # Orphans: detected (firing scars whose anchors all died — not yet persisted)
     # and persisted (already flipped to status: orphaned, invisible until now).
@@ -144,19 +282,54 @@ def _cmd_status(_args) -> int:
     detected = detect_orphans(store, ctx)
     persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
     partial = detect_partial_rot(store, ctx)
-    print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
-          f"{len(persisted)} orphaned (persisted), "
-          f"{len(partial)} partial-rot (firing, ≥1 anchor dead)")
-    for of in detected:
-        print(f"    orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
-    for s in persisted:
-        print(f"    orphaned [{s.type} #{s.id}] {s.title}")
-    for pr in partial:
-        print(f"    partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
 
-    if broken:
-        print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
-              + ", ".join(b.name for b in broken))
+    data = {
+        "scars_dir": str(store.scars_dir),
+        "active": [{"type": s.type, "id": s.id, "severity": s.severity, "title": s.title}
+                   for _f, s in active],
+        "challenged": [{"type": s.type, "id": s.id, "title": s.title} for _f, s in challenged],
+        "candidates": [c.name for c in cands],
+        "review_due": [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due],
+        "orphan_detected": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)} for of in detected],
+        "orphaned": [{"type": s.type, "id": s.id, "title": s.title} for s in persisted],
+        "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
+        "broken": [b.name for b in broken],
+        "counts": {
+            "active": len(active),
+            "candidates": len(cands),
+            "orphan_detected": len(detected),
+            "orphaned": len(persisted),
+            "partial_rot": len(partial),
+            "broken": len(broken),
+        },
+    }
+
+    def plain():
+        print(f"{store.scars_dir}: {len(active)} active, {len(cands)} candidate(s) pending review")
+        for f, s in active:
+            print(f"  [{s.type} #{s.id} | {s.severity}] {s.title}")
+        for f, s in challenged:
+            print(f"  [challenged {s.type} #{s.id}] {s.title}")
+        for c in cands:
+            print(f"  candidate: {c.name}")
+        for s in due:
+            print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
+                  "re-verify, then update the date or archive")
+        print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
+              f"{len(persisted)} orphaned (persisted), "
+              f"{len(partial)} partial-rot (firing, ≥1 anchor dead)")
+        for of in detected:
+            print(f"    orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
+        for s in persisted:
+            print(f"    orphaned [{s.type} #{s.id}] {s.title}")
+        for pr in partial:
+            print(f"    partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
+        if broken:
+            print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
+                  + ", ".join(b.name for b in broken))
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _status_rich(data), plain=plain)
     return 0
 
 
@@ -192,12 +365,23 @@ def _cmd_check(args) -> int:
         return 1
     hits = rank_for_edit(store, Path(args.path).resolve(), args.content or "",
                          top_k=args.top_k)
-    if not hits:
-        print(f"no scars anchored to {args.path}")
-        return 0
-    for s in hits:
-        print(label_line(s))
-        print("  " + s.body[:200].replace("\n", "\n  "))
+    data = {
+        "path": args.path,
+        "scars": [{"type": s.type, "id": s.id, "severity": s.severity,
+                   "confidence": s.confidence, "status": s.status, "title": s.title,
+                   "body": s.body[:200]} for s in hits],
+    }
+
+    def plain():
+        if not hits:
+            print(f"no scars anchored to {args.path}")
+            return
+        for s in hits:
+            print(label_line(s))
+            print("  " + s.body[:200].replace("\n", "\n  "))
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _check_rich(args.path, hits), plain=plain)
     return 0
 
 
@@ -229,20 +413,31 @@ def _cmd_orphan(args) -> int:
 
     if not args.apply:
         partial = detect_partial_rot(store, ctx)
-        if not findings:
-            print("no orphan-detected scars")
-        else:
-            for of in findings:
-                print(f"orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
-            print(f"{len(findings)} orphan(s) detected — review, then "
-                  "`scar orphan --apply --id N --reason ...` to persist")
-        # Partial rot is advisory and surfaced separately — never persisted as
-        # orphaned (the fix is re-anchoring, not a status transition). #35.
-        for pr in partial:
-            print(f"partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
-        if partial:
-            print(f"{len(partial)} partial-rot — advisory; re-anchor the dead "
-                  "anchor(s). Not an orphan (still firing on survivors).")
+        data = {
+            "orphan_detected": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)}
+                                for of in findings],
+            "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)}
+                            for pr in partial],
+        }
+
+        def plain():
+            if not findings:
+                print("no orphan-detected scars")
+            else:
+                for of in findings:
+                    print(f"orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
+                print(f"{len(findings)} orphan(s) detected — review, then "
+                      "`scar orphan --apply --id N --reason ...` to persist")
+            # Partial rot is advisory and surfaced separately — never persisted as
+            # orphaned (the fix is re-anchoring, not a status transition). #35.
+            for pr in partial:
+                print(f"partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
+            if partial:
+                print(f"{len(partial)} partial-rot — advisory; re-anchor the dead "
+                      "anchor(s). Not an orphan (still firing on survivors).")
+
+        output.render(data=data, json_flag=getattr(args, "json", False),
+                      tty=lambda: _orphan_rich(findings, partial), plain=plain)
         return 0
 
     # --apply: persist. Human-only (never wire into CI/lint).
@@ -274,11 +469,21 @@ def _cmd_why(args) -> int:
         return 1
     rel = str(Path(args.path).resolve().relative_to(store.root))
     records = store.scars_for_path(rel)
-    for f, s in records:
-        print(f"[{s.status} {s.type} #{s.id}] {s.title}  ({f.name})")
-        print("  " + s.body[:300].replace("\n", "\n  ") + "\n")
-    if not records:
-        print(f"no recorded pain for {rel}")
+    data = {
+        "path": rel,
+        "records": [{"status": s.status, "type": s.type, "id": s.id, "title": s.title,
+                     "file": f.name, "body": s.body[:300]} for f, s in records],
+    }
+
+    def plain():
+        for f, s in records:
+            print(f"[{s.status} {s.type} #{s.id}] {s.title}  ({f.name})")
+            print("  " + s.body[:300].replace("\n", "\n  ") + "\n")
+        if not records:
+            print(f"no recorded pain for {rel}")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _why_rich(rel, records), plain=plain)
     return 0
 
 
@@ -536,7 +741,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("lint", help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
-    sub.add_parser("status", help="counts, titles, broken-file warnings")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p = sub.add_parser("status", help="counts, titles, broken-file warnings")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = sub.add_parser("promote", help="review a candidate into an active scar")
     p.add_argument("candidate", help="candidate filename (or unique substring)")
@@ -546,9 +753,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("path")
     p.add_argument("--content", default="", help="new code to test pattern anchors against")
     p.add_argument("--top-k", type=int, default=10)
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = sub.add_parser("why", help="history of pain for a path (any status)")
     p.add_argument("path")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = sub.add_parser("challenge", help="dispute a scar (still fires, marked challenged)")
     p.add_argument("id", type=int)
@@ -565,6 +774,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="with --apply: the detected scar id to persist")
     p.add_argument("--reason", default="anchors no longer resolve",
                    help="with --apply: why it is being orphaned (recorded in the note)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON (read mode only)")
 
     p = sub.add_parser("harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
