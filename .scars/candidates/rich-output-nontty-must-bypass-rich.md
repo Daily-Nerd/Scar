@@ -12,7 +12,7 @@ authors: ["claude-code"]
 anchors:
   - path: src/scar/cli.py
   - path: src/scar/output.py
-  - pattern: "output\\.render\\("
+  - pattern: "output\.render\("
 evidence:
   - issue: 78
   - note: "187-test suite asserts plain substrings like '0001-bad.deadend.md' and long anchor paths on main([...]) under capsys"
