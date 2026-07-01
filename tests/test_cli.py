@@ -5,8 +5,12 @@ import subprocess
 
 import pytest
 
+from scar import symbols
 from scar.cli import main
 from scar.store import ScarStore, init_scars
+
+symbols_extra = pytest.mark.skipif(
+    not symbols.symbols_available(), reason="tree-sitter extra not installed")
 
 CANDIDATE = """\
 ---
@@ -934,6 +938,43 @@ def test_orphan_tty_renders_dead_anchor_detail(repo, capsys, monkeypatch):
     out = capsys.readouterr().out
     # the dead anchor's identifying detail must survive into the report so a
     # renderer that silently dropped the finding is caught.
+    assert "orphan-detected" in out
     assert "src/dead_dir/" in out       # the dead path anchor
     assert "1 orphan(s) detected" in out
-    assert "orphan-detected" in out
+
+
+# ---------------------------------------------------------------------------
+# Symbol drift surfaced in lint (#99 Phase 3 finale) — advisory only, never
+# changes the lint exit code.
+# ---------------------------------------------------------------------------
+
+@symbols_extra
+def test_lint_json_includes_symbol_drift(repo, capsys):
+    def git(*a):
+        subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+
+    git("config", "user.email", "t@t.t"); git("config", "user.name", "t")
+    src = repo / "store.py"
+    src.write_text("class SessionStore:\n    def save(self):\n        x = 1\n        return x\n")
+    git("add", "-A"); git("commit", "-q", "-m", "base")
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                         capture_output=True, text=True, check=True).stdout.strip()
+
+    scars = repo / ".scars"; scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - path: store.py\n  - symbol: SessionStore.save\n"
+        f"evidence:\n  - commit: {sha}\nstatus: active\n---\nbody\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add scar")
+    src.write_text("class SessionStore:\n    def save(self):\n        return compute(other())\n")
+    git("add", "-A"); git("commit", "-q", "-m", "rewrite save")
+
+    capsys.readouterr()  # flush
+    rc = main(["lint", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 0  # advisory: drift never fails lint
+    drift = data["symbol_drift"]
+    assert len(drift) == 1
+    assert drift[0]["symbol"] == "SessionStore.save"
+    assert drift[0]["sha"] == sha
+    assert 0.0 <= drift[0]["similarity"] < 1.0

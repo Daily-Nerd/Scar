@@ -26,6 +26,7 @@ from .orphan import (
     build_repo_context,
     detect_orphans,
     detect_partial_rot,
+    detect_symbol_drift,
 )
 from .render import injection_context, label_line
 from .store import ScarStore, init_scars
@@ -69,6 +70,13 @@ def _partial_rot_reason(finding) -> str:
     """Human description of partial rot — which specific anchors went dead while
     the scar keeps firing on its survivors (#35)."""
     return "partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
+
+
+def _symbol_drift_reason(finding) -> str:
+    """Human description of symbol drift — a symbol anchor that still resolves
+    by name but whose body shape changed since the scar's evidence commit."""
+    pct = round(finding.similarity * 100)
+    return f"{finding.symbol} ~{pct}% similar since {finding.sha[:7]}"
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +147,9 @@ def _lint_rich(data: dict) -> None:
         console.print(f"[yellow]WARNING orphan-detected:[/] scar #{o['scar_id']} — {o['reason']}")
     for pr in data["partial_rot"]:
         console.print(f"[cyan]HINT partial-rot:[/] scar #{pr['scar_id']} — {pr['reason']}")
+    for d in data["symbol_drift"]:
+        console.print(f"[magenta]HINT symbol-drift:[/] scar #{d['scar_id']} — "
+                      f"{d['symbol']} ~{round(d['similarity'] * 100)}% similar since {d['sha'][:7]}")
     for h in data["reverse_hints"]:
         console.print(f"[cyan]HINT:[/] scar #{h['id']} marked orphaned but anchors live again")
     if data["shallow_clone"]:
@@ -221,12 +232,13 @@ def _cmd_lint(args) -> int:
 
     ctx = _repo_context(store)
     if ctx is None:
-        orphans, partial, reverse_hints = [], [], []
+        orphans, partial, reverse_hints, drift = [], [], [], []
     else:
         orphans = detect_orphans(store, ctx)
         partial = detect_partial_rot(store, ctx)
         reverse_hints = [s for _f, s in store.parsed()
                          if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
+        drift = detect_symbol_drift(store, store.root)
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
@@ -241,6 +253,8 @@ def _cmd_lint(args) -> int:
                      for rel, fs in findings_by_file for fi in fs],
         "orphans": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)} for of in orphans],
         "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
+        "symbol_drift": [{"scar_id": d.scar_id, "symbol": d.symbol,
+                          "sha": d.sha, "similarity": d.similarity} for d in drift],
         "reverse_hints": [{"id": s.id} for s in reverse_hints],
         "shallow_clone": shallow,
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
@@ -259,6 +273,11 @@ def _cmd_lint(args) -> int:
         for pr in partial:
             print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
                   "— re-anchor to restore full coverage")
+        # symbol drift (#99): a symbol anchor that still resolves by name but
+        # whose body shape changed since the evidence commit. Advisory only.
+        for d in drift:
+            print(f"HINT symbol-drift: scar #{d.scar_id} — {_symbol_drift_reason(d)} "
+                  "— re-verify the scar still describes this symbol")
         # reverse hint: persisted-orphaned scars whose anchors resolve again
         for s in reverse_hints:
             print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
