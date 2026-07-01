@@ -130,18 +130,28 @@ diff --git a/services/session.py b/services/session.py
     assert [m.scar.id for m in hits] == [2]
 
 
+def test_symbol_anchors_exposed_in_to_dict(tmp_path):
+    from scar.model import Scar
+    from scar.match import ScarMatch
+    from pathlib import Path
+    s = Scar(title="t", path_anchors=["a.py"], symbol_anchors=["Foo"], status="active")
+    m = ScarMatch(scar=s, source=Path("x.md"), rank=1.0, anchor_strength=2.0,
+                  matched_by=("path",), path="a.py")
+    assert m.to_dict()["anchors"]["symbols"] == ["Foo"]
+
+
 def test_match_to_dict_carries_every_scar_field(tmp_path):
     """A new Scar field must never silently vanish from MCP responses."""
     from dataclasses import fields
     from scar.model import Scar
     store = make_repo(tmp_path)
     d = rank_matches_for_edit(store, tmp_path / "payments" / "x.py", "")[0].to_dict()
-    renamed = {"path_anchors", "pattern_anchors"}  # carried as anchors.paths/.patterns
+    renamed = {"path_anchors", "pattern_anchors", "symbol_anchors"}  # carried under anchors.*
     for f in fields(Scar):
         if f.name in renamed:
             continue
         assert f.name in d, f"Scar.{f.name} missing from ScarMatch.to_dict()"
-    assert d["anchors"] == {"paths": ["payments/"], "patterns": []}
+    assert d["anchors"] == {"paths": ["payments/"], "patterns": [], "symbols": []}
 
 
 def test_diff_ranking_parses_store_once(tmp_path, monkeypatch):

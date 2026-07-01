@@ -97,6 +97,24 @@ def test_roundtrip_preserves_fields():
     assert s2.evidence == s.evidence
 
 
+def test_symbol_anchor_parses_and_roundtrips():
+    from scar.model import Scar, parse_scar_text
+    s = Scar(title="t", path_anchors=["src/store.py"], symbol_anchors=["SessionStore", "src/store.py::SessionStore.save"])
+    s2 = parse_scar_text(s.to_text())
+    assert s2.symbol_anchors == ["SessionStore", "src/store.py::SessionStore.save"]
+    assert s2.path_anchors == ["src/store.py"]
+
+
+def test_symbol_anchor_parsed_from_raw_frontmatter():
+    from scar.model import parse_scar_text
+    text = (
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
+        "anchors:\n  - path: src/store.py\n  - symbol: SessionStore\nstatus: active\n---\nbody\n"
+    )
+    s = parse_scar_text(text)
+    assert s.symbol_anchors == ["SessionStore"]
+
+
 def test_to_text_can_override_status_and_id():
     s = parse_scar_text(VALID)
     s.id, s.status = 12, "candidate"

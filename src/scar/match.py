@@ -42,7 +42,8 @@ class ScarMatch:
         # vanish from MCP responses (guarded by a fields() test)
         d = dict(self.scar.__dict__)
         d["anchors"] = {"paths": d.pop("path_anchors"),
-                        "patterns": d.pop("pattern_anchors")}
+                        "patterns": d.pop("pattern_anchors"),
+                        "symbols": d.pop("symbol_anchors")}
         d.update(matched_by=list(self.matched_by),
                  anchor_strength=self.anchor_strength,
                  rank=self.rank, path=self.path, source=str(self.source))

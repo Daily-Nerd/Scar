@@ -40,6 +40,7 @@ class Scar:
     authors: list[str] = field(default_factory=list)
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
+    symbol_anchors: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     expires_condition: str = ""
     review_after: str = ""
@@ -59,6 +60,7 @@ class Scar:
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f'  - pattern: "{p}"' for p in self.pattern_anchors]
+        lines += [f"  - symbol: {s}" for s in self.symbol_anchors]
         if self.evidence:
             lines.append("evidence:")
             lines += [f"  - {e}" for e in self.evidence]
@@ -131,6 +133,8 @@ def parse_scar_text(text: str) -> Scar:
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[p.strip().strip('"')
                          for p in re.findall(r"^\s*-\s*pattern:\s*(.+?)\s*$", front, re.MULTILINE)],
+        symbol_anchors=[_strip_inline_comment(s).strip('"').strip("'")
+                        for s in re.findall(r"^\s*-\s*symbol:\s*(.+?)\s*$", front, re.MULTILINE)],
         evidence=evidence,
         expires_condition=_field(front, "condition").strip('"'),
         review_after=_field(front, "review_after"),
