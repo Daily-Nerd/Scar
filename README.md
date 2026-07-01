@@ -50,7 +50,8 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 uv tool install scar-cli   # or: pipx install scar-cli
 ```
 
-Zero runtime dependencies. Python ≥3.10.
+The parser and agent hook hot-path are stdlib-only; the human-facing CLI adds
+`rich` + `rich-argparse` for formatted output. Python ≥3.10.
 
 ## Quickstart
 
@@ -127,7 +128,7 @@ It exposes `scar_query`, `scar_why`, and `scar_draft`. Drafting writes only to
 
 ## Status & expectations
 
-**Working software, shared as-is.** CLI v0 is shipped: 9 subcommands, 63 tests, zero dependencies, CI-enforced. It runs daily across the author's repos (where it has already caught real bugs — see `.scars/` in this very repo for live examples).
+**Working software, shared as-is.** CLI v0 is shipped: 15 subcommands, 220 tests, stdlib-only parser/hot-path, CI-enforced. It runs daily across the author's repos (where it has already caught real bugs — see `.scars/` in this very repo for live examples).
 
 This is personal infrastructure published as a gift to the OSS community, not a product. Issues and PRs are welcome and read with interest, but there is no support SLA and no roadmap promise. If it's useful to you, that's the whole point.
 
