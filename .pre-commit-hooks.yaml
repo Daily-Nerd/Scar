@@ -1,0 +1,15 @@
+- id: scar-lint
+  name: scar lint
+  description: Validate every scar/candidate and fail on orphan-detected scars.
+  entry: scar lint --fail-orphans
+  language: python
+  pass_filenames: false
+  always_run: true
+
+- id: scar-check
+  name: scar check (CI gate)
+  description: Block a commit that touches code anchored by an active scar (#106 gate).
+  entry: scar check --exit-code
+  language: python
+  types: [text]
+  pass_filenames: true

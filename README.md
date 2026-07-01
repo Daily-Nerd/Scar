@@ -113,6 +113,25 @@ scar mcp
 It exposes `scar_query`, `scar_why`, and `scar_draft`. Drafting writes only to
 `.scars/candidates/`; active enforcement still requires human promotion.
 
+## CI / pre-commit
+
+SCAR ships a `.pre-commit-hooks.yaml` (repo root) for one-line adoption via
+[pre-commit](https://pre-commit.com/):
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/Daily-Nerd/Scar
+    rev: v0.11.0  # pin a release-please tag; see the repo's releases
+    hooks:
+      - id: scar-lint    # validates every scar; fails on orphan-detected
+      - id: scar-check   # blocks a commit that touches anchored code (#106 gate)
+```
+
+Both hooks assume `.scars/` already exists (`scar init`) and `language: python`
+installs this package into pre-commit's own isolated venv — no separate
+`scar` install required on the machine running the hook.
+
 ## Quality discipline
 
 - **Candidates vs active:** agents and `scar harvest` only ever write to `.scars/candidates/`. A human promotes (`scar promote`) — nothing enters active enforcement without review.
