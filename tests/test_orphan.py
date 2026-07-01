@@ -396,3 +396,16 @@ def test_pattern_anchor_matching_real_code_still_live_despite_own_file(tmp_path)
                   "src/real.py": "x = SharedToken()"},
     )
     assert detect_orphans(store, ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #91.2: build_repo_context must surface a git failure, not return an
+# empty tracked set (which makes EVERY scar look orphaned -> false CI gate).
+# ---------------------------------------------------------------------------
+
+def test_build_repo_context_non_git_dir_surfaces_error(tmp_path):
+    from scar.orphan import GitError, build_repo_context
+    # tmp_path is not a git repo: git ls-files fails (rc 128). It must NOT be
+    # mistaken for "a repo with zero tracked files".
+    with pytest.raises(GitError):
+        build_repo_context(tmp_path)

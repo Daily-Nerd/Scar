@@ -24,6 +24,14 @@ MAX_CONTENT_BYTES = 1024 * 1024      # 1 MB — skip oversized / binary files
 READ_HEAD_BYTES = 8 * 1024           # first 8 KB for content matching
 
 
+class GitError(RuntimeError):
+    """A git invocation failed (e.g. the path is not a git repository).
+
+    Surfaced instead of returning an empty tracked set: an empty set makes every
+    scar's anchors look dead, flipping the whole repo to 'orphaned' and tripping
+    `lint --fail-orphans` as a false CI gate (landmine #1 — silent-empty as truth)."""
+
+
 @dataclass
 class RepoContext:
     """Encapsulates the tracked-file universe for one detection run.
@@ -69,8 +77,17 @@ def build_repo_context(repo: Path) -> RepoContext:
     READ_HEAD_BYTES. Undecodable (binary) files are tracked but their content
     is not loaded, so only their PATH can satisfy a pattern anchor."""
     repo = Path(repo)
-    out = subprocess.run(["git", "-C", str(repo), "ls-files"],
-                         capture_output=True, text=True).stdout
+    proc = subprocess.run(["git", "-C", str(repo), "ls-files"],
+                          capture_output=True)
+    if proc.returncode != 0:
+        # A valid repo (even one with zero tracked files) returns rc 0 + empty
+        # output; rc != 0 means git itself failed (not a repo / bad worktree).
+        # Distinguishing the two is the whole point — an empty tracked set here
+        # would orphan every scar (landmine #1).
+        raise GitError(
+            f"git ls-files failed in {repo}: "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()}")
+    out = proc.stdout.decode("utf-8", "replace")
     tracked = [line for line in out.splitlines() if line]
 
     contents: dict[str, str] = {}

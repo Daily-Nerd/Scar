@@ -64,15 +64,21 @@ def precheck() -> int:
     target = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not target:
         return 0
-    store = ScarStore.discover(Path(target))
-    if store is None:
+    try:
+        store = ScarStore.discover(Path(target))
+        if store is None:
+            return 0
+        new_content = " ".join(str(tool_input.get(k, ""))
+                               for k in ("content", "new_string", "new_source"))
+        hits = rank_for_edit(store, Path(target), new_content)
+        context = injection_context(hits, store.broken(), store.scars_dir)
+        if context:
+            _emit("PreToolUse", context)
+    except Exception:
+        # Contract (module docstring): a hook must NEVER fail or delay the user's
+        # edit. Fail OPEN on any unexpected error — inject nothing rather than
+        # raise (#91). Scoped to the ranking/render path, not the whole handler.
         return 0
-    new_content = " ".join(str(tool_input.get(k, ""))
-                           for k in ("content", "new_string", "new_source"))
-    hits = rank_for_edit(store, Path(target), new_content)
-    context = injection_context(hits, store.broken(), store.scars_dir)
-    if context:
-        _emit("PreToolUse", context)
     return 0
 
 

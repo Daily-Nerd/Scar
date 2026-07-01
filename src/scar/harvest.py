@@ -25,9 +25,24 @@ COMMENT_RE = (r"DO NOT|DON'T|do not (remove|change|touch)|HACK|XXX|"
               r"load.?bearing|intentional|must (stay|remain)|workaround")
 
 
+class GitError(RuntimeError):
+    """A git invocation failed fatally (e.g. the path is not a git repository).
+
+    Distinct from an empty-but-valid result: returning silent-empty output on a
+    hard git failure makes a total failure read as clean (landmine #1)."""
+
+
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args],
-                          capture_output=True, text=True).stdout
+    # capture bytes and decode with errors='replace' so non-UTF-8 commit/author
+    # metadata (real history has it) can't abort the run with UnicodeDecodeError.
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    if proc.returncode == 128:
+        # 128 = fatal git error (not a repo / bad object). NOT the same as
+        # `git grep`'s exit 1 (no match), which is a valid empty result.
+        raise GitError(
+            f"git {args[0] if args else ''} failed in {repo}: "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()}")
+    return proc.stdout.decode("utf-8", "replace")
 
 
 def _commits(repo: Path):
