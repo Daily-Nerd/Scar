@@ -175,3 +175,156 @@ def test_propose_path_reanchors_wraps_with_scar_id(tmp_path):
     assert p.proposed_anchor == "src/new_module.py"
     assert p.confidence == "high"
     assert 0.0 <= p.signal <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Symbol tracing (#111 commit 2) — [symbols]-gated: fingerprint the dead
+# symbol at its evidence SHA, scan the current tree via _walk_defs, rank by
+# jaccard + same-name bonus.
+# ---------------------------------------------------------------------------
+
+_OLD_BODY = (
+    "def old_helper(items):\n"
+    "    total = 0\n"
+    "    for item in items:\n"
+    "        if item > 0:\n"
+    "            total += item\n"
+    "    return total\n"
+)
+
+_NEW_NAME_SAME_SHAPE = (
+    "def new_helper(items):\n"
+    "    total = 0\n"
+    "    for item in items:\n"
+    "        if item > 0:\n"
+    "            total += item\n"
+    "    return total\n"
+)
+
+_UNRELATED_BODY = "def unrelated():\n    pass\n"
+
+
+@symbols_extra
+def test_symbol_renamed_same_file_high_confidence(tmp_path):
+    from scar.model import Scar
+    from scar.reanchor import trace_dead_symbol
+
+    _init_repo(tmp_path)
+    path = "src/pkg/mod.py"
+    _write(tmp_path, path, _OLD_BODY)
+    _commit(tmp_path, "add old_helper")
+    evidence_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+    _write(tmp_path, path, _NEW_NAME_SAME_SHAPE)
+    _commit(tmp_path, "rename old_helper to new_helper")
+
+    scar = Scar(id=1, symbol_anchors=["old_helper"], path_anchors=[path])
+    results = trace_dead_symbol(tmp_path, scar, "old_helper", evidence_sha, {path})
+    assert results
+    proposed, score, evidence = results[0]
+    assert proposed == f"{path}::new_helper"
+    assert score >= 0.7
+
+
+@symbols_extra
+def test_symbol_relocated_to_new_file(tmp_path):
+    from scar.model import Scar
+    from scar.reanchor import trace_dead_symbol
+
+    _init_repo(tmp_path)
+    old_path = "src/pkg/mod.py"
+    new_path = "src/lib/other.py"
+    _write(tmp_path, old_path, _OLD_BODY)
+    _commit(tmp_path, "add old_helper")
+    evidence_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+    _write(tmp_path, old_path, _UNRELATED_BODY)  # old_helper gone from here
+    _write(tmp_path, new_path, _NEW_NAME_SAME_SHAPE)  # moved + renamed elsewhere
+    _commit(tmp_path, "relocate old_helper")
+
+    scar = Scar(id=2, symbol_anchors=["old_helper"], path_anchors=[old_path])
+    tracked = {old_path, new_path}
+    results = trace_dead_symbol(tmp_path, scar, "old_helper", evidence_sha, tracked)
+    assert any(p == f"{new_path}::new_helper" for p, _, _ in results)
+
+
+@symbols_extra
+def test_symbol_truly_unresolvable_no_proposal(tmp_path):
+    from scar.model import Scar
+    from scar.reanchor import trace_dead_symbol
+
+    _init_repo(tmp_path)
+    path = "src/pkg/mod.py"
+    _write(tmp_path, path, _OLD_BODY)
+    _commit(tmp_path, "add old_helper")
+    evidence_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+    _write(tmp_path, path, _UNRELATED_BODY)
+    _commit(tmp_path, "replace old_helper with something unrelated")
+
+    scar = Scar(id=3, symbol_anchors=["old_helper"], path_anchors=[path])
+    results = trace_dead_symbol(tmp_path, scar, "old_helper", evidence_sha, {path})
+    assert results == []
+
+
+def test_symbol_tracing_degrades_without_extra(tmp_path, monkeypatch):
+    from scar import reanchor as reanchor_mod
+    from scar.model import Scar
+
+    monkeypatch.setattr(reanchor_mod.symbols, "symbols_available", lambda: False)
+    scar = Scar(id=4, symbol_anchors=["foo"], path_anchors=["a.py"])
+    assert reanchor_mod.trace_dead_symbol(tmp_path, scar, "foo", "deadbeef", {"a.py"}) == []
+    assert reanchor_mod.dead_symbol_anchors(scar, tmp_path, {"a.py"}) == []
+    assert reanchor_mod.propose_symbol_reanchors_for_scar(tmp_path, scar, {"a.py"}) == []
+
+
+@symbols_extra
+def test_dead_symbol_anchors_detects_gone_symbol(tmp_path):
+    from scar.model import Scar
+    from scar.reanchor import dead_symbol_anchors
+
+    _init_repo(tmp_path)
+    path = "src/pkg/mod.py"
+    _write(tmp_path, path, _NEW_NAME_SAME_SHAPE)  # only new_helper exists
+    _commit(tmp_path, "add new_helper")
+
+    scar = Scar(id=5, symbol_anchors=["old_helper"], path_anchors=[path])
+    dead = dead_symbol_anchors(scar, tmp_path, {path})
+    assert dead == ["old_helper"]
+
+    scar_live = Scar(id=6, symbol_anchors=["new_helper"], path_anchors=[path])
+    assert dead_symbol_anchors(scar_live, tmp_path, {path}) == []
+
+
+@symbols_extra
+def test_propose_symbol_reanchors_for_scar_orchestrates_evidence_sha(tmp_path):
+    from scar.model import Scar
+    from scar.reanchor import propose_symbol_reanchors_for_scar
+
+    _init_repo(tmp_path)
+    path = "src/pkg/mod.py"
+    _write(tmp_path, path, _OLD_BODY)
+    _commit(tmp_path, "add old_helper")
+    evidence_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+    _write(tmp_path, path, _NEW_NAME_SAME_SHAPE)
+    _commit(tmp_path, "rename old_helper to new_helper")
+
+    scar = Scar(id=7, symbol_anchors=["old_helper"], path_anchors=[path],
+               evidence=[f"commit: {evidence_sha}"])
+    proposals = propose_symbol_reanchors_for_scar(tmp_path, scar, {path})
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p.scar_id == 7
+    assert p.anchor_kind == "symbol"
+    assert p.dead_anchor == "old_helper"
+    assert p.proposed_anchor == f"{path}::new_helper"
+    assert p.confidence == "high"

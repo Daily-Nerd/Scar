@@ -29,7 +29,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .evidence import _git, _is_shallow
+from . import symbols
+from .evidence import _commit_shas, _git, _is_shallow, _reachable
+from .orphan import _drift_path
 
 # Signature-line filter: blank lines and lines under this length carry too
 # little content to mean anything as a moved-content signal (a bare brace, a
@@ -234,3 +236,179 @@ def propose_path_reanchors(repo: Path, scar_id: int | None, dead_anchor: str,
                          signal=round(ratio, 4), evidence=evidence)
         for path, ratio, evidence in candidates
     ]
+
+
+# ---------------------------------------------------------------------------
+# Symbol tracing — [symbols]-gated (#90: the core stays stdlib-only, so this
+# entire section degrades to zero proposals whenever tree-sitter isn't
+# installed; path proposals above are unaffected either way).
+#
+# orphan.py's dead-anchor accounting (OrphanFinding/PartialRotFinding) only
+# covers path/pattern anchors — symbol liveness needs the extra, so it can't
+# gate orphan status without breaking that stdlib-only guarantee (#90). This
+# module does its own symbol-liveness check (`dead_symbol_anchors`) rather
+# than widening orphan.py's contract.
+# ---------------------------------------------------------------------------
+
+# Symbol-tracing confidence tiers, from Jaccard similarity of the dead
+# symbol's type-sequence 3-gram shingles (see symbols.fingerprint) against
+# each current-tree candidate definition, plus a small same-name bonus (a
+# candidate keeping the anchor's bare name is extra evidence it's the same
+# thing, not just a structurally similar neighbour). HIGH requires the large
+# majority of the shingle set to still match — a pure rename/relocation with
+# an untouched body fingerprints at 1.0; LOW is a weaker structural echo,
+# surfaced for review only. Heuristic for this v1, same #54/#95 discipline as
+# the path thresholds above — not fit to labelled data.
+SYMBOL_HIGH_THRESHOLD = 0.7
+SYMBOL_LOW_THRESHOLD = 0.3
+SYMBOL_NAME_BONUS = 0.05
+
+# Bounded scan: old file first (rename-in-place), then same directory, then
+# same-extension elsewhere in the tree, capped — never an unbounded walk.
+_SYMBOL_CANDIDATE_CAP = 50
+
+
+def dead_symbol_anchors(scar, repo: Path, tracked: set[str]) -> list[str]:
+    """Symbol anchors on *scar* that don't resolve anywhere in the CURRENT
+    tree. Empty when the [symbols] extra is absent — degrade to zero,
+    never raise."""
+    if not symbols.symbols_available():
+        return []
+    repo = Path(repo)
+    dead: list[str] = []
+    for anchor in scar.symbol_anchors:
+        path = _drift_path(scar, anchor, tracked)
+        if path is None:
+            dead.append(anchor)
+            continue
+        try:
+            src = (repo / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            dead.append(anchor)
+            continue
+        if symbols.resolve_symbol(anchor, path, src) is None:
+            dead.append(anchor)
+    return dead
+
+
+def _anchor_old_path(scar, anchor: str) -> str | None:
+    """The file to fingerprint a symbol anchor's evidence from: the
+    qualified path in `path::Sym`, or the scar's sole path anchor for a bare
+    `Sym` (mirrors orphan._drift_path's bare-anchor rule, but without
+    requiring current trackedness — the file may itself be the dead thing,
+    e.g. deleted entirely and its symbol relocated elsewhere)."""
+    if "::" in anchor:
+        path = anchor.split("::", 1)[0]
+        return path or None
+    return scar.path_anchors[0] if len(scar.path_anchors) == 1 else None
+
+
+def _bare_name(anchor: str) -> str:
+    return anchor.split("::", 1)[-1].split(".")[0]
+
+
+def _symbol_tier(score: float) -> str | None:
+    if score >= SYMBOL_HIGH_THRESHOLD:
+        return "high"
+    if score >= SYMBOL_LOW_THRESHOLD:
+        return "low"
+    return None
+
+
+def _symbol_candidate_files(old_path: str, tracked: set[str],
+                            cap: int = _SYMBOL_CANDIDATE_CAP) -> list[str]:
+    ext = Path(old_path).suffix
+    old_dir = str(Path(old_path).parent)
+    same_dir = sorted(p for p in tracked
+                      if p != old_path and p.endswith(ext) and str(Path(p).parent) == old_dir)
+    rest = sorted(p for p in tracked
+                 if p != old_path and p.endswith(ext) and str(Path(p).parent) != old_dir)
+    ordered = ([old_path] if old_path in tracked else []) + same_dir + rest
+    return ordered[:cap]
+
+
+def trace_dead_symbol(repo: Path, scar, anchor: str, sha: str,
+                      tracked: set[str]) -> list[tuple[str, float, str]]:
+    """Candidates for where a dead symbol anchor's definition moved to:
+    fingerprint it at the evidence SHA (`symbols.fingerprint`), scan the
+    current tree (old file -> same dir -> same-extension cap) via
+    `symbols._walk_defs`, rank by Jaccard similarity + a same-name bonus.
+    Gated on `symbols.symbols_available()`. Never raises — any failure
+    (unavailable extra, unresolvable anchor at that SHA, git error) degrades
+    to no proposals."""
+    if not symbols.symbols_available():
+        return []
+    repo = Path(repo)
+    old_path = _anchor_old_path(scar, anchor)
+    if old_path is None:
+        return []
+    try:
+        proc = _git(repo, "show", f"{sha}:{old_path}")
+    except OSError:
+        return []
+    if proc.returncode != 0:
+        return []
+    base_fp = symbols.fingerprint(anchor, old_path, proc.stdout)
+    if base_fp is None:
+        return []
+
+    name = _bare_name(anchor)
+    results: list[tuple[str, float, str]] = []
+    for cand_path in _symbol_candidate_files(old_path, tracked):
+        try:
+            source = (repo / cand_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        tree = symbols._parse(cand_path, source)
+        if tree is None:
+            continue
+        for cand_name, _node in symbols._walk_defs(tree.root_node):
+            cand_fp = symbols.fingerprint(cand_name, cand_path, source)
+            if cand_fp is None:
+                continue
+            sim = symbols.jaccard(base_fp, cand_fp)
+            same_name = cand_name == name
+            score = min(1.0, sim + SYMBOL_NAME_BONUS) if same_name else sim
+            if _symbol_tier(score) is None:
+                continue
+            proposed = f"{cand_path}::{cand_name}"
+            evidence = f"symbol fingerprint at {sha[:7]}: jaccard {sim:.2f}"
+            if same_name:
+                evidence += " (+name match)"
+            results.append((proposed, score, evidence))
+    results.sort(key=lambda t: (-t[1], t[0]))
+    return results
+
+
+def propose_symbol_reanchors(repo: Path, scar_id, scar, dead_anchor: str,
+                             sha: str, tracked: set[str]) -> list[ReanchorProposal]:
+    """`trace_dead_symbol` results wrapped into `ReanchorProposal`s for one
+    scar's one dead symbol anchor."""
+    candidates = trace_dead_symbol(repo, scar, dead_anchor, sha, tracked)
+    return [
+        ReanchorProposal(scar_id=scar_id, anchor_kind="symbol", dead_anchor=dead_anchor,
+                         proposed_anchor=path, confidence=_symbol_tier(score),
+                         signal=round(score, 4), evidence=evidence)
+        for path, score, evidence in candidates
+    ]
+
+
+def propose_symbol_reanchors_for_scar(repo: Path, scar,
+                                      tracked: set[str]) -> list[ReanchorProposal]:
+    """All symbol reanchor proposals for one scar: resolves its dead symbol
+    anchors and, for each, fingerprints against the scar's reachable
+    evidence commit (same `git show <sha>:<path>` + fingerprint precedent as
+    orphan.detect_symbol_drift). The one entry point the CLI uses for the
+    symbol side of `scar reanchor`. Degrades to [] without the [symbols]
+    extra, without symbol anchors, or without a reachable evidence commit."""
+    if not symbols.symbols_available() or not scar.symbol_anchors:
+        return []
+    repo = Path(repo)
+    shas = [s for s in _commit_shas(scar) if _reachable(repo, s)]
+    if not shas:
+        return []
+    sha = shas[0]
+    proposals: list[ReanchorProposal] = []
+    for anchor in dead_symbol_anchors(scar, repo, tracked):
+        proposals.extend(propose_symbol_reanchors(repo, scar.id, scar, anchor, sha, tracked))
+    return proposals
