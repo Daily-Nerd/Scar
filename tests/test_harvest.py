@@ -148,6 +148,87 @@ def test_excludes_vendored_and_scaffold_dirs_from_candidates(tmp_path):
         "no candidate may point into a vendored/scaffold tree (#72)"
 
 
+def test_excludes_lockfile_basename_from_comment_candidates(tmp_path):
+    """Scar #87 Part A: lockfile integrity hashes false-match comment fences.
+
+    COMMENT_RE has no \\b (scar 0001 forbids word boundaries in git-grep
+    patterns), so 'XXX' matches as a substring inside base64 integrity hashes
+    in lockfiles. A lockfile basename must be excluded from the 'comments'
+    section only — see the flapping-survives test below for the section scope.
+    """
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "package-lock.json").write_text(
+        '{\n  "integrity": "sha512-abcXXXdef1234567890=="\n}\n')
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "chore: add lockfile")
+
+    result = harvest(tmp_path)
+    locations = [c["location"] for c in result["comments"]]
+    assert not any(loc.startswith("package-lock.json:") for loc in locations), \
+        "lockfile integrity-hash false match must not surface as a comment candidate"
+
+
+def test_excludes_nested_lockfile_basename_from_comment_candidates(tmp_path):
+    """Basename match applies at any directory depth (#87 Part A)."""
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    nested = tmp_path / "frontend"
+    nested.mkdir()
+    (nested / "package-lock.json").write_text(
+        '{\n  "integrity": "sha512-abcXXXdef1234567890=="\n}\n')
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "chore: add nested lockfile")
+
+    result = harvest(tmp_path)
+    locations = [c["location"] for c in result["comments"]]
+    assert not any(loc.startswith("frontend/package-lock.json:") for loc in locations), \
+        "nested lockfile basename must also be excluded (any directory depth)"
+
+
+def test_lockfile_flapping_is_not_excluded(tmp_path):
+    """Lockfile exclusion is comment-only: version flapping on a lockfile is
+    genuine signal and must survive (#87 Part A section-scoping requirement).
+    """
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text("version: 1.0.0\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "chore: add lockfile")
+    lockfile.write_text("version: 2.0.0\n")
+    git(tmp_path, "commit", "-qam", "chore: bump version")
+    lockfile.write_text("version: 1.0.0\n")
+    git(tmp_path, "commit", "-qam", "chore: revert version bump")
+
+    result = harvest(tmp_path)
+    assert any(f["file"] == "package-lock.json" and "1.0.0 -> 2.0.0 -> 1.0.0" in f["sequence"]
+                for f in result["flapping"]), \
+        "lockfile flapping must survive — the exclusion is comments-only, not global"
+
+
+def test_genuine_non_lockfile_comment_still_surfaces(tmp_path):
+    """No over-exclusion: a real comment fence in a normal source file must
+    still be harvested (#87 Part A).
+    """
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "foo.py").write_text("# DO NOT remove this guard\nx = 1\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "feat: add foo")
+
+    result = harvest(tmp_path)
+    locations = [c["location"] for c in result["comments"]]
+    assert any(loc.startswith("src/foo.py:") for loc in locations), \
+        "genuine non-lockfile comment fence must still be harvested"
+
+
 # ---------------------------------------------------------------------------
 # Ranking / scoring tests
 # ---------------------------------------------------------------------------
