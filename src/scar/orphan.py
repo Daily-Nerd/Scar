@@ -14,6 +14,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import symbols
+from .evidence import _commit_shas, _git, _is_shallow, _reachable
 from .match import _path_anchor_matches, _pattern_anchor_matches
 from .model import Scar
 from .store import ScarStore
@@ -50,6 +52,16 @@ class OrphanFinding:
     scar_id: int | None
     dead_path_anchors: list[str]      # path anchors that resolved to nothing
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
+
+
+@dataclass
+class SymbolDriftFinding:
+    """A symbol-anchored scar whose symbol resolves but drifted since its
+    evidence commit. Advisory only; graded similarity, never a transition."""
+    scar_id: int | None
+    symbol: str
+    sha: str
+    similarity: float
 
 
 @dataclass
@@ -247,4 +259,63 @@ def detect_partial_rot(store: ScarStore, ctx: RepoContext) -> list[PartialRotFin
         except Exception:
             continue
 
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Symbol drift (#99 Phase 3): a symbol anchor that still resolves by name but
+# whose body shape changed since the scar's evidence commit. Read-only,
+# advisory — gated behind the [symbols] extra + git + a non-shallow clone.
+# Every failure mode degrades to "no finding", never raises.
+# ---------------------------------------------------------------------------
+
+def _drift_path(scar: Scar, anchor: str, tracked: set[str]) -> str | None:
+    """Resolve the file for a symbol anchor: qualified path::Sym → that path;
+    bare Sym → a path anchor that names a single tracked file. Else None."""
+    if "::" in anchor:
+        path = anchor.split("::", 1)[0]
+        return path if path in tracked else None
+    files = [p for p in scar.path_anchors if p in tracked]
+    return files[0] if len(files) == 1 else None
+
+
+def detect_symbol_drift(store: ScarStore, repo: Path) -> list[SymbolDriftFinding]:
+    """Fingerprint each firing scar's symbol anchor at its evidence commit SHA
+    vs HEAD and flag drift (Jaccard similarity < 1.0). Never raises."""
+    repo = Path(repo)
+    if not symbols.symbols_available() or _is_shallow(repo):
+        return []
+    try:
+        tracked = set(build_repo_context(repo).tracked_paths)
+    except GitError:
+        return []
+
+    findings: list[SymbolDriftFinding] = []
+    for _source, scar in store.firing():
+        try:
+            shas = [s for s in _commit_shas(scar) if _reachable(repo, s)]
+            if not scar.symbol_anchors or not shas:
+                continue
+            sha = shas[0]
+            for anchor in scar.symbol_anchors:
+                path = _drift_path(scar, anchor, tracked)
+                if path is None:
+                    continue
+                show = _git(repo, "show", f"{sha}:{path}")
+                if show.returncode != 0:
+                    continue
+                base_fp = symbols.fingerprint(anchor, path, show.stdout)
+                try:
+                    cur_src = (repo / path).read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                cur_fp = symbols.fingerprint(anchor, path, cur_src)
+                if base_fp is None or cur_fp is None:
+                    continue
+                sim = symbols.jaccard(base_fp, cur_fp)
+                if sim < 1.0:
+                    findings.append(SymbolDriftFinding(
+                        scar_id=scar.id, symbol=anchor, sha=sha, similarity=sim))
+        except Exception:
+            continue
     return findings

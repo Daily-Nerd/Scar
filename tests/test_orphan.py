@@ -12,8 +12,12 @@ from pathlib import Path
 
 import pytest
 
+from scar import symbols
 from scar.store import ScarStore, init_scars
 from scar.orphan import OrphanFinding, anchors_all_dead, detect_orphans
+
+symbols_extra = pytest.mark.skipif(
+    not symbols.symbols_available(), reason="tree-sitter extra not installed")
 
 # ---------------------------------------------------------------------------
 # Scar text helpers
@@ -409,3 +413,76 @@ def test_build_repo_context_non_git_dir_surfaces_error(tmp_path):
     # mistaken for "a repo with zero tracked files".
     with pytest.raises(GitError):
         build_repo_context(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Issue #99 Phase 3: symbol-drift detection — a symbol anchor that still
+# resolves by name but whose body shape changed since the scar's evidence
+# commit. Advisory only; never a status transition.
+# ---------------------------------------------------------------------------
+
+@symbols_extra
+def test_detect_symbol_drift_flags_changed_body(tmp_path):
+    import subprocess
+    from scar.store import ScarStore
+    from scar.orphan import detect_symbol_drift
+
+    def git(*a):
+        subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q"); git("config", "user.email", "t@t.t"); git("config", "user.name", "t")
+    src = tmp_path / "store.py"
+    src.write_text("class SessionStore:\n    def save(self):\n        x = 1\n        return x\n")
+    git("add", "-A"); git("commit", "-q", "-m", "base")
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path,
+                         capture_output=True, text=True, check=True).stdout.strip()
+
+    scars = tmp_path / ".scars"; scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - path: store.py\n  - symbol: SessionStore.save\n"
+        f"evidence:\n  - commit: {sha}\nstatus: active\n---\nbody\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add scar")
+    src.write_text("class SessionStore:\n    def save(self):\n        return compute(other())\n")
+    git("add", "-A"); git("commit", "-q", "-m", "rewrite save")
+
+    store = ScarStore.discover(tmp_path)
+    findings = detect_symbol_drift(store, tmp_path)
+    assert len(findings) == 1
+    assert findings[0].symbol == "SessionStore.save"
+    assert findings[0].scar_id is None or isinstance(findings[0].scar_id, int)
+    assert 0.0 <= findings[0].similarity < 1.0
+
+
+@symbols_extra
+def test_detect_symbol_drift_ignores_comment_only_change(tmp_path):
+    import subprocess
+    from scar.store import ScarStore
+    from scar.orphan import detect_symbol_drift
+
+    def git(*a):
+        subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q"); git("config", "user.email", "t@t.t"); git("config", "user.name", "t")
+    src = tmp_path / "store.py"
+    src.write_text("class SessionStore:\n    def save(self):\n        x = 1\n        return x\n")
+    git("add", "-A"); git("commit", "-q", "-m", "base")
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path,
+                         capture_output=True, text=True, check=True).stdout.strip()
+
+    scars = tmp_path / ".scars"; scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - path: store.py\n  - symbol: SessionStore.save\n"
+        f"evidence:\n  - commit: {sha}\nstatus: active\n---\nbody\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add scar")
+    # comment-only change at HEAD — the scar has a path anchor too, so the
+    # bare symbol resolves against store.py and the fingerprint comparison
+    # actually runs (without the path anchor, _drift_path can't resolve a
+    # file and the anchor is skipped, making the assertion trivially true).
+    src.write_text("class SessionStore:\n    def save(self):\n        # tweak\n        x = 1\n        return x\n")
+    git("add", "-A"); git("commit", "-q", "-m", "comment only")
+
+    store = ScarStore.discover(tmp_path)
+    findings = detect_symbol_drift(store, tmp_path)
+    assert findings == []  # comment-only → identical fingerprint → no drift
