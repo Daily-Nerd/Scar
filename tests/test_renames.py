@@ -1,13 +1,16 @@
 """Git rename following (#109) — RED->GREEN per test.
 
-Detection is READ-ONLY: a whole-history `-M` walk resolves a dead path
-anchor to its unambiguous, currently-tracked rename target (or None).
+Detection is READ-ONLY (whole-history -M walk); the fix path is a surgical
+single-line text rewrite, never a parse+reserialize (landmine #4: promote's
+roundtrip once silently dropped expires/evidence on a full reserialize).
 """
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -210,3 +213,63 @@ def test_resolver_only_builds_map_once(tmp_path, monkeypatch):
     resolver.resolve(["src/old.py"], {"src/new.py"})
     resolver.resolve(["src/old.py"], {"src/new.py"})
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# apply_rename_fix — the surgical single-line write path
+# ---------------------------------------------------------------------------
+
+_SCAR_TEXT = """\
+---
+id: 42
+type: deadend
+title: test scar
+severity: medium
+confidence: 0.8
+created: 2026-01-01
+authors: [test]
+anchors:
+  - path: src/old.py
+evidence:
+  - commit: abc1234
+expires:
+  condition: "code is deleted"
+  review_after: 2027-01-01
+status: active
+---
+
+Body text with weird "quotes" and trailing whitespace.
+"""
+
+
+def test_apply_rename_fix_rewrites_only_the_anchor_line(tmp_path):
+    from scar.renames import apply_rename_fix
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT)
+    before = f.read_text()
+
+    changed = apply_rename_fix(f, {"src/old.py": "src/new.py"})
+    assert changed is True
+
+    after = f.read_text()
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+
+    diffs = [(i, b, a) for i, (b, a) in enumerate(zip(before_lines, after_lines)) if b != a]
+    assert len(diffs) == 1
+    i, b, a = diffs[0]
+    assert b == "  - path: src/old.py"
+    assert a == "  - path: src/new.py"
+
+
+def test_apply_rename_fix_no_match_returns_false(tmp_path):
+    from scar.renames import apply_rename_fix
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT)
+    before = f.read_text()
+    changed = apply_rename_fix(f, {"src/nonexistent.py": "src/new.py"})
+    assert changed is False
+    assert f.read_text() == before

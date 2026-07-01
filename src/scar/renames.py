@@ -13,16 +13,21 @@ one whole-history `git log` walk this module performs is bounded to firing
 scans that already have a dead anchor to investigate, never the edit-time hot
 path (#109 AC: "no git invocation added to match.py/hooks.py").
 
-READ-ONLY module: build_rename_map / resolve_rename / RenameResolver. The
-write path (a surgical single-line anchor fix for `scar orphan --fix-renames`)
-lands separately.
+Detection (build_rename_map / resolve_rename / RenameResolver) is READ-ONLY.
+apply_rename_fix is the ONE write path, and it is surgical: a single anchor
+line is text-replaced in place, never a parse+reserialize of the whole scar.
+Landmine #4: promote's parse->Scar.to_text() roundtrip once silently dropped
+the expires/evidence blocks on a hand-authored file — reserializing loses
+whatever the model doesn't round-trip. A rename fix must not repeat that.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .evidence import _git, _is_shallow
+from .model import _strip_inline_comment
 
 # Directory anchors (trailing '/') and glob-shaped anchors are out of scope —
 # renames apply to concrete tracked files only (#109 design).
@@ -141,3 +146,47 @@ class RenameResolver:
             if target is not None:
                 out[anchor] = target
         return out
+
+
+# ---------------------------------------------------------------------------
+# Write path — the ONLY place this module mutates a file on disk.
+# ---------------------------------------------------------------------------
+
+_PATH_ANCHOR_LINE_RE = re.compile(r"^\s*-\s*path:\s*(.+?)\s*$")
+
+
+def apply_rename_fix(path: Path, renamed: dict[str, str]) -> bool:
+    """Surgically rewrite `- path: <old>` anchor lines in the scar file at
+    *path* to `<new>` for every old->new pair in *renamed*. Every other byte
+    in the file — formatting, comments, quoting, the body — is untouched.
+
+    This is a targeted substring replace confined to the exact span matched
+    by the path-anchor line regex, never a parse+reserialize (landmine #4).
+    Returns True iff at least one line was changed (file is rewritten only
+    then); False leaves the file byte-identical and unwritten.
+    """
+    if not renamed:
+        return False
+    text = path.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    changed = False
+    for i, line in enumerate(lines):
+        m = _PATH_ANCHOR_LINE_RE.match(line)
+        if not m:
+            continue
+        raw_val = m.group(1)
+        stripped = _strip_inline_comment(raw_val).strip('"').strip("'")
+        new_path = renamed.get(stripped)
+        if new_path is None:
+            continue
+        idx = raw_val.find(stripped)
+        if idx == -1:
+            continue  # defensive; stripped is derived from raw_val, always found
+        val_start = m.start(1)
+        abs_start = val_start + idx
+        abs_end = abs_start + len(stripped)
+        lines[i] = line[:abs_start] + new_path + line[abs_end:]
+        changed = True
+    if changed:
+        path.write_text("\n".join(lines), encoding="utf-8")
+    return changed

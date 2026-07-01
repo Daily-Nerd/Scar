@@ -33,6 +33,7 @@ from .orphan import (
     detect_symbol_drift,
 )
 from .render import injection_context, label_line
+from .renames import apply_rename_fix
 from .store import ScarStore, init_scars
 from . import output
 
@@ -509,9 +510,69 @@ def _cmd_transition(args, new_status: str) -> int:
     return 0
 
 
+def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
+    """`scar orphan --fix-renames`: surgically rewrite the anchor line for
+    every dead path anchor that resolved to an unambiguous, currently-tracked
+    git rename target (#109). Read-only stays the default; this is explicit
+    opt-in and touches ONLY orphan-detected scars — never partial-rot (the
+    fix there is re-anchoring, same posture as everywhere else partial-rot is
+    handled).
+
+    Each rewrite is a single-line text replace (renames.apply_rename_fix) —
+    never a parse+reserialize (landmine #4: promote's roundtrip once silently
+    dropped expires/evidence on a hand-authored file).
+    """
+    id_to_path = {s.id: f for f, s in store.parsed() if s.id is not None}
+    fixed: list[tuple[int | None, dict[str, str]]] = []
+    skipped: list[int | None] = []
+    for of in findings:
+        path = id_to_path.get(of.scar_id)
+        if not of.renamed or path is None:
+            if of.dead_path_anchors:
+                skipped.append(of.scar_id)
+            continue
+        if apply_rename_fix(path, of.renamed):
+            fixed.append((of.scar_id, of.renamed))
+        else:
+            skipped.append(of.scar_id)
+
+    data = {
+        "fixed": [{"scar_id": sid, "renamed": renamed} for sid, renamed in fixed],
+        "skipped": [{"scar_id": sid} for sid in skipped],
+    }
+
+    def plain():
+        for sid, renamed in fixed:
+            for old, new in renamed.items():
+                print(f"fixed [#{sid}] renamed anchor {old} -> {new}")
+        for sid in skipped:
+            print(f"not fixed [#{sid}] no unambiguous, currently-tracked "
+                  "rename target — anchor left as-is")
+        if not fixed and not skipped:
+            print("no orphan-detected scars with a dead path anchor to fix")
+        print(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed")
+
+    def tty():
+        console = output.console
+        for sid, renamed in fixed:
+            for old, new in renamed.items():
+                console.print(f"[green]fixed[/] [#{sid}] renamed anchor {old} -> {new}")
+        for sid in skipped:
+            console.print(f"[yellow]not fixed[/] [#{sid}] no unambiguous, "
+                          "currently-tracked rename target")
+        if not fixed and not skipped:
+            console.print("[green]no orphan-detected scars with a dead path anchor to fix[/]")
+        console.print(f"[bold]{len(fixed)}[/] scar(s) fixed, [bold]{len(skipped)}[/] left unfixed")
+
+    output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
+    return 0
+
+
 def _cmd_orphan(args) -> int:
     """List firing scars whose every anchor is dead. Read-only by default;
-    --apply persists status: orphaned via store.transition() (human-only)."""
+    --apply persists status: orphaned via store.transition() (human-only);
+    --fix-renames rewrites dead-but-renamed anchor lines (also human-only,
+    also opt-in — #109)."""
     store = _require_store()
     if store is None:
         return 1
@@ -523,6 +584,9 @@ def _cmd_orphan(args) -> int:
               "tracked files; orphan detection skipped")
         return 1
     findings = detect_orphans(store, ctx, repo=store.root)
+
+    if getattr(args, "fix_renames", False):
+        return _orphan_fix_renames(store, findings, args)
 
     if not args.apply:
         partial = detect_partial_rot(store, ctx, repo=store.root)
@@ -997,6 +1061,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="with --apply: the detected scar id to persist")
     p.add_argument("--reason", default="anchors no longer resolve",
                    help="with --apply: why it is being orphaned (recorded in the note)")
+    p.add_argument("--fix-renames", action="store_true",
+                   help="rewrite dead path anchors to their unambiguous, currently-"
+                        "tracked git rename target (surgical single-line edit; "
+                        "explicit opt-in, never the default — #109)")
     p.add_argument("--json", action="store_true",
                    help="emit machine-readable JSON (read mode only)")
 
