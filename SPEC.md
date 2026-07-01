@@ -1,12 +1,12 @@
 # SCAR — Technical Specification (Draft 0.1)
 
 Status: largely shipped as of v0.9. Most of this spec describes working software
-(see the reference implementation in `src/scar/`). Two sections remain
-aspirational: **§2 symbol anchors** (only path + pattern anchors ship today;
-language-aware symbol anchors are planned — issue #94) and **§5 confidence
-dynamics** (confidence decay and `scar confirm` are not implemented — that
-cut-vs-build decision is tracked in issue #95). Those two areas aside, treat
-this document as a description of what the tool does, not a concept draft.
+(see the reference implementation in `src/scar/`). Treat this document as a
+description of what the tool does, not a concept draft. One scope note:
+**§5 confidence** is a static, human-authored ranking weight — the decay,
+uphold, and `scar confirm` dynamics once sketched here were cut (issue #95)
+and deferred until scar volume and confirmation data can calibrate a decay
+policy without inventing unvalidated constants.
 
 ## 1. The scar file
 
@@ -33,7 +33,7 @@ id: 1
 type: deadend            # deadend | fence | landmine
 title: Redis for session storage
 severity: high           # low | medium | high | critical
-confidence: 0.9          # 0..1, decays per policy, raised by surviving challenges
+confidence: 0.9          # 0..1, static human-authored ranking weight
 created: 2024-03-12
 authors: [mara@example.com, "claude-code"]
 anchors:
@@ -115,12 +115,12 @@ Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X a
 
 ### 4.3 Ranking and the fatigue budget
 
-Hard rule: **max 3 scars injected per edit, max ~120 words each.** A scar system that warns constantly is a scar system that gets uninstalled. Ranking: `severity_weight × confidence × anchor_specificity`, ties broken by recency of last confirmation. Everything else is reachable via `scar why` but not pushed.
+Hard rule: **max 3 scars injected per edit, max ~120 words each.** A scar system that warns constantly is a scar system that gets uninstalled. Ranking: `severity_weight × confidence × anchor_specificity`, sorted descending (`confidence` is the static authored weight — see §5). Everything else is reachable via `scar why` but not pushed.
 
 ## 5. Lifecycle
 
 ```
-candidate ──confirm──▶ active ──challenge──▶ challenged ──▶ upheld (confidence↑)
+candidate ──promote──▶ active ──challenge──▶ challenged
     │                    │                        └────────▶ archived (+tombstone note)
  discard              anchors drift
                          ▼
@@ -128,7 +128,7 @@ candidate ──confirm──▶ active ──challenge──▶ challenged ─�
                          └──expire/review──▶ archived
 ```
 
-- Confidence decays toward a floor over time without confirmations; surviving a challenge or being explicitly confirmed (`scar confirm <id>`) raises it.
+- Confidence is a static, human-authored ranking weight (0..1); the tool does not currently mutate it. Dynamic confidence — decay toward a floor without confirmations, an uphold bump on a survived challenge, and an explicit `scar confirm <id>` — is deferred until scar volume and confirmation data can calibrate a decay policy without unvalidated constants (issue #95).
 - `review_after` forces periodic human contact with old scars; CI can warn on overdue reviews.
 - Archive keeps everything: SCAR's own history is negative knowledge.
 
@@ -159,4 +159,4 @@ All harvest output is `candidates/`, never active. Precision over recall: a harv
 2. **RESOLVED.** Pattern anchors ship as regex, diff-scoped (tested against edited paths and *new* content). AST patterns are deferred; regex-first was accepted and the false-positive rate is managed by the ReDoS/lint gate.
 3. **RESOLVED.** Monorepos use a single root `.scars/` with path scoping (nearest-ancestor discovery), not `.scars/` per package.
 4. **RESOLVED.** No pre-ranked binary index is needed: a live stdlib parse of `.scars/` ranks under the hook latency budget. Revisit only if a repo's scar count ever pushes past it.
-5. **OPEN** (tracked). Authorship trust: agent-authored scars marked `authors: ["claude-code"]` — should they start at lower confidence until human-confirmed? Still unimplemented; ties into the §5 confidence dynamics tracked in issue #95.
+5. **OPEN** (tracked). Authorship trust: agent-authored scars marked `authors: ["claude-code"]` — should they start at a lower *static* confidence than human-authored ones? This no longer depends on the (now-cut) §5 dynamics; it could ship as a simple authored-default policy. Deferred with the rest of confidence tuning (issue #95).
