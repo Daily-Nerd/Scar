@@ -195,6 +195,29 @@ def _why_rich(rel: str, records) -> None:
                             title_align="left"))
 
 
+def _stats_rich(data: dict) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = output.console
+    console.print(Panel.fit(
+        f"{data['total_firings']} firing(s) recorded\n"
+        f"most-fired: {'#' + str(data['most_fired']) if data['most_fired'] is not None else '(none yet)'} · "
+        f"last fired: {data['last_fired'] or '(never)'}",
+        title="scar stats"))
+    if data["per_scar"]:
+        t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
+        t.add_column("id", justify="right"); t.add_column("firings", justify="right")
+        for e in data["per_scar"]:
+            t.add_row(f"#{e['id']}", str(e["count"]))
+        console.print(t)
+    if data["never_fired"]:
+        console.print(f"[yellow]never fired:[/] "
+                      + ", ".join(f"#{i}" for i in data["never_fired"]))
+    console.print("[dim]note: firing counts only — whether the agent honored an "
+                  "injected scar is not tracked (unobservable from inside the hook)[/]")
+
+
 def _orphan_rich(findings, partial) -> None:
     console = output.console
     if not findings:
@@ -568,6 +591,69 @@ def _cmd_why(args) -> int:
     return 0
 
 
+def _cmd_stats(args) -> int:
+    """Aggregate the firing log the precheck hook writes (#106): total
+    firings, per-scar counts, the most-fired scar, the last-fired timestamp,
+    and which currently-firing scars have never fired. FIRING COUNTS only —
+    this cannot report whether the agent honored an injected scar, only that
+    it was shown to it (unobservable from inside the hook)."""
+    from .hooks import firing_log_path
+    store = _require_store()
+    if store is None:
+        return 1
+
+    log_path = firing_log_path()
+    records = []
+    if log_path.exists():
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    counts: dict[int, int] = {}
+    last_fired = None
+    for rec in records:
+        for sid in rec.get("scar_ids", []):
+            counts[sid] = counts.get(sid, 0) + 1
+        ts = rec.get("ts")
+        if ts and (last_fired is None or ts > last_fired):
+            last_fired = ts
+    per_scar = sorted(({"id": sid, "count": c} for sid, c in counts.items()),
+                      key=lambda e: (-e["count"], e["id"]))
+    most_fired = per_scar[0]["id"] if per_scar else None
+    firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
+    never_fired = sorted(firing_ids - set(counts))
+
+    data = {
+        "total_firings": sum(counts.values()),
+        "per_scar": per_scar,
+        "most_fired": most_fired,
+        "last_fired": last_fired,
+        "never_fired": never_fired,
+    }
+
+    def plain():
+        print(f"scar stats: {data['total_firings']} firing(s) recorded ({log_path})")
+        for e in per_scar:
+            print(f"  #{e['id']}: {e['count']} fire(s)")
+        if most_fired is not None:
+            print(f"  most-fired: #{most_fired}")
+        if last_fired:
+            print(f"  last fired: {last_fired}")
+        if never_fired:
+            print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
+        print("  note: firing counts only — whether the agent honored an "
+              "injected scar is not tracked (unobservable from inside the hook)")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _stats_rich(data), plain=plain)
+    return 0
+
+
 def _cmd_inject(args) -> int:
     """Machine mode for hooks: JSON additionalContext or silence."""
     start = Path(args.path).resolve() if args.path else Path.cwd()
@@ -884,6 +970,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    p = _add(sub, "stats", help="firing counts from the precheck hook's firing log")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     p = _add(sub, "challenge", help="dispute a scar (still fires, marked challenged)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why the scar may no longer hold")
@@ -967,7 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
-        "agent": _cmd_agent,
+        "agent": _cmd_agent, "stats": _cmd_stats,
     }[args.command]
     return handler(args)
 

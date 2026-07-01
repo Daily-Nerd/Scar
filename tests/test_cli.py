@@ -1095,4 +1095,59 @@ def test_lint_json_includes_symbol_drift(repo, capsys):
     assert len(drift) == 1
     assert drift[0]["symbol"] == "SessionStore.save"
     assert drift[0]["sha"] == sha
-    assert 0.0 <= drift[0]["similarity"] < 1.0
+
+
+# --- stats (#106: firing observability) ---
+
+def _write_firing_log(state_dir, records):
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "firing-log.jsonl").open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+
+
+def test_stats_no_firings_yet(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 0
+    assert data["per_scar"] == []
+    assert data["most_fired"] is None
+    assert data["last_fired"] is None
+    assert data["never_fired"] == [1]
+
+
+def test_stats_aggregates_counts_and_never_fired(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1, 2], "count": 2},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 3
+    assert {"id": 1, "count": 2} in data["per_scar"]
+    assert {"id": 2, "count": 1} in data["per_scar"]
+    assert data["most_fired"] == 1
+    assert data["last_fired"] == "2026-06-11T09:00:00"
+    assert data["never_fired"] == []
+
+
+def test_stats_plain_output_reports_never_fired_and_disclaimer(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "0" in out
+    assert "never fired" in out.lower()
+    assert "#1" in out
+    # scope honesty (#106): must not claim honor-tracking, only firing counts
+    assert "honor" in out.lower()

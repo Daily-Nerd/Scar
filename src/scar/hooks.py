@@ -36,6 +36,13 @@ def _state_dir() -> Path:
                                str(Path.home() / ".claude" / "scar-state")))
 
 
+def firing_log_path() -> Path:
+    """Path to the firing-observability log (#106) — same state dir/override
+    (SCAR_STATE_DIR) as the drafter markers, so there is one knob for all
+    hook state, not two."""
+    return _state_dir() / "firing-log.jsonl"
+
+
 def _read_payload() -> dict | None:
     """Hook payload from stdin; None means 'tty — hint printed, do nothing'."""
     if sys.stdin.isatty():
@@ -56,6 +63,29 @@ def _emit(event: str, context: str) -> None:
         "hookEventName": event, "additionalContext": context}}))
 
 
+def _log_firing(store: ScarStore, target: str, hits: list) -> None:
+    """Append one line to the firing log when precheck actually injects scars.
+    Best-effort only: this is a hot path (#91) and must NEVER raise or delay
+    the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
+    whatever) is swallowed here rather than propagated. Scope: FIRING COUNTS
+    only — this cannot and does not know whether the agent honored the
+    injected scar, only that it was shown to it."""
+    try:
+        log_path = firing_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "repo": str(store.root),
+            "target": target,
+            "scar_ids": [s.id for s in hits],
+            "count": len(hits),
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def precheck() -> int:
     payload = _read_payload()
     if payload is None:
@@ -74,6 +104,8 @@ def precheck() -> int:
         context = injection_context(hits, store.broken(), store.scars_dir)
         if context:
             _emit("PreToolUse", context)
+        if hits:
+            _log_firing(store, target, hits)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than
