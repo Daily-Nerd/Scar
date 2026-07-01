@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from scar import symbols
 from scar.match import (
     MAX_ANCHOR_SCAN,
     _pattern_anchor_matches,
@@ -10,6 +13,9 @@ from scar.match import (
     rank_matches_for_edit,
 )
 from scar.store import ScarStore, init_scars
+
+symbols_extra = pytest.mark.skipif(
+    not symbols.symbols_available(), reason="tree-sitter extra not installed")
 
 FENCE = """\
 ---
@@ -179,3 +185,20 @@ diff --git a/payments/b.py b/payments/b.py
 """
     matches = rank_matches_for_diff(store, diff)
     assert matches and calls["n"] == 1
+
+
+@symbols_extra
+def test_symbol_anchor_fires_and_outranks_bare_path(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "store.py").write_text(
+        "class SessionStore:\n    def save(self):\n        return 1\n")
+    scars = tmp_path / ".scars"
+    scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - path: src\n  - symbol: SessionStore\nstatus: active\n---\nbody\n")
+    store = ScarStore.discover(tmp_path)
+    matches = rank_matches_for_edit(store, tmp_path / "src" / "store.py", "")
+    assert matches
+    assert "symbol" in matches[0].matched_by
+    assert matches[0].anchor_strength == 2.25

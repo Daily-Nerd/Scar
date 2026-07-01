@@ -7,6 +7,7 @@ code is the strongest signal) > path prefix (2.0) > pattern on the path (1.5).
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,13 +78,40 @@ def _pattern_anchor_matches(pattern: str, text: str) -> bool:
     return bool(rx.search(text[:MAX_ANCHOR_SCAN]))
 
 
-def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, tuple[str, ...]]:
+@functools.lru_cache(maxsize=256)
+def _read_source(abs_path: str) -> str | None:
+    try:
+        return Path(abs_path).read_text(encoding="utf8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _symbol_anchor_hits(anchors: tuple[str, ...] | list[str], rel_path: str,
+                        root: Path) -> bool:
+    """True iff any symbol anchor resolves in the file at root/rel_path.
+    Reads + parses the file at most once per path via lru_cache. Degrades to
+    False when the tree-sitter extra is absent."""
+    from . import symbols
+    if not symbols.symbols_available():
+        return False
+    source = _read_source(str((root / rel_path).resolve()))
+    if source is None:
+        return False
+    return any(symbols.resolve_symbol(a, rel_path, source) is not None for a in anchors)
+
+
+def _anchor_signal(scar: Scar, rel_path: str, new_content: str,
+                   root: Path | None = None) -> tuple[float, tuple[str, ...]]:
     score = 0.0
     matched: list[str] = []
     for p in scar.path_anchors:
         if _path_anchor_matches(p, rel_path):
             score = max(score, 2.0)
             matched.append("path")
+    if root is not None and scar.symbol_anchors:
+        if _symbol_anchor_hits(scar.symbol_anchors, rel_path, root):
+            score = max(score, 2.25)
+            matched.append("symbol")
     for pat in scar.pattern_anchors:
         if _pattern_anchor_matches(pat, rel_path):
             score = max(score, 1.5)
@@ -99,7 +127,7 @@ def _match_target(firing: list, root: Path, rel_path: str,
     """Rank one target against an already-loaded firing set (no disk I/O)."""
     ranked: list[ScarMatch] = []
     for source, scar in firing:
-        strength, matched_by = _anchor_signal(scar, rel_path, new_content)
+        strength, matched_by = _anchor_signal(scar, rel_path, new_content, root)
         if strength > 0:
             rank = strength * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
             ranked.append(ScarMatch(scar=scar, source=source.relative_to(root),
