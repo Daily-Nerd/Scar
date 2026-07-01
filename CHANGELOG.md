@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/Daily-Nerd/Scar/compare/v0.10.0...v0.11.0) (2026-07-01)
+
+
+### Features
+
+* **anchors:** re-measure anchor survival on the shipped mechanism (Phase 4) ([#102](https://github.com/Daily-Nerd/Scar/issues/102)) ([ae6c327](https://github.com/Daily-Nerd/Scar/commit/ae6c3279ea1fbe482bc202c664abb519aa3b7727))
+* **harvest:** exclude lockfile basenames from comment-archaeology scan ([#87](https://github.com/Daily-Nerd/Scar/issues/87)) ([#104](https://github.com/Daily-Nerd/Scar/issues/104)) ([e30c002](https://github.com/Daily-Nerd/Scar/commit/e30c0029ff4aad95a219c668ce44e6bea1296906))
+
+
+### Documentation
+
+* **spec:** cut confidence dynamics from §5, document static weight ([#95](https://github.com/Daily-Nerd/Scar/issues/95)) ([#105](https://github.com/Daily-Nerd/Scar/issues/105)) ([96efe5f](https://github.com/Daily-Nerd/Scar/commit/96efe5fb583657a79ff3bf825351d97afe1802d5))
+
 ## [0.10.0](https://github.com/Daily-Nerd/Scar/compare/v0.9.0...v0.10.0) (2026-07-01)
 
 
