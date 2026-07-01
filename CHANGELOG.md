@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.0](https://github.com/Daily-Nerd/Scar/compare/v0.9.0...v0.10.0) (2026-07-01)
+
+
+### Features
+
+* **anchors:** symbol-drift advisory (Phase 3) ([#100](https://github.com/Daily-Nerd/Scar/issues/100)) ([e384d23](https://github.com/Daily-Nerd/Scar/commit/e384d23f4105f778f2a01fbe711f148abe466aca))
+* **anchors:** tree-sitter symbol anchors (Phases 1+2) ([#98](https://github.com/Daily-Nerd/Scar/issues/98)) ([f2c7a4e](https://github.com/Daily-Nerd/Scar/commit/f2c7a4eb5d463b80d94a705ea4d38366100fed4d))
+
+
+### Bug Fixes
+
+* correctness batch — 7 audit-verified bugs ([#93](https://github.com/Daily-Nerd/Scar/issues/93)) ([df0b6d7](https://github.com/Daily-Nerd/Scar/commit/df0b6d79fbd289e22ca6fedea634d347a0bf6423)), closes [#91](https://github.com/Daily-Nerd/Scar/issues/91)
+* **match:** reject ReDoS-prone pattern anchors at the lint gate ([#89](https://github.com/Daily-Nerd/Scar/issues/89)) ([7c10fde](https://github.com/Daily-Nerd/Scar/commit/7c10fde191901ac531a0888f6c7dedf3f4d56364)), closes [#88](https://github.com/Daily-Nerd/Scar/issues/88)
+
+
+### Documentation
+
+* align SPEC/ROADMAP/README with shipped reality; lint-warn unsupported anchors ([#96](https://github.com/Daily-Nerd/Scar/issues/96)) ([76e14ce](https://github.com/Daily-Nerd/Scar/commit/76e14cee55518839381cd17753ad8c91dc45acd7)), closes [#90](https://github.com/Daily-Nerd/Scar/issues/90)
+* **harvest:** document scorer type-prior as code-repo-calibrated ([#85](https://github.com/Daily-Nerd/Scar/issues/85)) ([cacf586](https://github.com/Daily-Nerd/Scar/commit/cacf5869005a7ec5f0510354629c3287610e6d3c)), closes [#54](https://github.com/Daily-Nerd/Scar/issues/54)
+
 ## [0.9.0](https://github.com/Daily-Nerd/Scar/compare/v0.8.0...v0.9.0) (2026-07-01)
 
 
