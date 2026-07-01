@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/Daily-Nerd/Scar/compare/v0.8.0...v0.9.0) (2026-07-01)
+
+
+### Features
+
+* **cli:** Rich-colored --help via rich-argparse ([#81](https://github.com/Daily-Nerd/Scar/issues/81)) ([7983a85](https://github.com/Daily-Nerd/Scar/commit/7983a85a2069a548ffa676b8c07f5fe928f8971c)), closes [#80](https://github.com/Daily-Nerd/Scar/issues/80)
+
 ## [0.8.0](https://github.com/Daily-Nerd/Scar/compare/v0.7.0...v0.8.0) (2026-06-30)
 
 
