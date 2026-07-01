@@ -212,6 +212,70 @@ def test_agent_doctor_reports_agents_file(repo, capsys):
     assert "AGENTS.md: present" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("target, token", [
+    ("codex", "AGENTS.md"),
+    ("cursor", "mcpServers"),
+    ("opencode", "opencode.jsonc"),
+    ("windsurf", "Cascade"),
+])
+def test_agent_config_returns_setup_text_per_target(target, token):
+    """Every supported runtime returns its own distinctive setup text."""
+    from scar.agent import config
+    assert token in config(target)
+
+
+def test_agent_config_unknown_target_raises_value_error():
+    """The unknown-target path (agent.py:64) raises ValueError naming the input
+    and the valid choices. This is the real error path — argparse's choices=
+    guards main(), so config() is where the guard actually lives."""
+    from scar.agent import config
+    with pytest.raises(ValueError) as exc:
+        config("bogus")
+    assert "bogus" in str(exc.value)
+    assert "codex" in str(exc.value)  # lists the valid targets
+
+
+def test_cmd_agent_catches_unknown_target_and_returns_one(capsys):
+    """_cmd_agent's try/except → return 1 net. NOTE: main(["agent","config",
+    "bogus"]) cannot reach it — argparse choices= rejects 'bogus' with
+    SystemExit(2) first — so the catch is exercised via a forged namespace."""
+    import argparse
+
+    from scar.cli import _cmd_agent
+    ns = argparse.Namespace(agent_command="config", target="bogus")
+    assert _cmd_agent(ns) == 1
+    assert "bogus" in capsys.readouterr().out
+
+
+def test_agent_doctor_reports_missing_agents_and_scars(tmp_path):
+    """Both ternaries take their 'missing' branch when neither file exists."""
+    from scar.agent import doctor
+    lines = doctor(tmp_path)
+    assert "AGENTS.md: missing" in lines
+    assert ".scars/: missing" in lines
+
+
+def test_agent_doctor_reports_present_scars_dir(tmp_path):
+    """The .scars/ ternary takes its 'present' branch when the dir exists."""
+    from scar.agent import doctor
+    (tmp_path / ".scars").mkdir()
+    assert ".scars/: present" in doctor(tmp_path)
+
+
+def test_agent_doctor_scar_binary_fallback_when_not_on_path(tmp_path, monkeypatch):
+    """shutil.which → None drives the 'not found on PATH' fallback."""
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    assert any("scar binary: not found on PATH" in ln for ln in agent.doctor(tmp_path))
+
+
+def test_agent_doctor_scar_binary_reports_resolved_path(tmp_path, monkeypatch):
+    """shutil.which → a path reports that resolved path (the non-fallback side)."""
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: "/usr/local/bin/scar")
+    assert any("scar binary: /usr/local/bin/scar" in ln for ln in agent.doctor(tmp_path))
+
+
 def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):
     """Asking a parent directory for its history must include scars anchored
     deeper inside it — found live: `scar why research` missed a landmine
@@ -763,11 +827,15 @@ def test_status_json_emits_structured_counts(repo, capsys):
     assert isinstance(data["active"], list)
 
 
-def test_status_tty_renders_without_crashing(repo, capsys, monkeypatch):
+def test_status_tty_renders_scar_data(repo, capsys, monkeypatch):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
     _force_tty(monkeypatch)
     assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    # a renderer that dropped the candidate would still exit 0 — assert the data.
+    assert "x.md" in out           # the pending candidate is named
+    assert "1 candidate" in out    # and counted
 
 
 def test_lint_json_emits_findings_and_summary(repo, capsys):
@@ -788,11 +856,15 @@ def test_lint_json_broken_scar_exit_one_and_lists_file(repo, capsys):
     assert any("0001-bad.deadend.md" in f["file"] for f in data["findings"])
 
 
-def test_lint_tty_renders_without_crashing(repo, capsys, monkeypatch):
+def test_lint_tty_renders_orphan_finding(repo, capsys, monkeypatch):
     init_scars(repo)
     (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
     _force_tty(monkeypatch)
     assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "scar #1" in out           # the orphan finding surfaces its id
+    assert "src/long_gone/" in out    # ...and the dead anchor path
+    assert "orphan" in out.lower()
 
 
 def test_check_json_lists_anchored_scars(repo, capsys):
@@ -807,13 +879,18 @@ def test_check_json_lists_anchored_scars(repo, capsys):
     assert any(s["title"] == "Tried X, failed" for s in data["scars"])
 
 
-def test_check_tty_renders_without_crashing(repo, capsys, monkeypatch):
+def test_check_tty_renders_scar_content(repo, capsys, monkeypatch):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
     main(["promote", "tried-x", "--reviewer", "k"])
     (repo / "src").mkdir()
+    capsys.readouterr()  # flush promote output
     _force_tty(monkeypatch)
     assert main(["check", "src/thing.py"]) == 0
+    out = capsys.readouterr().out
+    assert "Tried X, failed" in out  # the anchored scar's title
+    assert "deadend" in out          # its type
+    assert "Why X failed" in out     # its body
 
 
 def test_why_json_lists_records(repo, capsys):
@@ -827,13 +904,18 @@ def test_why_json_lists_records(repo, capsys):
     assert any(r["title"] == "Tried X, failed" for r in data["records"])
 
 
-def test_why_tty_renders_without_crashing(repo, capsys, monkeypatch):
+def test_why_tty_renders_scar_history(repo, capsys, monkeypatch):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
     main(["promote", "tried-x", "--reviewer", "k"])
     (repo / "src").mkdir()
+    capsys.readouterr()  # flush promote output
     _force_tty(monkeypatch)
     assert main(["why", "src"]) == 0
+    out = capsys.readouterr().out
+    assert "Tried X, failed" in out  # the recorded scar's title
+    assert "deadend" in out          # its type
+    assert "src" in out              # scoped to the queried path
 
 
 def test_orphan_json_lists_detected(repo, capsys):
@@ -844,8 +926,14 @@ def test_orphan_json_lists_detected(repo, capsys):
     assert any(o["scar_id"] == 5 for o in data["orphan_detected"])
 
 
-def test_orphan_tty_renders_without_crashing(repo, capsys, monkeypatch):
+def test_orphan_tty_renders_dead_anchor_detail(repo, capsys, monkeypatch):
     init_scars(repo)
     (repo / ".scars" / "0005-both.deadend.md").write_text(MULTI_ANCHOR_ORPHAN)
     _force_tty(monkeypatch)
     assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    # the dead anchor's identifying detail must survive into the report so a
+    # renderer that silently dropped the finding is caught.
+    assert "src/dead_dir/" in out       # the dead path anchor
+    assert "1 orphan(s) detected" in out
+    assert "orphan-detected" in out
