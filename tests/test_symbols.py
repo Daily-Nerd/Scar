@@ -38,3 +38,19 @@ def test_unknown_extension_returns_none():
 def test_available_is_false_without_dep(monkeypatch):
     # symbols_available must be a cheap boolean, never raise. (Not skipped.)
     assert isinstance(symbols.symbols_available(), bool)
+
+
+def test_resolve_any_true_when_one_matches():
+    assert symbols.resolve_any(["Nope", "helper"], "src/store.py", PY) is True
+
+
+def test_resolve_any_false_when_none_match():
+    assert symbols.resolve_any(["Nope", "AlsoNope"], "src/store.py", PY) is False
+
+
+def test_resolve_any_respects_qualified_path_mismatch():
+    assert symbols.resolve_any(["other/f.py::helper"], "src/store.py", PY) is False
+
+
+def test_resolve_any_unavailable_or_unknown_ext_is_false():
+    assert symbols.resolve_any(["helper"], "notes.txt", PY) is False

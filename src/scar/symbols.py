@@ -75,22 +75,15 @@ def _walk_defs(node):
         yield from _walk_defs(child)
 
 
-def resolve_symbol(anchor: str, rel_path: str, source: str) -> tuple[int, int] | None:
-    if not symbols_available():
-        return None
+def _resolve_in_tree(root_node, anchor: str, rel_path: str) -> tuple[int, int] | None:
     # qualified form: path::Symbol.member — the path must match this file.
     name = anchor
     if "::" in anchor:
         qpath, name = anchor.split("::", 1)
         if qpath and qpath != rel_path:
             return None
-    lang = _lang_for(rel_path)
-    if lang is None:
-        return None
-    from tree_sitter import Parser
-    tree = Parser(lang).parse(bytes(source, "utf8"))
     parts = name.split(".")
-    defs = dict(_walk_defs(tree.root_node))
+    defs = dict(_walk_defs(root_node))
     node = defs.get(parts[0])
     # Walk dotted members (Class.method) into the matched subtree.
     for part in parts[1:]:
@@ -100,3 +93,30 @@ def resolve_symbol(anchor: str, rel_path: str, source: str) -> tuple[int, int] |
     if node is None:
         return None
     return (node.start_byte, node.end_byte)
+
+
+def _parse(rel_path: str, source: str):
+    """Parse source for rel_path's language; None if unavailable/unknown ext."""
+    if not symbols_available():
+        return None
+    lang = _lang_for(rel_path)
+    if lang is None:
+        return None
+    from tree_sitter import Parser
+    return Parser(lang).parse(bytes(source, "utf8"))
+
+
+def resolve_symbol(anchor: str, rel_path: str, source: str) -> tuple[int, int] | None:
+    tree = _parse(rel_path, source)
+    if tree is None:
+        return None
+    return _resolve_in_tree(tree.root_node, anchor, rel_path)
+
+
+def resolve_any(anchors, rel_path: str, source: str) -> bool:
+    """True iff ANY anchor resolves, parsing `source` exactly once."""
+    tree = _parse(rel_path, source)
+    if tree is None:
+        return False
+    root = tree.root_node
+    return any(_resolve_in_tree(root, a, rel_path) is not None for a in anchors)

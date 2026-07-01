@@ -8,6 +8,7 @@ code is the strongest signal) > path prefix (2.0) > pattern on the path (1.5).
 from __future__ import annotations
 
 import functools
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,8 +79,16 @@ def _pattern_anchor_matches(pattern: str, text: str) -> bool:
     return bool(rx.search(text[:MAX_ANCHOR_SCAN]))
 
 
-@functools.lru_cache(maxsize=256)
 def _read_source(abs_path: str) -> str | None:
+    try:
+        mtime = os.stat(abs_path).st_mtime_ns
+    except OSError:
+        return None
+    return _read_source_cached(abs_path, mtime)
+
+
+@functools.lru_cache(maxsize=256)
+def _read_source_cached(abs_path: str, mtime: int) -> str | None:
     try:
         return Path(abs_path).read_text(encoding="utf8")
     except (OSError, UnicodeDecodeError):
@@ -89,15 +98,15 @@ def _read_source(abs_path: str) -> str | None:
 def _symbol_anchor_hits(anchors: tuple[str, ...] | list[str], rel_path: str,
                         root: Path) -> bool:
     """True iff any symbol anchor resolves in the file at root/rel_path.
-    Reads + parses the file at most once per path via lru_cache. Degrades to
-    False when the tree-sitter extra is absent."""
+    Reads the file at most once per (path, mtime) via lru_cache and parses it
+    once via symbols.resolve_any. Degrades to False when the extra is absent."""
     from . import symbols
     if not symbols.symbols_available():
         return False
     source = _read_source(str((root / rel_path).resolve()))
     if source is None:
         return False
-    return any(symbols.resolve_symbol(a, rel_path, source) is not None for a in anchors)
+    return symbols.resolve_any(anchors, rel_path, source)
 
 
 def _anchor_signal(scar: Scar, rel_path: str, new_content: str,

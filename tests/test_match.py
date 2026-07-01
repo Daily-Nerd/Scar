@@ -202,3 +202,28 @@ def test_symbol_anchor_fires_and_outranks_bare_path(tmp_path):
     assert matches
     assert "symbol" in matches[0].matched_by
     assert matches[0].anchor_strength == 2.25
+
+
+@symbols_extra
+def test_symbol_match_reflects_file_edits_within_process(tmp_path):
+    # Guards against the module-level _read_source cache serving stale content
+    # in a long-lived process (MCP server). After rewriting the file so the
+    # symbol no longer exists, the match must drop.
+    from scar.store import ScarStore
+    from scar.match import rank_matches_for_edit
+    (tmp_path / "src").mkdir()
+    f = tmp_path / "src" / "store.py"
+    f.write_text("class SessionStore:\n    def save(self):\n        return 1\n")
+    scars = tmp_path / ".scars"
+    scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - symbol: SessionStore\nstatus: active\n---\nbody\n")
+    store = ScarStore.discover(tmp_path)
+    assert rank_matches_for_edit(store, f, "")  # matches while symbol present
+    # rewrite so the symbol is gone; mtime advances
+    import os, time
+    later = os.stat(f).st_mtime_ns + 1_000_000
+    f.write_text("def unrelated():\n    return 0\n")
+    os.utime(f, ns=(later, later))
+    assert not rank_matches_for_edit(store, f, "")  # stale cache would still match
