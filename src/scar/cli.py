@@ -620,19 +620,38 @@ def _harvest_line(section_key: str, c: dict) -> str:
     return f"- [{c['id']} score {c['score']:.1f}] {_HARVEST_FMT[section_key](c)}"
 
 
-# Labels JSONL lives under the harvested repo at experiments/harvest/labels.jsonl
-# (instrument/data, committed like the anchor-survival experiment). Tests set
+# Labels JSONL lives under the harvested repo at .scars/harvest-labels.jsonl.
+# It used to default to experiments/harvest/labels.jsonl, which leaked an
+# untracked experiments/ directory into every adopter's working tree (#106) —
+# .scars/ is already the repo-owned, human-gated home for scar data. Tests set
 # LABELS_PATH_OVERRIDE to a tmp path so they never touch the real file.
 LABELS_PATH_OVERRIDE: Path | None = None
+_OLD_LABELS_RELPATH = Path("experiments") / "harvest" / "labels.jsonl"
 _VALID_LABELS = ("keep", "discard")
 
 
 def _labels_path(repo: Path) -> Path:
-    """Resolve where label judgements are appended. Override wins (tests);
-    otherwise experiments/harvest/labels.jsonl under the harvested repo root."""
+    """Resolve where NEW label judgements are appended. Override wins (tests);
+    otherwise .scars/harvest-labels.jsonl under the harvested repo root. Never
+    writes to the pre-#106 location — see _labels_read_path for the read-side
+    fallback that keeps existing local label sets from being orphaned."""
     if LABELS_PATH_OVERRIDE is not None:
         return LABELS_PATH_OVERRIDE
-    return repo / "experiments" / "harvest" / "labels.jsonl"
+    return repo / ".scars" / "harvest-labels.jsonl"
+
+
+def _labels_read_path(repo: Path) -> Path:
+    """Resolve where labels are READ from. Same as _labels_path, except: if
+    the new path doesn't exist yet but the old (pre-#106) path does, read the
+    old path — so a local label set recorded before this change still counts
+    instead of silently reporting 'no labels'."""
+    if LABELS_PATH_OVERRIDE is not None:
+        return LABELS_PATH_OVERRIDE
+    new_path = _labels_path(repo)
+    old_path = repo / _OLD_LABELS_RELPATH
+    if not new_path.exists() and old_path.exists():
+        return old_path
+    return new_path
 
 
 def _harvest_candidate_ids(repo: Path) -> set[str]:
@@ -710,7 +729,7 @@ def _harvest_precision(repo: Path, args) -> int:
     flat = [c for cands in result.values() for c in cands]
     flat.sort(key=lambda c: c["score"], reverse=True)
 
-    labels = _load_labels(_labels_path(repo))
+    labels = _load_labels(_labels_read_path(repo))
     if not labels:
         print(f"no labels yet for {repo.name} — run "
               f"`scar harvest --label <id> keep|discard` to start "
@@ -890,7 +909,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(raw score, no cross-type normalization)")
     p.add_argument("--label", nargs=2, metavar=("ID", "LABEL"), default=None,
                    help="record a curation judgement: <id> keep|discard "
-                        "(appends one line to experiments/harvest/labels.jsonl)")
+                        "(appends one line to .scars/harvest-labels.jsonl)")
     p.add_argument("--note", default="", help="with --label: free-text rationale")
     p.add_argument("--precision", action="store_true",
                    help="report precision@N of the ranking against labels.jsonl "

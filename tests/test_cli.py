@@ -798,6 +798,49 @@ def test_harvest_label_date_is_monkeypatchable(harvest_repo, tmp_path, monkeypat
     assert rec["date"] == "1999-12-31"
 
 
+def test_labels_path_defaults_under_scars_dir(harvest_repo):
+    # #106: experiments/harvest/labels.jsonl leaked an untracked dir into every
+    # adopter's working tree. Default now lives inside .scars/ instead.
+    import scar.cli as cli
+    assert cli.LABELS_PATH_OVERRIDE is None
+    assert cli._labels_path(harvest_repo) == harvest_repo / ".scars" / "harvest-labels.jsonl"
+
+
+def test_harvest_label_writes_to_new_default_path_not_old(harvest_repo):
+    cid = _first_candidate_id(harvest_repo)
+    assert main(["harvest", str(harvest_repo), "--label", cid, "keep"]) == 0
+    assert (harvest_repo / ".scars" / "harvest-labels.jsonl").exists()
+    assert not (harvest_repo / "experiments" / "harvest" / "labels.jsonl").exists()
+
+
+def test_harvest_precision_reads_fall_back_to_old_path_when_new_absent(harvest_repo, capsys):
+    # An existing local label set at the pre-#106 location must not be
+    # silently orphaned by the path move — reads fall back to it.
+    cid = _first_candidate_id(harvest_repo)
+    old_path = harvest_repo / "experiments" / "harvest" / "labels.jsonl"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_text(json.dumps({"id": cid, "label": "keep", "note": "",
+                                    "date": "2026-01-01", "repo": harvest_repo.name}) + "\n")
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "1 labeled" in out
+
+
+def test_harvest_precision_prefers_new_path_when_both_exist(harvest_repo, capsys):
+    # New writes never touch the old location again — once the new path
+    # exists, it is authoritative even if a stale old file lingers.
+    cid = _first_candidate_id(harvest_repo)
+    old_path = harvest_repo / "experiments" / "harvest" / "labels.jsonl"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_text(json.dumps({"id": "stale-old-entry", "label": "keep", "note": "",
+                                    "date": "2026-01-01", "repo": harvest_repo.name}) + "\n")
+    assert main(["harvest", str(harvest_repo), "--label", cid, "discard"]) == 0
+    capsys.readouterr()
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "1 labeled" in out  # only the new file's one label counted
+
+
 def test_agent_skill_prints_body_with_three_types(repo, capsys):
     assert main(["agent", "skill"]) == 0
     out = capsys.readouterr().out
