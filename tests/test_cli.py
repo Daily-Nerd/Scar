@@ -1286,3 +1286,450 @@ def test_stats_plain_output_reports_never_fired_and_disclaimer(repo, capsys, mon
     assert "#1" in out
     # scope honesty (#106): must not claim honor-tracking, only firing counts
     assert "honor" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# scar reanchor (#111) — orphan recovery v1: propose new anchors for
+# orphaned/partial-rot scars. Propose-only by default, read-only. --apply
+# requires --id, rewrites only single-high-confidence+tracked anchors,
+# never flips status.
+# ---------------------------------------------------------------------------
+
+def _reanchor_scar(*, id: int, path_anchors=(), pattern_anchors=(), symbol_anchors=()) -> str:
+    anchor_lines = ""
+    for p in path_anchors:
+        anchor_lines += f"  - path: {p}\n"
+    for pat in pattern_anchors:
+        anchor_lines += f'  - pattern: "{pat}"\n'
+    for s in symbol_anchors:
+        anchor_lines += f"  - symbol: {s}\n"
+    return (
+        f"---\n"
+        f"id: {id}\n"
+        f"type: deadend\n"
+        f"title: reanchor test scar {id}\n"
+        f"severity: medium\n"
+        f"confidence: 0.8\n"
+        f"created: 2026-06-10\n"
+        f'authors: ["claude-code"]\n'
+        f"anchors:\n"
+        f"{anchor_lines}"
+        f"evidence:\n"
+        f"  - commit: abc1234\n"
+        f"status: active\n"
+        f"---\n\n"
+        f"Body text.\n"
+    )
+
+
+def _init_bare_git(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@t.t")
+    _git(tmp_path, "config", "user.name", "t")
+
+
+def _pad(tag: str, n: int = 10) -> str:
+    """Padding lines that make a same-commit move fall BELOW git's own -M
+    rename-similarity threshold (so build_rename_map/#109 does not silently
+    claim the anchor first) while staying well ABOVE reanchor's own overlap
+    threshold (which only counts what survives from the OLD file, not what
+    was added to the new one)."""
+    return "".join(f"def pad_{tag}_{i}():\n    return 'padding {tag} line number {i} here'\n"
+                   for i in range(n))
+
+
+def test_reanchor_proposes_high_confidence_for_same_commit_move(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    # Padded so git's OWN -M rename heuristic doesn't already claim this
+    # (that's #109's territory) — reanchor's overlap ratio only counts what
+    # survives from old_module.py, so padding doesn't dilute it.
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("a"))
+    f = tmp_path / ".scars" / "0020-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=20, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module to new_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    before = f.read_text()
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#20" in out
+    assert "src/old_module.py" in out
+    assert "src/new_module.py" in out
+    assert "high" in out.lower()
+    assert f.read_text() == before  # read-only by default
+
+
+def test_reanchor_finds_later_commit_move_via_pickaxe(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'a very distinctive marker string here'\n\n"
+               "def helper():\n    return 99\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    f = tmp_path / ".scars" / "0021-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=21, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "delete old_module + add scar")
+    (tmp_path / "README.md").write_text("unrelated intervening change\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "unrelated change")
+    (tmp_path / "src" / "new_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add new_module elsewhere")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#21" in out
+    assert "src/new_module.py" in out
+
+
+def test_reanchor_truly_deleted_no_proposal(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "gone.py").write_text(
+        "def gone():\n    return 'nothing like this exists elsewhere'\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add gone")
+    (tmp_path / "src" / "gone.py").unlink()
+    (tmp_path / ".scars" / "0022-gone.deadend.md").write_text(
+        _reanchor_scar(id=22, path_anchors=["src/gone.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "delete gone + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "no reanchor proposals" in out.lower()
+
+
+def test_reanchor_ambiguous_reports_both_and_apply_refuses(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def shared():\n    return 'duplicated content across two files'\n\n"
+               "def more():\n    return 7\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "shared.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add shared")
+    (tmp_path / "src" / "shared.py").unlink()
+    # Distinct padding per copy so git's -M rename pairing (which greedily
+    # matches ONE target and would otherwise silently resolve this via #109)
+    # doesn't fire; both copies still overlap fully with the dead content.
+    (tmp_path / "src" / "copy_one.py").write_text(content + _pad("one"))
+    (tmp_path / "src" / "copy_two.py").write_text(content + _pad("two"))
+    f = tmp_path / ".scars" / "0023-ambiguous.deadend.md"
+    f.write_text(_reanchor_scar(id=23, path_anchors=["src/shared.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "delete shared, duplicate + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#23" in out
+    assert "src/copy_one.py" in out
+    assert "src/copy_two.py" in out
+
+    before = f.read_text()
+    assert main(["reanchor", "--apply", "--id", "23"]) == 0
+    out2 = capsys.readouterr().out
+    assert "ambiguous" in out2.lower()
+    assert f.read_text() == before  # apply refuses; file untouched
+
+
+def test_reanchor_apply_rewrites_exactly_one_line(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("b"))
+    f = tmp_path / ".scars" / "0024-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=24, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module to new_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    before = f.read_text()
+    assert main(["reanchor", "--apply", "--id", "24"]) == 0
+    out = capsys.readouterr().out
+    assert "fixed" in out.lower()
+
+    after = f.read_text()
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+    diffs = [(b, a) for b, a in zip(before_lines, after_lines) if b != a]
+    assert diffs == [("  - path: src/old_module.py", "  - path: src/new_module.py")]
+    assert "status: active" in after  # no status flip
+
+
+def test_reanchor_apply_multi_anchor_partial(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    (tmp_path / "src" / "gone.py").write_text(
+        "def gone():\n    return 'nothing like this exists elsewhere'\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module + gone")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("c"))
+    (tmp_path / "src" / "gone.py").unlink()
+    f = tmp_path / ".scars" / "0025-multi.deadend.md"
+    f.write_text(_reanchor_scar(id=25, path_anchors=["src/old_module.py", "src/gone.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move one, delete other + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    before = f.read_text()
+    assert main(["reanchor", "--apply", "--id", "25"]) == 0
+    out = capsys.readouterr().out
+    assert "fixed" in out.lower()
+    assert "not fixed" in out.lower()
+
+    after = f.read_text()
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+    diffs = [(b, a) for b, a in zip(before_lines, after_lines) if b != a]
+    assert diffs == [("  - path: src/old_module.py", "  - path: src/new_module.py")]
+    assert "  - path: src/gone.py" in after_lines  # untouched, no candidate found
+
+
+def test_reanchor_partial_rot_finding_feeds_reanchor(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src" / "live").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "live" / "mod.py").write_text("x = 1\n")
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add live/ + old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("d"))
+    f = tmp_path / ".scars" / "0026-partial.landmine.md"
+    f.write_text(_reanchor_scar(id=26, path_anchors=["src/live/", "src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module, keep live/ + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    assert "no orphan-detected scars" in out  # not an orphan — still firing on live/
+    assert "1 partial-rot" in out
+
+    assert main(["reanchor"]) == 0
+    out2 = capsys.readouterr().out
+    assert "#26" in out2
+    assert "src/new_module.py" in out2
+
+
+@symbols_extra
+def test_reanchor_symbol_renamed_same_file(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    body = ("def old_helper(items):\n"
+           "    total = 0\n"
+           "    for item in items:\n"
+           "        if item > 0:\n"
+           "            total += item\n"
+           "    return total\n")
+    (tmp_path / "src" / "pkg").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "pkg" / "mod.py").write_text(body)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_helper")
+    sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                         check=True, capture_output=True, text=True).stdout.strip()
+
+    new_body = body.replace("old_helper", "new_helper")
+    (tmp_path / "src" / "pkg" / "mod.py").write_text(new_body)
+    f = tmp_path / ".scars" / "0027-symbol.deadend.md"
+    scar_text = (
+        "---\nid: 27\ntype: deadend\ntitle: symbol renamed in place\n"
+        "severity: medium\nconfidence: 0.8\ncreated: 2026-06-10\n"
+        'authors: ["claude-code"]\nanchors:\n'
+        "  - path: src/pkg/mod.py\n  - symbol: old_helper\n"
+        f"evidence:\n  - commit: {sha}\nstatus: active\n---\n\nBody.\n"
+    )
+    f.write_text(scar_text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "rename old_helper to new_helper + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#27" in out
+    assert "old_helper" in out
+    assert "new_helper" in out
+    assert "symbol" in out.lower()
+
+
+@symbols_extra
+def test_reanchor_symbol_relocated_to_new_file(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    body = ("def old_helper(items):\n"
+           "    total = 0\n"
+           "    for item in items:\n"
+           "        if item > 0:\n"
+           "            total += item\n"
+           "    return total\n")
+    (tmp_path / "src" / "pkg").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "pkg" / "mod.py").write_text(body)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_helper")
+    sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                         check=True, capture_output=True, text=True).stdout.strip()
+
+    (tmp_path / "src" / "pkg" / "mod.py").write_text("def unrelated():\n    pass\n")
+    (tmp_path / "src" / "lib").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "lib" / "other.py").write_text(body.replace("old_helper", "new_helper"))
+    f = tmp_path / ".scars" / "0028-symbol.deadend.md"
+    scar_text = (
+        "---\nid: 28\ntype: deadend\ntitle: symbol relocated\n"
+        "severity: medium\nconfidence: 0.8\ncreated: 2026-06-10\n"
+        'authors: ["claude-code"]\nanchors:\n'
+        "  - path: src/pkg/mod.py\n  - symbol: old_helper\n"
+        f"evidence:\n  - commit: {sha}\nstatus: active\n---\n\nBody.\n"
+    )
+    f.write_text(scar_text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "relocate old_helper + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#28" in out
+    assert "src/lib/other.py" in out
+    assert "new_helper" in out
+
+
+def test_reanchor_pattern_anchor_gets_last_matched_diagnostic(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "mod.py").write_text("class OldClassName:\n    pass\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add OldClassName")
+    (tmp_path / "src" / "mod.py").write_text("class Renamed:\n    pass\n")
+    f = tmp_path / ".scars" / "0029-pattern.deadend.md"
+    f.write_text(_reanchor_scar(id=29, pattern_anchors=["OldClassName"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "rename class + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    before = f.read_text()
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#29" in out
+    assert "last matched at" in out.lower()
+    assert f.read_text() == before  # diagnostic only, never applyable
+
+
+def test_reanchor_pattern_anchor_redos_prone_skips_diagnostic(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "mod.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A")
+    # A distinctive nested-quantifier literal that cannot coincidentally
+    # match the boilerplate .scars/README.md / template.md content
+    # init_scars() writes (unlike a generic "(a+)+b", which DOES match any
+    # bare "ab" substring in that prose and would keep the anchor "alive").
+    (tmp_path / ".scars" / "0030-redos.deadend.md").write_text(
+        _reanchor_scar(id=30, pattern_anchors=["(zqzqz+)+zqEND"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add redos-prone pattern scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0
+    out = capsys.readouterr().out
+    assert "#30" in out
+    assert "skipped" in out.lower()
+    assert "redos" in out.lower() or "pathological" in out.lower()
+
+
+def test_reanchor_degrades_cleanly_without_git(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0031-x.deadend.md").write_text(
+        _reanchor_scar(id=31, path_anchors=["src/x.py"]))
+    monkeypatch.chdir(tmp_path)
+    assert main(["reanchor"]) == 1
+    out = capsys.readouterr().out
+    assert "git unavailable" in out.lower()
+
+
+def test_reanchor_degrades_cleanly_without_symbols_extra(tmp_path, monkeypatch, capsys):
+    import scar.symbols as symbols_mod
+
+    monkeypatch.setattr(symbols_mod, "symbols_available", lambda: False)
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("e"))
+    f = tmp_path / ".scars" / "0032-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=32, path_anchors=["src/old_module.py"],
+                                symbol_anchors=["whatever"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module + add scar with symbol anchor")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor"]) == 0  # no crash without the extra
+    out = capsys.readouterr().out
+    assert "#32" in out  # path proposal unaffected
+    assert "src/new_module.py" in out
+
+
+def test_reanchor_json_output_matches_plain_facts(tmp_path, monkeypatch, capsys):
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("f"))
+    f = tmp_path / ".scars" / "0033-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=33, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["proposals"]) == 1
+    p = data["proposals"][0]
+    assert p["scar_id"] == 33
+    assert p["anchor_kind"] == "path"
+    assert p["dead_anchor"] == "src/old_module.py"
+    assert p["proposed_anchor"] == "src/new_module.py"
+    assert p["confidence"] == "high"

@@ -230,10 +230,11 @@ def test_symbol_match_reflects_file_edits_within_process(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Issue #109: rename detection is explicitly OFF the hot path. match.py (this
-# module) does the anchor scoring on every edit/diff; hooks.py wraps it for
-# the precheck hook. Neither may invoke git — rename-following (scar.renames,
-# used by scar.orphan) must stay confined to the explicit read commands.
+# Issue #109 / #111: rename-following AND re-anchoring are explicitly OFF the
+# hot path. match.py (this module) does the anchor scoring on every
+# edit/diff; hooks.py wraps it for the precheck hook. Neither may invoke git
+# — rename-following (scar.renames, used by scar.orphan) and re-anchor
+# tracing (scar.reanchor) must stay confined to the explicit read commands.
 # Source-scan, not import-graph, so this fails loudly even if a transitive
 # import chain sneaks git access in via an innocuous-looking helper import.
 # ---------------------------------------------------------------------------
@@ -247,5 +248,5 @@ def test_hot_path_modules_never_invoke_git():
         assert "import subprocess" not in src, f"{mod.__name__} must never invoke git"
         assert "subprocess.run" not in src
         assert "subprocess.Popen" not in src
-        for banned in (".orphan", ".renames", ".evidence"):
+        for banned in (".orphan", ".renames", ".evidence", ".reanchor"):
             assert banned not in src, f"{mod.__name__} imports {banned} (git-touching module)"

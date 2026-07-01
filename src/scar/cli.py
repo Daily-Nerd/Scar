@@ -16,14 +16,14 @@ from pathlib import Path
 
 from rich_argparse import RichHelpFormatter
 
-from .lint import lint_text
+from .lint import _is_redos_prone, lint_text
 from .match import (
     rank_matches_for_diff,
     rank_matches_for_edit,
     rank_matches_for_paths,
 )
 from .model import parse_scar_text
-from .evidence import unreachable_evidence
+from .evidence import _git, unreachable_evidence
 from .orphan import (
     GitError,
     anchors_all_dead,
@@ -32,8 +32,13 @@ from .orphan import (
     detect_partial_rot,
     detect_symbol_drift,
 )
+from .reanchor import (
+    dead_symbol_anchors,
+    propose_path_reanchors,
+    propose_symbol_reanchors_for_scar,
+)
 from .render import injection_context, label_line
-from .renames import apply_rename_fix
+from .renames import apply_anchor_rewrite, apply_rename_fix
 from .store import ScarStore, init_scars
 from . import output
 
@@ -639,6 +644,217 @@ def _cmd_orphan(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# scar reanchor (#111) — orphan recovery v1: propose new anchors for
+# orphaned/partial-rot scars. Consumes BOTH detect_orphans and
+# detect_partial_rot findings for the path side, plus its own symbol-liveness
+# scan (orphan.py never tracked symbol anchors — #90 stdlib-only core), plus
+# a diagnostic-only surface for dead pattern anchors (never an applyable
+# proposal — regenerating a regex is a v1 cut, #54 discipline).
+# ---------------------------------------------------------------------------
+
+def _pattern_diagnostic(repo: Path, scar_id: int | None, pattern: str) -> dict:
+    """One dead pattern anchor's diagnostic line: 'last matched at <sha7>'
+    from a single bounded `git log -G -n 1`, or a skip note. Never an
+    applyable proposal — pattern regeneration is an explicit v1 cut.
+
+    Landmine #6 (single-escape / ReDoS anchors): reuse lint's own
+    `_is_redos_prone` guard before ever handing a user-authored pattern to
+    git's `-G` regex engine — a pathological pattern must never run, even in
+    a read-only diagnostic.
+    """
+    if _is_redos_prone(pattern):
+        return {"scar_id": scar_id, "dead_anchor": pattern,
+                "diagnostic": "skipped — pathological pattern (ReDoS risk)"}
+    try:
+        proc = _git(repo, "log", "-G", pattern, "-n", "1", "--format=%H")
+    except OSError:
+        return {"scar_id": scar_id, "dead_anchor": pattern, "diagnostic": "no prior match found"}
+    sha = proc.stdout.strip() if proc.returncode == 0 else ""
+    if not sha:
+        return {"scar_id": scar_id, "dead_anchor": pattern, "diagnostic": "no prior match found"}
+    return {"scar_id": scar_id, "dead_anchor": pattern, "diagnostic": f"last matched at {sha[:7]}"}
+
+
+def _reanchor_collect(store: ScarStore, ctx, repo: Path):
+    """Every reanchor proposal + pattern diagnostic across the repo.
+    Read-only. Path proposals skip any dead anchor #109's rename-follower
+    already resolved (`finding.renamed`) — reanchor is the residue rename-
+    following doesn't cover, not a second opinion on the same anchor."""
+    tracked = set(ctx.tracked_paths)
+    orphans = detect_orphans(store, ctx, repo=repo)
+    partial = detect_partial_rot(store, ctx, repo=repo)
+
+    proposals = []
+    pattern_diag = []
+    for finding in (*orphans, *partial):
+        for anchor in finding.dead_path_anchors:
+            if anchor in finding.renamed:
+                continue  # already solved by git rename-following (#109)
+            proposals.extend(propose_path_reanchors(repo, finding.scar_id, anchor, tracked))
+        for pattern in finding.dead_pattern_anchors:
+            pattern_diag.append(_pattern_diagnostic(repo, finding.scar_id, pattern))
+
+    for _f, scar in store.firing():
+        proposals.extend(propose_symbol_reanchors_for_scar(repo, scar, tracked))
+
+    return proposals, pattern_diag
+
+
+def _reanchor_data(proposals, pattern_diag) -> dict:
+    return {
+        "proposals": [
+            {"scar_id": p.scar_id, "anchor_kind": p.anchor_kind, "dead_anchor": p.dead_anchor,
+             "proposed_anchor": p.proposed_anchor, "confidence": p.confidence,
+             "signal": p.signal, "evidence": p.evidence}
+            for p in proposals
+        ],
+        "pattern_diagnostics": pattern_diag,
+    }
+
+
+def _reanchor_plain(proposals, pattern_diag) -> None:
+    if not proposals and not pattern_diag:
+        print("no reanchor proposals")
+        return
+    for p in proposals:
+        print(f"reanchor [#{p.scar_id}] {p.anchor_kind} {p.dead_anchor} -> "
+              f"{p.proposed_anchor} ({p.confidence}, signal {p.signal}) — {p.evidence}")
+    for d in pattern_diag:
+        print(f"pattern [#{d['scar_id']}] {d['dead_anchor']}: {d['diagnostic']} "
+              "(diagnostic only — never auto-applied)")
+    print(f"{len(proposals)} proposal(s), {len(pattern_diag)} pattern diagnostic(s) — "
+          "review, then `scar reanchor --apply --id N` to persist")
+
+
+def _reanchor_rich(proposals, pattern_diag) -> None:
+    console = output.console
+    if not proposals and not pattern_diag:
+        console.print("[green]no reanchor proposals[/]")
+        return
+    for p in proposals:
+        style = "green" if p.confidence == "high" else "yellow"
+        console.print(f"[{style}]reanchor[/] [#{p.scar_id}] {p.anchor_kind} {p.dead_anchor} -> "
+                      f"{p.proposed_anchor} ({p.confidence})")
+    for d in pattern_diag:
+        console.print(f"[dim]pattern[/] [#{d['scar_id']}] {d['dead_anchor']}: {d['diagnostic']}")
+    console.print(f"[bold]{len(proposals)}[/] proposal(s), "
+                  f"[bold]{len(pattern_diag)}[/] pattern diagnostic(s)")
+
+
+def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
+    """`scar reanchor --apply --id N`: rewrite ONLY the dead anchors on scar
+    #N that have exactly one high-confidence candidate (target is already
+    guaranteed tracked — every proposal's candidate comes from the tracked
+    set). A dead anchor with zero candidates, or two-or-more (any tier —
+    ambiguity is the signal itself), is reported but left untouched: partial
+    re-anchoring on a multi-anchor scar is expected, not an error. Never
+    flips status: the anchors-live-again hint on the next `scar lint` is how
+    a human notices and reactivates (same posture as #109's --fix-renames)."""
+    tracked = set(ctx.tracked_paths)
+    id_to_path = {s.id: f for f, s in store.parsed() if s.id is not None}
+    id_to_scar = {s.id: s for _f, s in store.parsed() if s.id is not None}
+    scar_file = id_to_path.get(args.id)
+    scar = id_to_scar.get(args.id)
+
+    orphans = detect_orphans(store, ctx, repo=repo)
+    partial = detect_partial_rot(store, ctx, repo=repo)
+    finding = next((f for f in (*orphans, *partial) if f.scar_id == args.id), None)
+
+    dead_anchors: list[tuple[str, str]] = []
+    if finding is not None:
+        for anchor in finding.dead_path_anchors:
+            if anchor not in finding.renamed:  # #109 already solved this one
+                dead_anchors.append(("path", anchor))
+    if scar is not None:
+        for anchor in dead_symbol_anchors(scar, repo, tracked):
+            dead_anchors.append(("symbol", anchor))
+
+    if scar_file is None or not dead_anchors:
+        print(f"scar #{args.id} has no reanchor proposals")
+        return 1
+
+    proposals, _pattern_diag = _reanchor_collect(store, ctx, repo)
+    groups: dict[tuple[str, str], list] = {}
+    for p in proposals:
+        if p.scar_id == args.id:
+            groups.setdefault((p.anchor_kind, p.dead_anchor), []).append(p)
+
+    fixed: list[tuple[str, str, str]] = []
+    skipped: list[tuple[str, str, str]] = []
+    renamed_by_kind: dict[str, dict[str, str]] = {"path": {}, "symbol": {}}
+    for kind, dead in dead_anchors:
+        plist = groups.get((kind, dead), [])
+        if not plist:
+            skipped.append((kind, dead, "no candidate found"))
+            continue
+        if len(plist) > 1:
+            skipped.append((kind, dead, f"ambiguous — {len(plist)} candidates"))
+            continue
+        only = plist[0]
+        if only.confidence != "high":
+            skipped.append((kind, dead, "low confidence — needs human review"))
+            continue
+        renamed_by_kind[kind][dead] = only.proposed_anchor
+        fixed.append((kind, dead, only.proposed_anchor))
+
+    for kind, renamed in renamed_by_kind.items():
+        if renamed:
+            apply_anchor_rewrite(scar_file, kind, renamed)
+
+    data = {
+        "fixed": [{"anchor_kind": k, "dead_anchor": d, "proposed_anchor": n} for k, d, n in fixed],
+        "skipped": [{"anchor_kind": k, "dead_anchor": d, "reason": r} for k, d, r in skipped],
+    }
+
+    def plain():
+        for k, d, n in fixed:
+            print(f"fixed [#{args.id}] {k} {d} -> {n}")
+        for k, d, r in skipped:
+            print(f"not fixed [#{args.id}] {k} {d}: {r}")
+        print(f"{len(fixed)} anchor(s) fixed, {len(skipped)} left unfixed — status unchanged "
+              "(anchors-live-again hint will surface on next `scar lint`)")
+
+    def tty():
+        console = output.console
+        for k, d, n in fixed:
+            console.print(f"[green]fixed[/] [#{args.id}] {k} {d} -> {n}")
+        for k, d, r in skipped:
+            console.print(f"[yellow]not fixed[/] [#{args.id}] {k} {d}: {r}")
+        console.print(f"[bold]{len(fixed)}[/] anchor(s) fixed, [bold]{len(skipped)}[/] left unfixed")
+
+    output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
+    return 0
+
+
+def _cmd_reanchor(args) -> int:
+    """List (default) or apply (--apply --id N) reanchor proposals for
+    orphaned/partial-rot scars — orphan recovery v1 (#111). Read-only by
+    default; --apply is human-only, one reviewed scar at a time, and never
+    touches status (same posture as `orphan --fix-renames`)."""
+    store = _require_store()
+    if store is None:
+        return 1
+    ctx = _repo_context(store)
+    if ctx is None:
+        print("reanchor: git unavailable (not a repository?) — cannot trace anchors; "
+              "reanchor skipped")
+        return 1
+
+    if args.apply:
+        if args.id is None:
+            print("--apply requires --id N (persist one reviewed scar's eligible anchors at a time)")
+            return 1
+        return _reanchor_apply(store, ctx, store.root, args)
+
+    proposals, pattern_diag = _reanchor_collect(store, ctx, store.root)
+    data = _reanchor_data(proposals, pattern_diag)
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                 tty=lambda: _reanchor_rich(proposals, pattern_diag),
+                 plain=lambda: _reanchor_plain(proposals, pattern_diag))
+    return 0
+
+
 def _cmd_why(args) -> int:
     """History of pain for a path: every scar that anchors it, any status."""
     store = _require_store(Path(args.path).resolve())
@@ -1068,6 +1284,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit machine-readable JSON (read mode only)")
 
+    p = _add(sub, "reanchor", help="propose new anchors for orphaned/partial-rot scars (#111)")
+    p.add_argument("--id", type=int, default=None,
+                   help="with --apply: the scar id whose eligible anchors to rewrite")
+    p.add_argument("--apply", action="store_true",
+                   help="rewrite ONE scar's single-high-confidence dead anchors "
+                        "(human review only — never CI; never flips status)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON (propose mode only)")
+
     p = _add(sub, "harvest", help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
     p.add_argument("--top-k", type=int, default=None,
@@ -1133,6 +1358,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
+        "reanchor": _cmd_reanchor,
         "agent": _cmd_agent, "stats": _cmd_stats,
     }[args.command]
     return handler(args)
