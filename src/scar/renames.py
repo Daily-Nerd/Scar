@@ -153,31 +153,48 @@ class RenameResolver:
 # ---------------------------------------------------------------------------
 
 _PATH_ANCHOR_LINE_RE = re.compile(r"^\s*-\s*path:\s*(.+?)\s*$")
+_SYMBOL_ANCHOR_LINE_RE = re.compile(r"^\s*-\s*symbol:\s*(.+?)\s*$")
+
+# Kind-aware line matchers for apply_anchor_rewrite. Only anchor kinds the
+# model actually parses (path/pattern/symbol — see lint.py's
+# _UNSUPPORTED_ANCHOR) are meaningful rewrite targets; "pattern" is
+# deliberately absent — pattern regeneration is a v1 cut (#111 design), so
+# there is no writer for it yet, and an unrecognized kind here is a no-op,
+# never a guess.
+_ANCHOR_LINE_RE = {
+    "path": _PATH_ANCHOR_LINE_RE,
+    "symbol": _SYMBOL_ANCHOR_LINE_RE,
+}
 
 
-def apply_rename_fix(path: Path, renamed: dict[str, str]) -> bool:
-    """Surgically rewrite `- path: <old>` anchor lines in the scar file at
-    *path* to `<new>` for every old->new pair in *renamed*. Every other byte
-    in the file — formatting, comments, quoting, the body — is untouched.
+def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) -> bool:
+    """Surgically rewrite `- <anchor_kind>: <old>` anchor lines in the scar
+    file at *path* to `<new>` for every old->new pair in *renamed*. Every
+    other byte in the file — formatting, comments, quoting, the body — is
+    untouched.
 
     This is a targeted substring replace confined to the exact span matched
-    by the path-anchor line regex, never a parse+reserialize (landmine #4).
-    Returns True iff at least one line was changed (file is rewritten only
-    then); False leaves the file byte-identical and unwritten.
+    by the kind-specific anchor-line regex, never a parse+reserialize
+    (landmine #4). Returns True iff at least one line was changed (file is
+    rewritten only then); False leaves the file byte-identical and unwritten
+    — including when *anchor_kind* isn't a recognized rewrite target.
     """
     if not renamed:
+        return False
+    line_re = _ANCHOR_LINE_RE.get(anchor_kind)
+    if line_re is None:
         return False
     text = path.read_text(encoding="utf-8")
     lines = text.split("\n")
     changed = False
     for i, line in enumerate(lines):
-        m = _PATH_ANCHOR_LINE_RE.match(line)
+        m = line_re.match(line)
         if not m:
             continue
         raw_val = m.group(1)
         stripped = _strip_inline_comment(raw_val).strip('"').strip("'")
-        new_path = renamed.get(stripped)
-        if new_path is None:
+        new_val = renamed.get(stripped)
+        if new_val is None:
             continue
         idx = raw_val.find(stripped)
         if idx == -1:
@@ -185,8 +202,19 @@ def apply_rename_fix(path: Path, renamed: dict[str, str]) -> bool:
         val_start = m.start(1)
         abs_start = val_start + idx
         abs_end = abs_start + len(stripped)
-        lines[i] = line[:abs_start] + new_path + line[abs_end:]
+        lines[i] = line[:abs_start] + new_val + line[abs_end:]
         changed = True
     if changed:
         path.write_text("\n".join(lines), encoding="utf-8")
     return changed
+
+
+def apply_rename_fix(path: Path, renamed: dict[str, str]) -> bool:
+    """Surgically rewrite `- path: <old>` anchor lines in the scar file at
+    *path* to `<new>` for every old->new pair in *renamed* (#109). Thin
+    wrapper over `apply_anchor_rewrite(path, "path", renamed)` — kept as its
+    own name because it's the established call site (orphan --fix-renames)
+    and the byte-identity test contract for it predates the kind-aware
+    generalization (#111).
+    """
+    return apply_anchor_rewrite(path, "path", renamed)

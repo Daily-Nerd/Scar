@@ -273,3 +273,122 @@ def test_apply_rename_fix_no_match_returns_false(tmp_path):
     changed = apply_rename_fix(f, {"src/nonexistent.py": "src/new.py"})
     assert changed is False
     assert f.read_text() == before
+
+
+# ---------------------------------------------------------------------------
+# apply_anchor_rewrite (#111) — kind-aware generalization of the surgical
+# writer above. apply_rename_fix must delegate to it and stay byte-identical
+# (the tests above are that contract, unchanged).
+# ---------------------------------------------------------------------------
+
+_SCAR_TEXT_SYMBOL = """\
+---
+id: 43
+type: deadend
+title: test scar with symbol anchor
+severity: medium
+confidence: 0.8
+created: 2026-01-01
+authors: [test]
+anchors:
+  - path: src/old.py
+  - symbol: old_helper
+evidence:
+  - commit: abc1234
+expires:
+  condition: "code is deleted"
+  review_after: 2027-01-01
+status: active
+---
+
+Body text with weird "quotes" and trailing whitespace.
+"""
+
+
+def test_apply_anchor_rewrite_path_kind_rewrites_only_the_anchor_line(tmp_path):
+    from scar.renames import apply_anchor_rewrite
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT)
+    before = f.read_text()
+
+    changed = apply_anchor_rewrite(f, "path", {"src/old.py": "src/new.py"})
+    assert changed is True
+
+    after = f.read_text()
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+
+    diffs = [(i, b, a) for i, (b, a) in enumerate(zip(before_lines, after_lines)) if b != a]
+    assert len(diffs) == 1
+    i, b, a = diffs[0]
+    assert b == "  - path: src/old.py"
+    assert a == "  - path: src/new.py"
+
+
+def test_apply_anchor_rewrite_symbol_kind_rewrites_only_the_symbol_line(tmp_path):
+    from scar.renames import apply_anchor_rewrite
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT_SYMBOL)
+    before = f.read_text()
+
+    changed = apply_anchor_rewrite(f, "symbol", {"old_helper": "new_helper"})
+    assert changed is True
+
+    after = f.read_text()
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+
+    diffs = [(i, b, a) for i, (b, a) in enumerate(zip(before_lines, after_lines)) if b != a]
+    assert len(diffs) == 1
+    i, b, a = diffs[0]
+    assert b == "  - symbol: old_helper"
+    assert a == "  - symbol: new_helper"
+    # the path anchor on the same file must be untouched
+    assert "  - path: src/old.py" in after_lines
+
+
+def test_apply_anchor_rewrite_symbol_kind_leaves_path_lines_alone(tmp_path):
+    from scar.renames import apply_anchor_rewrite
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT_SYMBOL)
+    before = f.read_text()
+
+    # A rename map keyed by the PATH value must not match under "symbol" kind.
+    changed = apply_anchor_rewrite(f, "symbol", {"src/old.py": "src/new.py"})
+    assert changed is False
+    assert f.read_text() == before
+
+
+def test_apply_anchor_rewrite_unknown_kind_returns_false(tmp_path):
+    from scar.renames import apply_anchor_rewrite
+
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT)
+    before = f.read_text()
+
+    changed = apply_anchor_rewrite(f, "pattern", {"src/old.py": "src/new.py"})
+    assert changed is False
+    assert f.read_text() == before
+
+
+def test_apply_rename_fix_delegates_to_apply_anchor_rewrite(tmp_path, monkeypatch):
+    from scar import renames as renames_mod
+
+    calls = []
+    real = renames_mod.apply_anchor_rewrite
+
+    def _spy(path, kind, renamed):
+        calls.append(kind)
+        return real(path, kind, renamed)
+
+    monkeypatch.setattr(renames_mod, "apply_anchor_rewrite", _spy)
+    f = tmp_path / "scar.md"
+    f.write_text(_SCAR_TEXT)
+    changed = renames_mod.apply_rename_fix(f, {"src/old.py": "src/new.py"})
+    assert changed is True
+    assert calls == ["path"]
