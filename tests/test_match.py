@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from scar.match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
+from scar.match import (
+    MAX_ANCHOR_SCAN,
+    _pattern_anchor_matches,
+    rank_for_edit,
+    rank_matches_for_diff,
+    rank_matches_for_edit,
+)
 from scar.store import ScarStore, init_scars
 
 FENCE = """\
@@ -50,6 +56,14 @@ def make_repo(tmp_path):
     (tmp_path / ".scars" / "0001-vendor.fence.md").write_text(FENCE)
     (tmp_path / ".scars" / "0002-redis.deadend.md").write_text(DEADEND)
     return ScarStore.discover(tmp_path)
+
+
+def test_anchor_scan_is_capped():
+    # The cap is applied before search(): text longer than MAX_ANCHOR_SCAN is
+    # truncated, so a pattern that only matches beyond the cap does not fire.
+    beyond_cap = "x" * MAX_ANCHOR_SCAN + "needle"
+    assert _pattern_anchor_matches("needle", beyond_cap) is False
+    assert _pattern_anchor_matches("needle", "needle" + "x" * MAX_ANCHOR_SCAN) is True
 
 
 def test_path_anchor_matches_file_under_dir(tmp_path):

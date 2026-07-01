@@ -17,6 +17,16 @@ from .store import ScarStore
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 DEFAULT_TOP_K = 3
 
+# Cap the text one anchor regex may scan before search(). A valid-but-
+# pathological anchor like (a+)+$ backtracks catastrophically and never returns
+# on adversarial input; lint rejects those at the gate (lint._is_redos_prone),
+# but this cap is belt-and-suspenders so an accidental/huge input can never blow
+# up the read hot path — _anchor_signal runs against unbounded new_content, and
+# orphan detection scans whole file bodies. 64 KiB comfortably fits real file
+# paths and added-diff excerpts while bounding worst-case backtracking work; a
+# few extra bytes of content are never worth a hung hook.
+MAX_ANCHOR_SCAN = 64 * 1024
+
 
 @dataclass(frozen=True)
 class ScarMatch:
@@ -53,7 +63,17 @@ def _pattern_anchor_matches(pattern: str, text: str) -> bool:
         rx = re.compile(pattern, re.IGNORECASE)
     except re.error:
         return False
-    return bool(rx.search(text))
+    # Cap scan length before search() — see MAX_ANCHOR_SCAN. This bounds the
+    # HUGE-input case only; it does NOT stop catastrophic backtracking, which a
+    # pathological anchor like (a+)+$ hits on ~30 chars, well under the cap. The
+    # real ReDoS defense is the promote/CI gate: lint._is_redos_prone() errors on
+    # nested-quantifier anchors, and the hot path only matches active (merged,
+    # CI-linted) scars — so a pathological pattern can't reach here via the normal
+    # workflow. Residual risk: a pattern hand-authored into a LOCAL .scars/ that
+    # never hit CI can still backtrack here. Bounding arbitrary regex at runtime
+    # needs a killable subprocess or a timeout-capable engine — both rejected to
+    # keep this hot path stdlib-only and under the hook latency budget. See #88.
+    return bool(rx.search(text[:MAX_ANCHOR_SCAN]))
 
 
 def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, tuple[str, ...]]:
