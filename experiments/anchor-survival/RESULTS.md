@@ -20,12 +20,15 @@ The numbers above were a **prototype** (regex symbol extraction + exact-string f
 | Single-commit | 186 gated | **176/186 = 94.6%** | 94.8% | 0/197 = 0.0% |
 | Long-horizon (200-commit) | 133 gated | **123/133 = 92.5%** | 88.0% | n/a |
 
+- **Denominator (why 186, not 193).** 7 planted names were `shipped_unsupported` — tree-sitter parsed no *symbol* node for them, so they are excluded from the *symbol-anchor* survival rate (in production such code falls back to path/pattern anchors, a different mechanism). This is not a free pass: charging all 7 as failures gives a worst-case **176/193 = 91.2%**, which still clears the 80% gate. So the honest bound sits between 91.2% and 94.6% regardless of how the exclusion is judged.
 - **The claim holds on shipped code**, not just the prototype. Single-commit matches within noise; long-horizon is *higher* because the shipped **Jaccard-similarity** disambiguation (argmax, no threshold) rescued all 6 cases the exact-hash prototype called AMBIGUOUS — the "use similarity, not equality" recommendation under *Secondary findings*, now empirically confirmed. The 10 FALSE-ORPHANs are the same single event (the `EnvSync`→`TripWire` class rename).
 - **The measurement caught a real shipped bug.** The first shipped run left 26 TSX anchors `shipped_unsupported`: `scar.symbols` could not resolve TS/JS `const X = ...` / `export const Foo = () => {}` (name nested on `variable_declarator`). Fixed in `fix(symbols): resolve TS/JS const/arrow symbols` before the numbers above; unsupported dropped 26→7.
 - **Disambiguation rule:** argmax Jaccard, tie-only AMBIGUOUS, **no similarity floor** (a floor would be an unvalidated tuned threshold — cf. #54). Long-horizon winning-Jaccard distribution: n=123, median 1.000, min 0.238 — the low tail is heavily-drifted-but-correctly-resolved symbols a floor would have wrongly killed.
 - **Pinned corpus:** TripWire rename commits `04d16600`, `b2c3a88c`, `d73f53b3`; Heimdall `69f3816c`. Long-horizon: TripWire `04d1660~1` → HEAD over `src/envsync/`. Local one-shot measurement (depends on sibling `../TripWire` / `../Heimdall` clones), not CI-reproducible; small sample — directional confirmation, not a tight point estimate.
 
 ## Resolution-path breakdown
+
+_(Counts below are the 2026-06-09 **prototype** run; the shipped-mechanism breakdown is in the re-validation section above.)_
 
 - Single-commit: 183/183 survived via git rename-map (step b). Git's own content-similarity rename detection carries everything across one commit — cheap and reliable.
 - Long-horizon: all 117 survivals came via **repo-wide qualified-symbol search** (step c) — the rename chain was too long/too rewritten for naive following, but the symbols were findable. This is the path that earns the design.
