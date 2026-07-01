@@ -24,6 +24,9 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+      - name: Run tests (with symbols extra)
+        run: uv run --extra symbols pytest -q
+
       # Dogfood: the repo's own scar graph must always parse and lint clean.
       # A malformed scar silently never fires (the daimon 0004 incident) —
       # this gate makes that class of rot unmergeable.

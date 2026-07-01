@@ -9,6 +9,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from . import symbols
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
 
 
@@ -29,13 +30,17 @@ def _is_redos_prone(pattern: str) -> bool:
     return bool(_NESTED_QUANTIFIER.search(pattern))
 
 
-# The model extracts only `path`/`pattern` anchors; any other anchor key is
-# silently dropped, so a SPEC-following author who writes `- symbol:`, `- touch:`,
-# or `- breaks:` gets false protection (the scar never fires on that anchor).
+# The model extracts `path`/`pattern`/`symbol` anchors; any other anchor key is
+# silently dropped, so a SPEC-following author who writes `- touch:` or
+# `- breaks:` gets false protection (the scar never fires on that anchor).
 # Scan the raw frontmatter and warn — but only warn, never error: flagging these
 # as errors would break existing repos that already carry such anchors.
+# `symbol:` anchors ARE parsed into Scar.symbol_anchors and, when the
+# [symbols] extra is installed, ARE enforced by the matcher — see the
+# availability-aware warning below, which is separate from this
+# unsupported-anchor warning.
 _UNSUPPORTED_ANCHOR = re.compile(
-    r"^\s*-\s*(symbol|touch|breaks):", re.MULTILINE)
+    r"^\s*-\s*(touch|breaks):", re.MULTILINE)
 
 
 @dataclass
@@ -63,7 +68,7 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding("error", f"invalid severity '{scar.severity}'"))
     if scar.status not in STATUSES:
         findings.append(Finding("error", f"invalid status '{scar.status}'"))
-    if not scar.path_anchors and not scar.pattern_anchors:
+    if not scar.path_anchors and not scar.pattern_anchors and not scar.symbol_anchors:
         findings.append(Finding("error", "no anchors — scar protects nothing"))
     # Scan the raw frontmatter for anchor keys the model cannot represent.
     front = text.split("\n---", 1)[0]
@@ -72,6 +77,10 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             "warning", f"unsupported anchor type '{kind}:' is ignored — the "
             "parser only extracts path/pattern anchors, so this gives no "
             "protection; use a path or pattern anchor instead"))
+    if scar.symbol_anchors and not symbols.symbols_available():
+        findings.append(Finding(
+            "warning", "symbol anchors need the [symbols] extra to resolve — "
+            "install scar-cli[symbols], or keep a path/pattern anchor as backup"))
     for pat in scar.pattern_anchors:
         try:
             re.compile(pat)

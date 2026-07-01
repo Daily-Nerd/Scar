@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from scar import symbols
 from scar.match import (
     MAX_ANCHOR_SCAN,
     _pattern_anchor_matches,
@@ -10,6 +13,9 @@ from scar.match import (
     rank_matches_for_edit,
 )
 from scar.store import ScarStore, init_scars
+
+symbols_extra = pytest.mark.skipif(
+    not symbols.symbols_available(), reason="tree-sitter extra not installed")
 
 FENCE = """\
 ---
@@ -130,18 +136,28 @@ diff --git a/services/session.py b/services/session.py
     assert [m.scar.id for m in hits] == [2]
 
 
+def test_symbol_anchors_exposed_in_to_dict(tmp_path):
+    from scar.model import Scar
+    from scar.match import ScarMatch
+    from pathlib import Path
+    s = Scar(title="t", path_anchors=["a.py"], symbol_anchors=["Foo"], status="active")
+    m = ScarMatch(scar=s, source=Path("x.md"), rank=1.0, anchor_strength=2.0,
+                  matched_by=("path",), path="a.py")
+    assert m.to_dict()["anchors"]["symbols"] == ["Foo"]
+
+
 def test_match_to_dict_carries_every_scar_field(tmp_path):
     """A new Scar field must never silently vanish from MCP responses."""
     from dataclasses import fields
     from scar.model import Scar
     store = make_repo(tmp_path)
     d = rank_matches_for_edit(store, tmp_path / "payments" / "x.py", "")[0].to_dict()
-    renamed = {"path_anchors", "pattern_anchors"}  # carried as anchors.paths/.patterns
+    renamed = {"path_anchors", "pattern_anchors", "symbol_anchors"}  # carried under anchors.*
     for f in fields(Scar):
         if f.name in renamed:
             continue
         assert f.name in d, f"Scar.{f.name} missing from ScarMatch.to_dict()"
-    assert d["anchors"] == {"paths": ["payments/"], "patterns": []}
+    assert d["anchors"] == {"paths": ["payments/"], "patterns": [], "symbols": []}
 
 
 def test_diff_ranking_parses_store_once(tmp_path, monkeypatch):
@@ -169,3 +185,45 @@ diff --git a/payments/b.py b/payments/b.py
 """
     matches = rank_matches_for_diff(store, diff)
     assert matches and calls["n"] == 1
+
+
+@symbols_extra
+def test_symbol_anchor_fires_and_outranks_bare_path(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "store.py").write_text(
+        "class SessionStore:\n    def save(self):\n        return 1\n")
+    scars = tmp_path / ".scars"
+    scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - path: src\n  - symbol: SessionStore\nstatus: active\n---\nbody\n")
+    store = ScarStore.discover(tmp_path)
+    matches = rank_matches_for_edit(store, tmp_path / "src" / "store.py", "")
+    assert matches
+    assert "symbol" in matches[0].matched_by
+    assert matches[0].anchor_strength == 2.25
+
+
+@symbols_extra
+def test_symbol_match_reflects_file_edits_within_process(tmp_path):
+    # Guards against the module-level _read_source cache serving stale content
+    # in a long-lived process (MCP server). After rewriting the file so the
+    # symbol no longer exists, the match must drop.
+    from scar.store import ScarStore
+    from scar.match import rank_matches_for_edit
+    (tmp_path / "src").mkdir()
+    f = tmp_path / "src" / "store.py"
+    f.write_text("class SessionStore:\n    def save(self):\n        return 1\n")
+    scars = tmp_path / ".scars"
+    scars.mkdir()
+    (scars / "s.md").write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        "anchors:\n  - symbol: SessionStore\nstatus: active\n---\nbody\n")
+    store = ScarStore.discover(tmp_path)
+    assert rank_matches_for_edit(store, f, "")  # matches while symbol present
+    # rewrite so the symbol is gone; mtime advances
+    import os, time
+    later = os.stat(f).st_mtime_ns + 1_000_000
+    f.write_text("def unrelated():\n    return 0\n")
+    os.utime(f, ns=(later, later))
+    assert not rank_matches_for_edit(store, f, "")  # stale cache would still match

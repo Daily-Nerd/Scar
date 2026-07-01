@@ -7,6 +7,8 @@ code is the strongest signal) > path prefix (2.0) > pattern on the path (1.5).
 
 from __future__ import annotations
 
+import functools
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +44,8 @@ class ScarMatch:
         # vanish from MCP responses (guarded by a fields() test)
         d = dict(self.scar.__dict__)
         d["anchors"] = {"paths": d.pop("path_anchors"),
-                        "patterns": d.pop("pattern_anchors")}
+                        "patterns": d.pop("pattern_anchors"),
+                        "symbols": d.pop("symbol_anchors")}
         d.update(matched_by=list(self.matched_by),
                  anchor_strength=self.anchor_strength,
                  rank=self.rank, path=self.path, source=str(self.source))
@@ -76,13 +79,48 @@ def _pattern_anchor_matches(pattern: str, text: str) -> bool:
     return bool(rx.search(text[:MAX_ANCHOR_SCAN]))
 
 
-def _anchor_signal(scar: Scar, rel_path: str, new_content: str) -> tuple[float, tuple[str, ...]]:
+def _read_source(abs_path: str) -> str | None:
+    try:
+        mtime = os.stat(abs_path).st_mtime_ns
+    except OSError:
+        return None
+    return _read_source_cached(abs_path, mtime)
+
+
+@functools.lru_cache(maxsize=256)
+def _read_source_cached(abs_path: str, mtime: int) -> str | None:
+    try:
+        return Path(abs_path).read_text(encoding="utf8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _symbol_anchor_hits(anchors: tuple[str, ...] | list[str], rel_path: str,
+                        root: Path) -> bool:
+    """True iff any symbol anchor resolves in the file at root/rel_path.
+    Reads the file at most once per (path, mtime) via lru_cache and parses it
+    once via symbols.resolve_any. Degrades to False when the extra is absent."""
+    from . import symbols
+    if not symbols.symbols_available():
+        return False
+    source = _read_source(str((root / rel_path).resolve()))
+    if source is None:
+        return False
+    return symbols.resolve_any(anchors, rel_path, source)
+
+
+def _anchor_signal(scar: Scar, rel_path: str, new_content: str,
+                   root: Path | None = None) -> tuple[float, tuple[str, ...]]:
     score = 0.0
     matched: list[str] = []
     for p in scar.path_anchors:
         if _path_anchor_matches(p, rel_path):
             score = max(score, 2.0)
             matched.append("path")
+    if root is not None and scar.symbol_anchors:
+        if _symbol_anchor_hits(scar.symbol_anchors, rel_path, root):
+            score = max(score, 2.25)
+            matched.append("symbol")
     for pat in scar.pattern_anchors:
         if _pattern_anchor_matches(pat, rel_path):
             score = max(score, 1.5)
@@ -98,7 +136,7 @@ def _match_target(firing: list, root: Path, rel_path: str,
     """Rank one target against an already-loaded firing set (no disk I/O)."""
     ranked: list[ScarMatch] = []
     for source, scar in firing:
-        strength, matched_by = _anchor_signal(scar, rel_path, new_content)
+        strength, matched_by = _anchor_signal(scar, rel_path, new_content, root)
         if strength > 0:
             rank = strength * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
             ranked.append(ScarMatch(scar=scar, source=source.relative_to(root),

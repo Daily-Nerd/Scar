@@ -119,16 +119,31 @@ def test_issue_evidence_skips_url_check():
     assert findings == []
 
 
-def test_unsupported_symbol_anchor_is_warning():
-    # SPEC-following authors may write `- symbol:` anchors, but the parser only
-    # extracts path/pattern and silently drops the rest — false protection.
-    # Lint must warn (not error: don't break existing repos).
-    bad = GOOD.replace(
-        "  - path: payments/retry.py",
-        "  - path: payments/retry.py\n  - symbol: Foo")
-    findings = lint_text(bad)
-    assert any(f.level == "warning" and "symbol" in f.message for f in findings)
-    assert not any(f.level == "error" for f in findings)
+def test_symbol_anchor_warns_to_install_extra_when_absent(monkeypatch):
+    from scar import lint, symbols
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    findings = lint.lint_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
+        "anchors:\n  - path: p.py\n  - symbol: Foo\nstatus: active\n---\nbody\n")
+    assert any(f.level == "warning" and "symbols" in f.message and "extra" in f.message
+               for f in findings)
+
+
+def test_symbol_anchor_no_warning_when_extra_present(monkeypatch):
+    from scar import lint, symbols
+    monkeypatch.setattr(symbols, "symbols_available", lambda: True)
+    findings = lint.lint_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
+        "anchors:\n  - path: p.py\n  - symbol: Foo\nstatus: active\n---\nbody\n")
+    assert not any("symbol" in f.message for f in findings)
+
+
+def test_symbol_only_scar_is_not_anchorless():
+    from scar.lint import lint_text
+    findings = lint_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
+        "anchors:\n  - symbol: Foo\nstatus: active\n---\nbody\n")
+    assert not any("protects nothing" in f.message for f in findings)
 
 
 def test_unsupported_touch_and_breaks_anchors_are_warnings():
