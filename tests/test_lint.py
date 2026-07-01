@@ -119,13 +119,23 @@ def test_issue_evidence_skips_url_check():
     assert findings == []
 
 
-def test_symbol_anchor_is_resolution_pending_warning():
-    from scar.lint import lint_text
-    findings = lint_text(
+def test_symbol_anchor_warns_to_install_extra_when_absent(monkeypatch):
+    from scar import lint, symbols
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    findings = lint.lint_text(
         "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
-        "anchors:\n  - path: payments/retry.py\n  - symbol: Foo\nstatus: active\n---\nbody\n")
-    assert any(f.level == "warning" and "resolution pending" in f.message for f in findings)
-    assert not any("unsupported" in f.message for f in findings)
+        "anchors:\n  - path: p.py\n  - symbol: Foo\nstatus: active\n---\nbody\n")
+    assert any(f.level == "warning" and "symbols" in f.message and "extra" in f.message
+               for f in findings)
+
+
+def test_symbol_anchor_no_warning_when_extra_present(monkeypatch):
+    from scar import lint, symbols
+    monkeypatch.setattr(symbols, "symbols_available", lambda: True)
+    findings = lint.lint_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 0.5\n"
+        "anchors:\n  - path: p.py\n  - symbol: Foo\nstatus: active\n---\nbody\n")
+    assert not any("symbol" in f.message for f in findings)
 
 
 def test_symbol_only_scar_is_not_anchorless():

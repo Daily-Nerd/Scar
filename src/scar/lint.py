@@ -9,6 +9,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from . import symbols
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
 
 
@@ -34,9 +35,10 @@ def _is_redos_prone(pattern: str) -> bool:
 # `- breaks:` gets false protection (the scar never fires on that anchor).
 # Scan the raw frontmatter and warn — but only warn, never error: flagging these
 # as errors would break existing repos that already carry such anchors.
-# `symbol:` anchors ARE parsed into Scar.symbol_anchors but not yet enforced by
-# the matcher (tree-sitter comes in Phase 2) — see the resolution-pending
-# warning below, which is separate from this unsupported-anchor warning.
+# `symbol:` anchors ARE parsed into Scar.symbol_anchors and, when the
+# [symbols] extra is installed, ARE enforced by the matcher — see the
+# availability-aware warning below, which is separate from this
+# unsupported-anchor warning.
 _UNSUPPORTED_ANCHOR = re.compile(
     r"^\s*-\s*(touch|breaks):", re.MULTILINE)
 
@@ -75,10 +77,10 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             "warning", f"unsupported anchor type '{kind}:' is ignored — the "
             "parser only extracts path/pattern anchors, so this gives no "
             "protection; use a path or pattern anchor instead"))
-    if scar.symbol_anchors:
+    if scar.symbol_anchors and not symbols.symbols_available():
         findings.append(Finding(
-            "warning", "symbol anchor resolution pending — parsed but not yet "
-            "enforced by the matcher; keep a path or pattern anchor as backup"))
+            "warning", "symbol anchors need the [symbols] extra to resolve — "
+            "install scar-cli[symbols], or keep a path/pattern anchor as backup"))
     for pat in scar.pattern_anchors:
         try:
             re.compile(pat)
