@@ -132,6 +132,21 @@ Both hooks assume `.scars/` already exists (`scar init`) and `language: python`
 installs this package into pre-commit's own isolated venv — no separate
 `scar` install required on the machine running the hook.
 
+SCAR also ships a composite GitHub Action (`action.yml`, repo root) for
+CI without pre-commit:
+
+```yaml
+# .github/workflows/scar.yml
+- uses: Daily-Nerd/Scar@main   # or pin a tag, e.g. @v0.11.0 (release-please)
+  with:
+    fail-orphans: 'true'   # default; set 'false' to only fail on parse errors
+    version: ''             # empty = latest scar-cli from PyPI; or pin e.g. '0.11.0'
+    args: ''                # extra args appended to `scar lint`
+```
+
+`@main` always tracks the latest commit; releases are tagged `vX.Y.Z` via
+release-please, so pin a tag for reproducible CI.
+
 ## Quality discipline
 
 - **Candidates vs active:** agents and `scar harvest` only ever write to `.scars/candidates/`. A human promotes (`scar promote`) — nothing enters active enforcement without review.
