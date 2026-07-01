@@ -60,18 +60,33 @@ def _lang_for(rel_path: str):
     return None
 
 
-def _symbol_name(node) -> str | None:
-    name = node.child_by_field_name("name")
-    return name.text.decode("utf8") if name is not None else None
+def _named_defs(node):
+    """Yield (name, node) for the named symbol(s) a definition node introduces.
+
+    Most def nodes carry the name on a direct `name` field. TS/JS variable
+    declarations (`const Foo = () => {}`, `let a = 1, b = 2`) instead nest the
+    name on one-or-more `variable_declarator` children — descend into those.
+    Destructuring patterns (`const {x} = ...`) have no plain identifier name and
+    are skipped. The yielded node is the declarator (so its fingerprint captures
+    the initializer/body), or the def node itself for direct-name defs.
+    """
+    if node.type in ("lexical_declaration", "variable_declaration"):
+        for child in node.children:
+            if child.type == "variable_declarator":
+                nm = child.child_by_field_name("name")
+                if nm is not None and nm.type == "identifier":
+                    yield nm.text.decode("utf8"), child
+    else:
+        nm = node.child_by_field_name("name")
+        if nm is not None:
+            yield nm.text.decode("utf8"), node
 
 
 def _walk_defs(node):
     """Yield (name, node) for every named definition node in the subtree."""
     for child in node.children:
         if child.type in _DEF_NODES:
-            nm = _symbol_name(child)
-            if nm:
-                yield nm, child
+            yield from _named_defs(child)
         yield from _walk_defs(child)
 
 

@@ -88,3 +88,29 @@ def test_jaccard_identical_is_one_and_empty_pair_is_one():
     s = frozenset({"a", "b"})
     assert symbols.jaccard(s, s) == 1.0
     assert symbols.jaccard(frozenset(), frozenset()) == 1.0
+
+
+TS_CONST = "export const Foo = () => {\n    return compute();\n};\n"
+TS_MULTI = "const a = 1, b = 2;\n"
+
+
+def test_resolve_ts_const_arrow_symbol():
+    span = symbols.resolve_symbol("Foo", "x.ts", TS_CONST)
+    assert span is not None
+    start, end = span
+    assert "Foo" in TS_CONST[start:end]
+
+
+def test_fingerprint_ts_const_arrow_not_none():
+    assert symbols.fingerprint("Foo", "x.tsx", TS_CONST) is not None
+
+
+def test_resolve_ts_multi_declarator_names_both():
+    assert symbols.resolve_symbol("a", "x.ts", TS_MULTI) is not None
+    assert symbols.resolve_symbol("b", "x.ts", TS_MULTI) is not None
+
+
+def test_python_symbols_still_resolve_after_ts_fix():
+    py = "class SessionStore:\n    def save(self):\n        return 1\n"
+    assert symbols.resolve_symbol("SessionStore", "s.py", py) is not None
+    assert symbols.resolve_symbol("SessionStore.save", "s.py", py) is not None
