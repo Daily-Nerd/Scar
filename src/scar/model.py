@@ -15,7 +15,7 @@ TYPES = ("deadend", "fence", "landmine")
 SEVERITIES = ("low", "medium", "high", "critical")
 STATUSES = ("candidate", "active", "challenged", "archived", "orphaned", "template")
 
-_FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
+_FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", re.DOTALL)
 _URL_RE = re.compile(r"^https?://")
 
 
@@ -72,11 +72,7 @@ class Scar:
         return "\n".join(lines)
 
 
-def _field(front: str, name: str, default: str = "") -> str:
-    m = re.search(rf"^\s*{name}:\s*(.+?)\s*$", front, re.MULTILINE)
-    if not m:
-        return default
-    value = m.group(1)
+def _strip_inline_comment(value: str) -> str:
     # Strip an unquoted inline comment (YAML: a '#' after whitespace starts a
     # comment). The template ships '# ...' on every field; a copied-but-uncleaned
     # comment otherwise lands in the value — silently for confidence/severity,
@@ -84,6 +80,19 @@ def _field(front: str, name: str, default: str = "") -> str:
     # scalar (title, condition) stays data. See issue #69.
     if '"' not in value and "'" not in value:
         value = re.sub(r"\s+#.*$", "", value).rstrip()
+    return value
+
+
+def _field(front: str, name: str, default: str = "", strip_comment: bool = True) -> str:
+    m = re.search(rf"^\s*{name}:\s*(.+?)\s*$", front, re.MULTILINE)
+    if not m:
+        return default
+    value = m.group(1)
+    # A free-text scalar (title) can legitimately contain a '#' (e.g. an issue
+    # ref) and is written unquoted by to_text(); stripping it as a comment
+    # truncates the value on round-trip (#91). Skip the strip for those fields.
+    if strip_comment:
+        value = _strip_inline_comment(value)
     return value
 
 
@@ -112,13 +121,14 @@ def parse_scar_text(text: str) -> Scar:
 
     return Scar(
         type=_field(front, "type", "deadend"),
-        title=_field(front, "title"),
+        title=_field(front, "title", strip_comment=False),
         id=scar_id,
         severity=_field(front, "severity", "medium"),
         confidence=confidence,
         created=_field(front, "created"),
         authors=authors,
-        path_anchors=re.findall(r"^\s*-\s*path:\s*(\S+)\s*$", front, re.MULTILINE),
+        path_anchors=[_strip_inline_comment(p).strip('"').strip("'")
+                      for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[p.strip().strip('"')
                          for p in re.findall(r"^\s*-\s*pattern:\s*(.+?)\s*$", front, re.MULTILINE)],
         evidence=evidence,

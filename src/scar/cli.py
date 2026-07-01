@@ -21,6 +21,7 @@ from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
 from .model import parse_scar_text
 from .evidence import unreachable_evidence
 from .orphan import (
+    GitError,
     anchors_all_dead,
     build_repo_context,
     detect_orphans,
@@ -195,6 +196,16 @@ def _orphan_rich(findings, partial) -> None:
                       "anchor(s). Not an orphan (still firing on survivors).")
 
 
+def _repo_context(store):
+    """Tracked-file context for orphan detection, or None when git is unavailable
+    (not a repo / git failed). Callers skip orphan detection on None rather than
+    treating an absent tree as 'every scar orphaned' — a false CI gate (#91)."""
+    try:
+        return build_repo_context(store.root)
+    except GitError:
+        return None
+
+
 def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
@@ -208,11 +219,14 @@ def _cmd_lint(args) -> int:
         if any(fi.level == "error" for fi in findings):
             failed += 1
 
-    ctx = build_repo_context(store.root)
-    orphans = detect_orphans(store, ctx)
-    partial = detect_partial_rot(store, ctx)
-    reverse_hints = [s for _f, s in store.parsed()
-                     if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
+    ctx = _repo_context(store)
+    if ctx is None:
+        orphans, partial, reverse_hints = [], [], []
+    else:
+        orphans = detect_orphans(store, ctx)
+        partial = detect_partial_rot(store, ctx)
+        reverse_hints = [s for _f, s in store.parsed()
+                         if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
@@ -280,10 +294,13 @@ def _cmd_status(args) -> int:
 
     # Orphans: detected (firing scars whose anchors all died — not yet persisted)
     # and persisted (already flipped to status: orphaned, invisible until now).
-    ctx = build_repo_context(store.root)
-    detected = detect_orphans(store, ctx)
+    ctx = _repo_context(store)
+    if ctx is None:
+        detected, partial = [], []
+    else:
+        detected = detect_orphans(store, ctx)
+        partial = detect_partial_rot(store, ctx)
     persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
-    partial = detect_partial_rot(store, ctx)
 
     data = {
         "scars_dir": str(store.scars_dir),
@@ -355,7 +372,8 @@ def _cmd_promote(args) -> int:
     # resolve to nothing is born orphan-detected. Promote still succeeds — the
     # reviewer may anchor to code that does not exist yet on purpose.
     promoted = parse_scar_text(new_path.read_text(encoding="utf-8"))
-    if anchors_all_dead(promoted, build_repo_context(store.root)):
+    ctx = _repo_context(store)
+    if ctx is not None and anchors_all_dead(promoted, ctx):
         print("  advisory: this scar's anchors resolve to nothing in the current "
               "tree (born orphan-detected) — confirm the anchors are right")
     return 0
@@ -410,7 +428,13 @@ def _cmd_orphan(args) -> int:
     store = _require_store()
     if store is None:
         return 1
-    ctx = build_repo_context(store.root)
+    ctx = _repo_context(store)
+    if ctx is None:
+        # Orphan detection is the whole job here; without git we cannot know the
+        # tracked set. Surface it rather than report a spurious all-orphaned tree.
+        print("orphan: git unavailable (not a repository?) — cannot determine "
+              "tracked files; orphan detection skipped")
+        return 1
     findings = detect_orphans(store, ctx)
 
     if not args.apply:
@@ -495,6 +519,9 @@ def _cmd_inject(args) -> int:
     store = ScarStore.discover(start)
     if store is None:
         return 0  # hooks must never fail the edit
+    # Max 3 injected is a format-level guarantee (SPEC/ROADMAP), not a tuning
+    # knob — clamp so no caller can widen the fatigue budget (#91).
+    top_k = min(args.top_k, 3)
     if args.diff:
         try:
             diff_text = Path(args.diff).read_text(encoding="utf-8")
@@ -502,10 +529,10 @@ def _cmd_inject(args) -> int:
             # ValueError covers NUL-byte paths; a hook must never crash on
             # whatever lands in --diff — fall back to treating it as text
             diff_text = args.diff
-        matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+        matches = rank_matches_for_diff(store, diff_text, top_k=top_k)
     elif args.path:
         matches = rank_matches_for_edit(store, Path(args.path).resolve(),
-                                        args.content or "", top_k=args.top_k)
+                                        args.content or "", top_k=top_k)
     else:
         matches = []
     context = injection_context([m.scar for m in matches], store.broken(),
@@ -650,16 +677,22 @@ def _harvest_precision(repo: Path, args) -> int:
 
 
 def _cmd_harvest(args) -> int:
-    from .harvest import harvest  # subprocess-heavy; import only when used
+    from .harvest import GitError, harvest  # subprocess-heavy; import only when used
     repo = Path(args.repo).resolve()
 
-    if args.label is not None:
-        return _harvest_label(repo, args)
+    try:
+        if args.label is not None:
+            return _harvest_label(repo, args)
 
-    if args.precision:
-        return _harvest_precision(repo, args)
+        if args.precision:
+            return _harvest_precision(repo, args)
 
-    result = harvest(repo)
+        result = harvest(repo)
+    except GitError as exc:
+        # Surface the git failure loudly instead of printing an empty harvest
+        # that reads as "nothing to mine" (landmine #1).
+        print(f"harvest: {exc}")
+        return 1
     total = sum(len(v) for v in result.values())
 
     if args.top_k is not None:

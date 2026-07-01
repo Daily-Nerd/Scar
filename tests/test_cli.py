@@ -29,7 +29,11 @@ Why X failed.
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    (tmp_path / ".git").mkdir()
+    # A real (empty) git repo: `git ls-files` returns rc 0 with no output, so the
+    # tracked set is legitimately empty. A bare `.git/` dir is NOT a valid repo —
+    # git fails there (rc 128), which orphan detection now surfaces instead of
+    # mistaking for an empty tracked set (#91).
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -143,6 +147,27 @@ def test_inject_emits_hook_json(repo, capsys):
     assert main(["inject", "--path", "src/thing.py", "--content", ""]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def _active_scar(id: int, title: str) -> str:
+    return (
+        f"---\nid: {id}\ntype: deadend\ntitle: {title}\nseverity: medium\n"
+        f"confidence: 0.7\ncreated: 2026-06-10\nauthors: [k]\nanchors:\n"
+        f"  - path: src/\nevidence:\n  - commit: abc1234\nstatus: active\n---\n\nBody.\n")
+
+
+def test_inject_top_k_clamped_to_three(repo, capsys):
+    # #91.7: --top-k is a format-level guarantee (max 3 injected), not a tuning
+    # knob. A caller passing --top-k 50 must still cap at 3.
+    init_scars(repo)
+    for i in range(1, 6):  # 5 scars all firing on src/thing.py
+        (repo / ".scars" / f"000{i}-s{i}.deadend.md").write_text(
+            _active_scar(i, f"Scar number {i}"))
+    assert main(["inject", "--path", "src/thing.py", "--content", "",
+                 "--top-k", "50"]) == 0
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "3 match(es)" in ctx
+    assert "match(es)" in ctx and "5 match(es)" not in ctx
 
 
 def test_inject_diff_with_binary_file_never_crashes(repo, capsys, tmp_path):

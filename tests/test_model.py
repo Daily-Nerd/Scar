@@ -153,6 +153,41 @@ Body.
     assert s2.evidence == s.evidence
 
 
+def test_title_with_hash_survives_roundtrip():
+    # Issue #91.1: a '#' in a free-text title (issue ref) must not be stripped
+    # as an inline comment on round-trip (parse -> to_text -> parse).
+    s = Scar(title="Fix #40 regression", type="deadend", severity="high",
+             confidence=0.9, status="active", path_anchors=["src/"])
+    s2 = parse_scar_text(s.to_text())
+    assert s2.title == "Fix #40 regression"
+
+
+def test_crlf_frontmatter_parses():
+    # Issue #91.3: a scar with CRLF line endings must still parse.
+    crlf = VALID.replace("\n", "\r\n")
+    s = parse_scar_text(crlf)
+    assert s.id == 7
+    assert s.title == "Redis sessions failed"
+    assert s.path_anchors == ["services/auth/"]
+
+
+def test_path_anchor_with_space_captured():
+    # Issue #91.4: a path anchor containing a space must be captured, not dropped.
+    text = VALID.replace("  - path: services/auth/\n",
+                         "  - path: src/my dir/\n")
+    s = parse_scar_text(text)
+    assert s.path_anchors == ["src/my dir/"]
+
+
+def test_path_anchor_inline_comment_still_stripped():
+    # Guard: widening the path capture must not re-admit the template's inline
+    # comment into the anchor value.
+    text = VALID.replace("  - path: services/auth/\n",
+                         "  - path: services/auth/   # protects auth\n")
+    s = parse_scar_text(text)
+    assert s.path_anchors == ["services/auth/"]
+
+
 def test_existing_evidence_prefixes_still_parse():
     text = """\
 ---

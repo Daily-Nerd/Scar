@@ -379,3 +379,32 @@ def test_precision_report_caps_n_and_dedupes():
     assert rep["total"] == 3
     assert rep["labeled"] == 0
     assert rep["base_rate"] == 0.0
+
+
+# --- issue #91: git failure surfacing + non-UTF-8 tolerance ---
+
+def test_harvest_non_git_dir_surfaces_error(tmp_path):
+    """#91.2: harvesting a non-git dir must surface the git failure, not return
+    a silent all-empty result (a hard failure reading as clean — landmine #1)."""
+    from scar.harvest import GitError
+    with pytest.raises(GitError):
+        harvest(tmp_path)
+
+
+def test_harvest_tolerates_non_utf8_git_metadata(tmp_path):
+    """#91.5: a commit whose metadata is not valid UTF-8 must not abort harvest
+    with UnicodeDecodeError — decode with errors='replace'."""
+    git(tmp_path.parent, "init", "-q", "-b", "main", str(tmp_path))
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    # Force git to store + emit the commit subject as latin-1 (not re-encoded to
+    # UTF-8), so a raw \xff byte survives verbatim into `git log` output.
+    git(tmp_path, "config", "i18n.commitEncoding", "ISO-8859-1")
+    git(tmp_path, "config", "i18n.logOutputEncoding", "ISO-8859-1")
+    (tmp_path / "a.txt").write_text("x")
+    git(tmp_path, "add", "-A")
+    subprocess.run(
+        [b"git", b"-C", str(tmp_path).encode(), b"commit", b"-qm",
+         b"revert broken \xff build"], check=True, capture_output=True)
+    result = harvest(tmp_path)  # must not raise UnicodeDecodeError
+    assert any("revert" in c["subject"].lower() for c in result["reverts"])

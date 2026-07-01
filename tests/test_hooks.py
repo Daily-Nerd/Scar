@@ -215,3 +215,19 @@ def test_stop_drafter_logs_firing(repo, monkeypatch, capsys, tmp_path):
     main(["hook", "stop-drafter"])
     log = (state / "drafter-log.jsonl").read_text()
     assert "s4" in log and "revert_language" in log
+
+
+def test_precheck_fails_open_on_internal_error(repo, monkeypatch, capsys):
+    """#91.6: precheck must honor the never-fail contract. If the ranking/render
+    path raises unexpectedly, it must fail OPEN — inject nothing, exit 0 — not
+    propagate the exception and break the agent's edit."""
+    import scar.hooks as hooks
+
+    def boom(*a, **k):
+        raise RuntimeError("simulated internal failure")
+
+    monkeypatch.setattr(hooks, "rank_for_edit", boom)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "precheck"]) == 0        # clean exit, no raise
+    assert out_json(capsys) is None               # nothing injected
