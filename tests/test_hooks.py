@@ -217,6 +217,44 @@ def test_stop_drafter_logs_firing(repo, monkeypatch, capsys, tmp_path):
     assert "s4" in log and "revert_language" in log
 
 
+# --- firing log (#106) ---
+
+def test_precheck_logs_firing_when_scars_fire(repo, monkeypatch, capsys, tmp_path):
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "precheck"]) == 0
+    rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
+    assert rec["scar_ids"] == [1]
+    assert rec["count"] == 1
+    assert rec["repo"] == str(repo)
+    assert "target" in rec and "ts" in rec
+
+
+def test_precheck_logs_nothing_when_no_scars_fire(repo, monkeypatch, capsys, tmp_path):
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "unrelated" / "x.py"),
+                                      "new_string": "pass"}})
+    assert main(["hook", "precheck"]) == 0
+    assert not (state / "firing-log.jsonl").exists()
+
+
+def test_precheck_log_write_failure_fails_open(repo, monkeypatch, capsys, tmp_path):
+    """#91: a broken log destination must never raise out of precheck or block
+    the injection itself. SCAR_STATE_DIR points at a plain FILE (not a dir),
+    so mkdir()-ing the log's parent fails with a real OSError."""
+    state_stub = tmp_path / "not_a_dir"
+    state_stub.write_text("blocker")
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state_stub))
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "precheck"]) == 0        # no raise
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Sleep is 7s" in ctx                    # injection still succeeds
+
+
 def test_precheck_fails_open_on_internal_error(repo, monkeypatch, capsys):
     """#91.6: precheck must honor the never-fail contract. If the ranking/render
     path raises unexpectedly, it must fail OPEN — inject nothing, exit 0 — not

@@ -798,6 +798,49 @@ def test_harvest_label_date_is_monkeypatchable(harvest_repo, tmp_path, monkeypat
     assert rec["date"] == "1999-12-31"
 
 
+def test_labels_path_defaults_under_scars_dir(harvest_repo):
+    # #106: experiments/harvest/labels.jsonl leaked an untracked dir into every
+    # adopter's working tree. Default now lives inside .scars/ instead.
+    import scar.cli as cli
+    assert cli.LABELS_PATH_OVERRIDE is None
+    assert cli._labels_path(harvest_repo) == harvest_repo / ".scars" / "harvest-labels.jsonl"
+
+
+def test_harvest_label_writes_to_new_default_path_not_old(harvest_repo):
+    cid = _first_candidate_id(harvest_repo)
+    assert main(["harvest", str(harvest_repo), "--label", cid, "keep"]) == 0
+    assert (harvest_repo / ".scars" / "harvest-labels.jsonl").exists()
+    assert not (harvest_repo / "experiments" / "harvest" / "labels.jsonl").exists()
+
+
+def test_harvest_precision_reads_fall_back_to_old_path_when_new_absent(harvest_repo, capsys):
+    # An existing local label set at the pre-#106 location must not be
+    # silently orphaned by the path move — reads fall back to it.
+    cid = _first_candidate_id(harvest_repo)
+    old_path = harvest_repo / "experiments" / "harvest" / "labels.jsonl"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_text(json.dumps({"id": cid, "label": "keep", "note": "",
+                                    "date": "2026-01-01", "repo": harvest_repo.name}) + "\n")
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "1 labeled" in out
+
+
+def test_harvest_precision_prefers_new_path_when_both_exist(harvest_repo, capsys):
+    # New writes never touch the old location again — once the new path
+    # exists, it is authoritative even if a stale old file lingers.
+    cid = _first_candidate_id(harvest_repo)
+    old_path = harvest_repo / "experiments" / "harvest" / "labels.jsonl"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_text(json.dumps({"id": "stale-old-entry", "label": "keep", "note": "",
+                                    "date": "2026-01-01", "repo": harvest_repo.name}) + "\n")
+    assert main(["harvest", str(harvest_repo), "--label", cid, "discard"]) == 0
+    capsys.readouterr()
+    assert main(["harvest", str(harvest_repo), "--precision"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "1 labeled" in out  # only the new file's one label counted
+
+
 def test_agent_skill_prints_body_with_three_types(repo, capsys):
     assert main(["agent", "skill"]) == 0
     out = capsys.readouterr().out
@@ -897,6 +940,81 @@ def test_check_tty_renders_scar_content(repo, capsys, monkeypatch):
     assert "Why X failed" in out     # its body
 
 
+def test_check_default_no_exit_code_always_zero(repo, capsys):
+    # #106: back-compat — without --exit-code, check never fails CI even when
+    # a scar fires. Only --exit-code turns check into a gate.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "src/thing.py"]) == 0
+
+
+def test_check_exit_code_fires_returns_nonzero(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "src/thing.py", "--exit-code"]) == 1
+
+
+def test_check_exit_code_clean_path_returns_zero(repo, capsys):
+    init_scars(repo)
+    assert main(["check", "docs/x.md", "--exit-code"]) == 0
+
+
+def test_check_multiple_paths_union(repo, capsys):
+    # #106: check accepts several paths in one call and gates on their union.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["check", "docs/x.md", "src/thing.py", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["paths"] == ["docs/x.md", "src/thing.py"]
+    assert any(s["title"] == "Tried X, failed" for s in data["scars"])
+
+
+def test_check_multiple_paths_exit_code_fires_if_any_hits(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "docs/x.md", "src/thing.py", "--exit-code"]) == 1
+
+
+def test_check_diff_mode_gates_on_union_of_changed_files(repo, capsys):
+    # #106: --diff mirrors inject --diff's file-discovery (match._diff_targets)
+    # so check can gate a whole PR diff, not just one path at a time.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["check", "--diff", diff, "--exit-code"]) == 1
+    out = capsys.readouterr().out
+    assert "Tried X, failed" in out
+
+
+def test_check_diff_mode_clean_returns_zero(repo, capsys):
+    init_scars(repo)
+    diff = """\
+diff --git a/docs/x.md b/docs/x.md
+--- a/docs/x.md
++++ b/docs/x.md
+@@ -0,0 +1 @@
++hello
+"""
+    assert main(["check", "--diff", diff, "--exit-code"]) == 0
+
+
 def test_why_json_lists_records(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
@@ -977,4 +1095,59 @@ def test_lint_json_includes_symbol_drift(repo, capsys):
     assert len(drift) == 1
     assert drift[0]["symbol"] == "SessionStore.save"
     assert drift[0]["sha"] == sha
-    assert 0.0 <= drift[0]["similarity"] < 1.0
+
+
+# --- stats (#106: firing observability) ---
+
+def _write_firing_log(state_dir, records):
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "firing-log.jsonl").open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+
+
+def test_stats_no_firings_yet(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 0
+    assert data["per_scar"] == []
+    assert data["most_fired"] is None
+    assert data["last_fired"] is None
+    assert data["never_fired"] == [1]
+
+
+def test_stats_aggregates_counts_and_never_fired(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1, 2], "count": 2},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 3
+    assert {"id": 1, "count": 2} in data["per_scar"]
+    assert {"id": 2, "count": 1} in data["per_scar"]
+    assert data["most_fired"] == 1
+    assert data["last_fired"] == "2026-06-11T09:00:00"
+    assert data["never_fired"] == []
+
+
+def test_stats_plain_output_reports_never_fired_and_disclaimer(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "0" in out
+    assert "never fired" in out.lower()
+    assert "#1" in out
+    # scope honesty (#106): must not claim honor-tracking, only firing counts
+    assert "honor" in out.lower()

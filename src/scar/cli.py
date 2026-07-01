@@ -17,7 +17,11 @@ from pathlib import Path
 from rich_argparse import RichHelpFormatter
 
 from .lint import lint_text
-from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
+from .match import (
+    rank_matches_for_diff,
+    rank_matches_for_edit,
+    rank_matches_for_paths,
+)
 from .model import parse_scar_text
 from .evidence import unreachable_evidence
 from .orphan import (
@@ -163,12 +167,12 @@ def _lint_rich(data: dict) -> None:
                   f"{len(data['unreachable_evidence'])} unreachable-evidence")
 
 
-def _check_rich(path: str, hits) -> None:
+def _check_rich(label: str, hits) -> None:
     from rich.panel import Panel
 
     console = output.console
     if not hits:
-        console.print(f"[green]no scars anchored to[/] {path}")
+        console.print(f"[green]no scars anchored to[/] {label}")
         return
     for s in hits:
         title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
@@ -189,6 +193,29 @@ def _why_rich(rel: str, records) -> None:
         title = f"[{s.status}] {_type_label(s.type)} #{s.id} — {s.title}"
         console.print(Panel(s.body[:300].strip(), title=title, subtitle=f"[dim]{f.name}[/]",
                             title_align="left"))
+
+
+def _stats_rich(data: dict) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = output.console
+    console.print(Panel.fit(
+        f"{data['total_firings']} firing(s) recorded\n"
+        f"most-fired: {'#' + str(data['most_fired']) if data['most_fired'] is not None else '(none yet)'} · "
+        f"last fired: {data['last_fired'] or '(never)'}",
+        title="scar stats"))
+    if data["per_scar"]:
+        t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
+        t.add_column("id", justify="right"); t.add_column("firings", justify="right")
+        for e in data["per_scar"]:
+            t.add_row(f"#{e['id']}", str(e["count"]))
+        console.print(t)
+    if data["never_fired"]:
+        console.print(f"[yellow]never fired:[/] "
+                      + ", ".join(f"#{i}" for i in data["never_fired"]))
+    console.print("[dim]note: firing counts only — whether the agent honored an "
+                  "injected scar is not tracked (unobservable from inside the hook)[/]")
 
 
 def _orphan_rich(findings, partial) -> None:
@@ -399,28 +426,60 @@ def _cmd_promote(args) -> int:
 
 
 def _cmd_check(args) -> int:
-    store = _require_store(Path(args.path).resolve())
+    """CI gate for humans and CI (README). Accepts one or more paths, or a
+    --diff (same union-of-changed-files discovery as `inject --diff`, #106).
+    --exit-code turns a fire into a non-zero exit; without it, behavior is
+    unchanged (always 0) so existing callers never regress (back-compat)."""
+    diff_text = None
+    if args.diff:
+        try:
+            diff_text = Path(args.diff).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            # ValueError covers NUL-byte paths; mirror inject's fallback so a
+            # raw diff string on the command line works the same way.
+            diff_text = args.diff
+
+    if diff_text is not None:
+        store = _require_store()
+        label = "diff"
+    elif args.path:
+        store = _require_store(Path(args.path[0]).resolve())
+        label = ", ".join(args.path)
+    else:
+        print("check requires a path or --diff")
+        return 1
     if store is None:
         return 1
-    hits = rank_for_edit(store, Path(args.path).resolve(), args.content or "",
-                         top_k=args.top_k)
+
+    if diff_text is not None:
+        matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+    else:
+        matches = rank_matches_for_paths(store, args.path, args.content or "",
+                                         top_k=args.top_k)
+    hits = [m.scar for m in matches]
+
     data = {
-        "path": args.path,
+        "paths": [] if diff_text is not None else list(args.path),
         "scars": [{"type": s.type, "id": s.id, "severity": s.severity,
                    "confidence": s.confidence, "status": s.status, "title": s.title,
                    "body": s.body[:200]} for s in hits],
     }
+    if diff_text is None and len(args.path) == 1:
+        data["path"] = args.path[0]  # back-compat: single-path shape unchanged
 
     def plain():
         if not hits:
-            print(f"no scars anchored to {args.path}")
+            print(f"no scars anchored to {label}")
             return
         for s in hits:
             print(label_line(s))
             print("  " + s.body[:200].replace("\n", "\n  "))
 
     output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _check_rich(args.path, hits), plain=plain)
+                  tty=lambda: _check_rich(label, hits), plain=plain)
+
+    if getattr(args, "exit_code", False) and hits:
+        return 1
     return 0
 
 
@@ -532,6 +591,69 @@ def _cmd_why(args) -> int:
     return 0
 
 
+def _cmd_stats(args) -> int:
+    """Aggregate the firing log the precheck hook writes (#106): total
+    firings, per-scar counts, the most-fired scar, the last-fired timestamp,
+    and which currently-firing scars have never fired. FIRING COUNTS only —
+    this cannot report whether the agent honored an injected scar, only that
+    it was shown to it (unobservable from inside the hook)."""
+    from .hooks import firing_log_path
+    store = _require_store()
+    if store is None:
+        return 1
+
+    log_path = firing_log_path()
+    records = []
+    if log_path.exists():
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    counts: dict[int, int] = {}
+    last_fired = None
+    for rec in records:
+        for sid in rec.get("scar_ids", []):
+            counts[sid] = counts.get(sid, 0) + 1
+        ts = rec.get("ts")
+        if ts and (last_fired is None or ts > last_fired):
+            last_fired = ts
+    per_scar = sorted(({"id": sid, "count": c} for sid, c in counts.items()),
+                      key=lambda e: (-e["count"], e["id"]))
+    most_fired = per_scar[0]["id"] if per_scar else None
+    firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
+    never_fired = sorted(firing_ids - set(counts))
+
+    data = {
+        "total_firings": sum(counts.values()),
+        "per_scar": per_scar,
+        "most_fired": most_fired,
+        "last_fired": last_fired,
+        "never_fired": never_fired,
+    }
+
+    def plain():
+        print(f"scar stats: {data['total_firings']} firing(s) recorded ({log_path})")
+        for e in per_scar:
+            print(f"  #{e['id']}: {e['count']} fire(s)")
+        if most_fired is not None:
+            print(f"  most-fired: #{most_fired}")
+        if last_fired:
+            print(f"  last fired: {last_fired}")
+        if never_fired:
+            print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
+        print("  note: firing counts only — whether the agent honored an "
+              "injected scar is not tracked (unobservable from inside the hook)")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _stats_rich(data), plain=plain)
+    return 0
+
+
 def _cmd_inject(args) -> int:
     """Machine mode for hooks: JSON additionalContext or silence."""
     start = Path(args.path).resolve() if args.path else Path.cwd()
@@ -584,19 +706,38 @@ def _harvest_line(section_key: str, c: dict) -> str:
     return f"- [{c['id']} score {c['score']:.1f}] {_HARVEST_FMT[section_key](c)}"
 
 
-# Labels JSONL lives under the harvested repo at experiments/harvest/labels.jsonl
-# (instrument/data, committed like the anchor-survival experiment). Tests set
+# Labels JSONL lives under the harvested repo at .scars/harvest-labels.jsonl.
+# It used to default to experiments/harvest/labels.jsonl, which leaked an
+# untracked experiments/ directory into every adopter's working tree (#106) —
+# .scars/ is already the repo-owned, human-gated home for scar data. Tests set
 # LABELS_PATH_OVERRIDE to a tmp path so they never touch the real file.
 LABELS_PATH_OVERRIDE: Path | None = None
+_OLD_LABELS_RELPATH = Path("experiments") / "harvest" / "labels.jsonl"
 _VALID_LABELS = ("keep", "discard")
 
 
 def _labels_path(repo: Path) -> Path:
-    """Resolve where label judgements are appended. Override wins (tests);
-    otherwise experiments/harvest/labels.jsonl under the harvested repo root."""
+    """Resolve where NEW label judgements are appended. Override wins (tests);
+    otherwise .scars/harvest-labels.jsonl under the harvested repo root. Never
+    writes to the pre-#106 location — see _labels_read_path for the read-side
+    fallback that keeps existing local label sets from being orphaned."""
     if LABELS_PATH_OVERRIDE is not None:
         return LABELS_PATH_OVERRIDE
-    return repo / "experiments" / "harvest" / "labels.jsonl"
+    return repo / ".scars" / "harvest-labels.jsonl"
+
+
+def _labels_read_path(repo: Path) -> Path:
+    """Resolve where labels are READ from. Same as _labels_path, except: if
+    the new path doesn't exist yet but the old (pre-#106) path does, read the
+    old path — so a local label set recorded before this change still counts
+    instead of silently reporting 'no labels'."""
+    if LABELS_PATH_OVERRIDE is not None:
+        return LABELS_PATH_OVERRIDE
+    new_path = _labels_path(repo)
+    old_path = repo / _OLD_LABELS_RELPATH
+    if not new_path.exists() and old_path.exists():
+        return old_path
+    return new_path
 
 
 def _harvest_candidate_ids(repo: Path) -> set[str]:
@@ -674,7 +815,7 @@ def _harvest_precision(repo: Path, args) -> int:
     flat = [c for cands in result.values() for c in cands]
     flat.sort(key=lambda c: c["score"], reverse=True)
 
-    labels = _load_labels(_labels_path(repo))
+    labels = _load_labels(_labels_read_path(repo))
     if not labels:
         print(f"no labels yet for {repo.name} — run "
               f"`scar harvest --label <id> keep|discard` to start "
@@ -814,14 +955,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("candidate", help="candidate filename (or unique substring)")
     p.add_argument("--reviewer", default="", help="human reviewer to add to authors")
 
-    p = _add(sub, "check", help="scars anchored to a path")
-    p.add_argument("path")
+    p = _add(sub, "check", help="scars anchored to a path (CI gate with --exit-code)")
+    p.add_argument("path", nargs="*", default=[], help="path(s) to check")
     p.add_argument("--content", default="", help="new code to test pattern anchors against")
+    p.add_argument("--diff", help="unified diff text, or path to a diff file — gates on "
+                                  "the union of changed files, like `inject --diff`")
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p.add_argument("--exit-code", action="store_true",
+                   help="exit 1 if any scar fires on the checked path(s)/diff (CI gate); "
+                        "default is always 0 (back-compat)")
 
     p = _add(sub, "why", help="history of pain for a path (any status)")
     p.add_argument("path")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    p = _add(sub, "stats", help="firing counts from the precheck hook's firing log")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = _add(sub, "challenge", help="dispute a scar (still fires, marked challenged)")
@@ -849,7 +998,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(raw score, no cross-type normalization)")
     p.add_argument("--label", nargs=2, metavar=("ID", "LABEL"), default=None,
                    help="record a curation judgement: <id> keep|discard "
-                        "(appends one line to experiments/harvest/labels.jsonl)")
+                        "(appends one line to .scars/harvest-labels.jsonl)")
     p.add_argument("--note", default="", help="with --label: free-text rationale")
     p.add_argument("--precision", action="store_true",
                    help="report precision@N of the ranking against labels.jsonl "
@@ -907,7 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
-        "agent": _cmd_agent,
+        "agent": _cmd_agent, "stats": _cmd_stats,
     }[args.command]
     return handler(args)
 
