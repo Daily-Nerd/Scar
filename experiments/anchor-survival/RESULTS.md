@@ -11,6 +11,20 @@ Run: 2026-06-09. Real refactor history, no synthetic events. Protocol pre-regist
 
 The baseline number is the headline: **every single path+line anchor died** on the same events the SCAR resolver survived at 95%. Line-number anchors are not a simplification — they are zero.
 
+## Shipped-mechanism re-validation (2026-07-01)
+
+The numbers above were a **prototype** (regex symbol extraction + exact-string fingerprint) that never imported `src/scar`. After shipping the real mechanism — tree-sitter `scar.symbols` (`resolve_symbol` / `fingerprint` / `jaccard`, issues #94/#98 anchors and #99/#100 drift) — the same corpus + protocol were re-run through the shipped API (`replay_shipped.py`, #101).
+
+| Test | Events | Shipped survival | Prototype | Baseline |
+|------|--------|------------------|-----------|----------|
+| Single-commit | 186 gated | **176/186 = 94.6%** | 94.8% | 0/197 = 0.0% |
+| Long-horizon (200-commit) | 133 gated | **123/133 = 92.5%** | 88.0% | n/a |
+
+- **The claim holds on shipped code**, not just the prototype. Single-commit matches within noise; long-horizon is *higher* because the shipped **Jaccard-similarity** disambiguation (argmax, no threshold) rescued all 6 cases the exact-hash prototype called AMBIGUOUS — the "use similarity, not equality" recommendation under *Secondary findings*, now empirically confirmed. The 10 FALSE-ORPHANs are the same single event (the `EnvSync`→`TripWire` class rename).
+- **The measurement caught a real shipped bug.** The first shipped run left 26 TSX anchors `shipped_unsupported`: `scar.symbols` could not resolve TS/JS `const X = ...` / `export const Foo = () => {}` (name nested on `variable_declarator`). Fixed in `fix(symbols): resolve TS/JS const/arrow symbols` before the numbers above; unsupported dropped 26→7.
+- **Disambiguation rule:** argmax Jaccard, tie-only AMBIGUOUS, **no similarity floor** (a floor would be an unvalidated tuned threshold — cf. #54). Long-horizon winning-Jaccard distribution: n=123, median 1.000, min 0.238 — the low tail is heavily-drifted-but-correctly-resolved symbols a floor would have wrongly killed.
+- **Pinned corpus:** TripWire rename commits `04d16600`, `b2c3a88c`, `d73f53b3`; Heimdall `69f3816c`. Long-horizon: TripWire `04d1660~1` → HEAD over `src/envsync/`. Local one-shot measurement (depends on sibling `../TripWire` / `../Heimdall` clones), not CI-reproducible; small sample — directional confirmation, not a tight point estimate.
+
 ## Resolution-path breakdown
 
 - Single-commit: 183/183 survived via git rename-map (step b). Git's own content-similarity rename detection carries everything across one commit — cheap and reliable.
@@ -31,4 +45,4 @@ The baseline number is the headline: **every single path+line anchor died** on t
 
 PASS at both horizons (94.8% single-commit, 88.0% at 200-commit zero-maintenance stress). The pre-registered kill condition (<60%) and inconclusive band (60-80%) were both cleared. Remaining engineering risks are now *named and bounded*: symbol renames (→ loud orphan + mechanical re-anchor) and generic-name ambiguity (→ fuzzy fingerprints, deeper qualification).
 
-Caveats: regex extraction not tree-sitter (production should do better, not worse); Python-dominant sample; single-repo long-horizon.
+Caveats: ~~regex extraction not tree-sitter~~ **RESOLVED** — re-validated on the shipped tree-sitter mechanism 2026-07-01 (94.6% / 92.5%, see *Shipped-mechanism re-validation* above); Python-dominant sample (TSX now included after the const/arrow fix); single-repo long-horizon.
