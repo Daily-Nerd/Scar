@@ -17,7 +17,11 @@ from pathlib import Path
 from rich_argparse import RichHelpFormatter
 
 from .lint import lint_text
-from .match import rank_for_edit, rank_matches_for_diff, rank_matches_for_edit
+from .match import (
+    rank_matches_for_diff,
+    rank_matches_for_edit,
+    rank_matches_for_paths,
+)
 from .model import parse_scar_text
 from .evidence import unreachable_evidence
 from .orphan import (
@@ -163,12 +167,12 @@ def _lint_rich(data: dict) -> None:
                   f"{len(data['unreachable_evidence'])} unreachable-evidence")
 
 
-def _check_rich(path: str, hits) -> None:
+def _check_rich(label: str, hits) -> None:
     from rich.panel import Panel
 
     console = output.console
     if not hits:
-        console.print(f"[green]no scars anchored to[/] {path}")
+        console.print(f"[green]no scars anchored to[/] {label}")
         return
     for s in hits:
         title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
@@ -399,28 +403,60 @@ def _cmd_promote(args) -> int:
 
 
 def _cmd_check(args) -> int:
-    store = _require_store(Path(args.path).resolve())
+    """CI gate for humans and CI (README). Accepts one or more paths, or a
+    --diff (same union-of-changed-files discovery as `inject --diff`, #106).
+    --exit-code turns a fire into a non-zero exit; without it, behavior is
+    unchanged (always 0) so existing callers never regress (back-compat)."""
+    diff_text = None
+    if args.diff:
+        try:
+            diff_text = Path(args.diff).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            # ValueError covers NUL-byte paths; mirror inject's fallback so a
+            # raw diff string on the command line works the same way.
+            diff_text = args.diff
+
+    if diff_text is not None:
+        store = _require_store()
+        label = "diff"
+    elif args.path:
+        store = _require_store(Path(args.path[0]).resolve())
+        label = ", ".join(args.path)
+    else:
+        print("check requires a path or --diff")
+        return 1
     if store is None:
         return 1
-    hits = rank_for_edit(store, Path(args.path).resolve(), args.content or "",
-                         top_k=args.top_k)
+
+    if diff_text is not None:
+        matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+    else:
+        matches = rank_matches_for_paths(store, args.path, args.content or "",
+                                         top_k=args.top_k)
+    hits = [m.scar for m in matches]
+
     data = {
-        "path": args.path,
+        "paths": [] if diff_text is not None else list(args.path),
         "scars": [{"type": s.type, "id": s.id, "severity": s.severity,
                    "confidence": s.confidence, "status": s.status, "title": s.title,
                    "body": s.body[:200]} for s in hits],
     }
+    if diff_text is None and len(args.path) == 1:
+        data["path"] = args.path[0]  # back-compat: single-path shape unchanged
 
     def plain():
         if not hits:
-            print(f"no scars anchored to {args.path}")
+            print(f"no scars anchored to {label}")
             return
         for s in hits:
             print(label_line(s))
             print("  " + s.body[:200].replace("\n", "\n  "))
 
     output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _check_rich(args.path, hits), plain=plain)
+                  tty=lambda: _check_rich(label, hits), plain=plain)
+
+    if getattr(args, "exit_code", False) and hits:
+        return 1
     return 0
 
 
@@ -814,11 +850,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("candidate", help="candidate filename (or unique substring)")
     p.add_argument("--reviewer", default="", help="human reviewer to add to authors")
 
-    p = _add(sub, "check", help="scars anchored to a path")
-    p.add_argument("path")
+    p = _add(sub, "check", help="scars anchored to a path (CI gate with --exit-code)")
+    p.add_argument("path", nargs="*", default=[], help="path(s) to check")
     p.add_argument("--content", default="", help="new code to test pattern anchors against")
+    p.add_argument("--diff", help="unified diff text, or path to a diff file — gates on "
+                                  "the union of changed files, like `inject --diff`")
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p.add_argument("--exit-code", action="store_true",
+                   help="exit 1 if any scar fires on the checked path(s)/diff (CI gate); "
+                        "default is always 0 (back-compat)")
 
     p = _add(sub, "why", help="history of pain for a path (any status)")
     p.add_argument("path")

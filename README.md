@@ -38,7 +38,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 - Scars are small structured Markdown files with YAML frontmatter, tracked in git, reviewed in PRs like code.
 - Each scar is **anchored** to code via paths, symbol names, and content fingerprints — not line numbers — so anchors survive refactors.
 - Enforcement happens **at the moment of action**:
-  - `scar check <path>` — CLI gate for humans and CI
+  - `scar check <path>... [--diff FILE] --exit-code` — CLI gate for humans and CI (non-zero exit when a scar fires)
   - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file
   - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.

@@ -897,6 +897,81 @@ def test_check_tty_renders_scar_content(repo, capsys, monkeypatch):
     assert "Why X failed" in out     # its body
 
 
+def test_check_default_no_exit_code_always_zero(repo, capsys):
+    # #106: back-compat — without --exit-code, check never fails CI even when
+    # a scar fires. Only --exit-code turns check into a gate.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "src/thing.py"]) == 0
+
+
+def test_check_exit_code_fires_returns_nonzero(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "src/thing.py", "--exit-code"]) == 1
+
+
+def test_check_exit_code_clean_path_returns_zero(repo, capsys):
+    init_scars(repo)
+    assert main(["check", "docs/x.md", "--exit-code"]) == 0
+
+
+def test_check_multiple_paths_union(repo, capsys):
+    # #106: check accepts several paths in one call and gates on their union.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["check", "docs/x.md", "src/thing.py", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["paths"] == ["docs/x.md", "src/thing.py"]
+    assert any(s["title"] == "Tried X, failed" for s in data["scars"])
+
+
+def test_check_multiple_paths_exit_code_fires_if_any_hits(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    (repo / "src").mkdir()
+    assert main(["check", "docs/x.md", "src/thing.py", "--exit-code"]) == 1
+
+
+def test_check_diff_mode_gates_on_union_of_changed_files(repo, capsys):
+    # #106: --diff mirrors inject --diff's file-discovery (match._diff_targets)
+    # so check can gate a whole PR diff, not just one path at a time.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["check", "--diff", diff, "--exit-code"]) == 1
+    out = capsys.readouterr().out
+    assert "Tried X, failed" in out
+
+
+def test_check_diff_mode_clean_returns_zero(repo, capsys):
+    init_scars(repo)
+    diff = """\
+diff --git a/docs/x.md b/docs/x.md
+--- a/docs/x.md
++++ b/docs/x.md
+@@ -0,0 +1 @@
++hello
+"""
+    assert main(["check", "--diff", diff, "--exit-code"]) == 0
+
+
 def test_why_json_lists_records(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
