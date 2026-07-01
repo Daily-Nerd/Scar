@@ -70,6 +70,26 @@ def test_bad_pattern_regex_is_error():
     assert any(f.level == "error" and "pattern" in f.message for f in findings)
 
 
+def test_nested_quantifier_pattern_is_error():
+    # A valid-but-pathological anchor: re.compile accepts (a+)+$ but search()
+    # backtracks catastrophically on adversarial input. Lint must reject it at
+    # the gate so it can never be promoted to an active (firing) scar.
+    bad = GOOD.replace("  - path: payments/retry.py",
+                       '  - pattern: "(a+)+$"')
+    findings = lint_text(bad)
+    assert any(f.level == "error" and "pattern" in f.message for f in findings)
+
+
+def test_normal_pattern_anchors_not_flagged_as_redos():
+    # Ordinary anchors must NOT false-positive: an escaped literal paren
+    # (redis\.get\() is not a group, and an alternation has no nested quantifier.
+    ok = GOOD.replace(
+        "  - path: payments/retry.py",
+        '  - pattern: "redis\\.get\\("\n  - pattern: "TODO|FIXME"')
+    findings = lint_text(ok)
+    assert not any(f.level == "error" for f in findings)
+
+
 def test_malformed_url_evidence_is_warning():
     bad = GOOD.replace(
         "evidence:\n  - commit: abc1234\n",

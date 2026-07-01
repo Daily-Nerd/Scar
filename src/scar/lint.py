@@ -12,6 +12,23 @@ from dataclasses import dataclass
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
 
 
+# A valid regex can still be a ReDoS weapon: a quantified group that is itself
+# quantified — (a+)+, (a*)*, (a+)*, (a*)+, ([a-z]+)* — backtracks catastrophically.
+# re.compile accepts it (the syntax is fine) so the plain compile-check below lets
+# it through; search() then hangs on adversarial input on the read hot path.
+# Reject the classic nested-quantifier forms at the gate so a pathological anchor
+# can never be promoted to an active (firing) scar. Conservative by construction:
+# the group must (a) open with a real, unescaped '(' — so an escaped literal paren
+# like redis\.get\( is ignored — (b) contain its own '+'/'*' quantifier, and
+# (c) be immediately followed by another '+'/'*'. Ordinary anchors
+# (redis\.get\(, output\.render\(, TODO|FIXME) never satisfy all three.
+_NESTED_QUANTIFIER = re.compile(r"(?<!\\)\((?:\?[:=!])?[^()]*[*+][^()]*\)[*+]")
+
+
+def _is_redos_prone(pattern: str) -> bool:
+    return bool(_NESTED_QUANTIFIER.search(pattern))
+
+
 @dataclass
 class Finding:
     level: str  # "error" | "warning"
@@ -44,6 +61,11 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             re.compile(pat)
         except re.error as exc:
             findings.append(Finding("error", f"invalid pattern anchor /{pat}/: {exc}"))
+            continue
+        if _is_redos_prone(pat):
+            findings.append(Finding(
+                "error", f"pathological pattern anchor /{pat}/: nested quantifier "
+                "risks catastrophic backtracking (ReDoS) — simplify the regex"))
     if not scar.evidence:
         findings.append(Finding("warning", "no evidence links — challengeable on sight"))
     for e in scar.evidence:
