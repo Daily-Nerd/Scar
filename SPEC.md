@@ -1,6 +1,12 @@
 # SCAR — Technical Specification (Draft 0.1)
 
-Status: concept draft. Everything here is falsifiable and expected to change under contact with a prototype.
+Status: largely shipped as of v0.9. Most of this spec describes working software
+(see the reference implementation in `src/scar/`). Two sections remain
+aspirational: **§2 symbol anchors** (only path + pattern anchors ship today;
+language-aware symbol anchors are planned — issue #94) and **§5 confidence
+dynamics** (confidence decay and `scar confirm` are not implemented — that
+cut-vs-build decision is tracked in issue #95). Those two areas aside, treat
+this document as a description of what the tool does, not a concept draft.
 
 ## 1. The scar file
 
@@ -75,7 +81,6 @@ Plus a **content fingerprint** (normalized-token hash of the protected region) u
 
 ```
 scar init                 # create .scars/, install git hooks, detect agent runtimes
-scar add                  # interactive authoring; --type, --from-commit, --from-pr
 scar check <path|diff>    # scars relevant to a path or staged diff; exit code for CI
 scar why <path>           # human-readable history of pain for a file/dir
 scar challenge <id>       # open a challenge: contest staleness with evidence
@@ -87,6 +92,11 @@ scar mcp                  # stdio MCP server for MCP-capable agents
 scar agent config <name>  # print setup snippets for supported agent runtimes
 ```
 
+An interactive `scar add` authoring command was specced but intentionally never
+built: copying `.scars/template.md` into `candidates/` plus `scar promote`
+covers authoring without a bespoke command (see ROADMAP Phase 1). Shipped
+extras not shown above: `lint`, `promote`, `orphan`, `hook`, `skill`.
+
 ## 4. Agent integration
 
 ### 4.1 Claude Code hook (reference implementation)
@@ -94,7 +104,7 @@ scar agent config <name>  # print setup snippets for supported agent runtimes
 `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit`:
 
 1. Resolve target path(s) from tool input.
-2. `scar inject --paths <targets> --topk 3` → ranked scars (severity × confidence × anchor match strength).
+2. `scar inject --path <target> --top-k 3` → ranked scars (severity × confidence × anchor match strength).
 3. Emit as `additionalContext`. Advisory: never blocks the tool call.
 
 Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X after error Y — author a `deadend` candidate?"* — the auto-authorship loop.
@@ -146,7 +156,7 @@ All harvest output is `candidates/`, never active. Precision over recall: a harv
 ## 8. Open questions
 
 1. Anchor resolution quality across languages — tree-sitter coverage is good, but symbol semantics differ; how bad is the long tail?
-2. Pattern anchors: regex is brittle, AST patterns are per-language work. Ship regex first and eat the false positives?
-3. Monorepos: `.scars/` per package vs root with path scoping?
-4. Should `scar inject` ship pre-ranked digests to stay under hook latency budgets (<150ms)? Likely: maintain a binary index under `.git/scar-index`, rebuilt incrementally.
-5. Authorship trust: agent-authored scars marked `authors: ["claude-code"]` — should they start at lower confidence until human-confirmed? (Probably yes.)
+2. **RESOLVED.** Pattern anchors ship as regex, diff-scoped (tested against edited paths and *new* content). AST patterns are deferred; regex-first was accepted and the false-positive rate is managed by the ReDoS/lint gate.
+3. **RESOLVED.** Monorepos use a single root `.scars/` with path scoping (nearest-ancestor discovery), not `.scars/` per package.
+4. **RESOLVED.** No pre-ranked binary index is needed: a live stdlib parse of `.scars/` ranks under the hook latency budget. Revisit only if a repo's scar count ever pushes past it.
+5. **OPEN** (tracked). Authorship trust: agent-authored scars marked `authors: ["claude-code"]` — should they start at lower confidence until human-confirmed? Still unimplemented; ties into the §5 confidence dynamics tracked in issue #95.

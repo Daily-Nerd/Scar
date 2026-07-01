@@ -21,7 +21,7 @@ Types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `rever
 
 ## Code expectations
 
-- **Zero runtime dependencies.** This is a hard constraint — hook startup must stay ~20ms. If your change needs a dependency, open an issue to discuss first.
+- **Stdlib-only hot-path.** The parser and the agent hook path must stay dependency-free so hook startup stays ~20ms. Human-facing CLI output may use `rich`/`rich-argparse`, but keep those out of the parser and hook path. Any new dependency: open an issue to discuss first.
 - **Tests required.** `uv run pytest` must pass; new behavior needs new tests.
 - **One parser.** All scar reading/writing goes through `src/scar/model.py`. Never parse frontmatter anywhere else — parser drift is how knowledge systems rot.
 - `scar lint` must stay clean (CI runs it).

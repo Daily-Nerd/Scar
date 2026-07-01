@@ -43,7 +43,7 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `created` | yes | ISO date | |
 | `authors` | yes | inline list | agents as `"claude-code"` etc.; reviewer appended at promotion |
 | `anchors` | yes, ≥1 | list of `- path:` and/or `- pattern:` | §4 |
-| `evidence` | recommended | list of `- commit:`/`- pr:`/`- incident:`/`- note:` | absent ⇒ challengeable on sight |
+| `evidence` | recommended | list of `- commit:`/`- pr:`/`- issue:`/`- incident:`/`- note:`/`- url:` | absent ⇒ challengeable on sight; `issue:`/`url:` are durable forms that survive squash-merge |
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
 | `expires.review_after` | recommended | ISO date | forces periodic freshness contact |
 | `status` | yes | `candidate` \| `active` \| `challenged` \| `archived` \| `orphaned` \| `template` | lifecycle §5 |

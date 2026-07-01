@@ -29,6 +29,15 @@ def _is_redos_prone(pattern: str) -> bool:
     return bool(_NESTED_QUANTIFIER.search(pattern))
 
 
+# The model extracts only `path`/`pattern` anchors; any other anchor key is
+# silently dropped, so a SPEC-following author who writes `- symbol:`, `- touch:`,
+# or `- breaks:` gets false protection (the scar never fires on that anchor).
+# Scan the raw frontmatter and warn — but only warn, never error: flagging these
+# as errors would break existing repos that already carry such anchors.
+_UNSUPPORTED_ANCHOR = re.compile(
+    r"^\s*-\s*(symbol|touch|breaks):", re.MULTILINE)
+
+
 @dataclass
 class Finding:
     level: str  # "error" | "warning"
@@ -56,6 +65,13 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding("error", f"invalid status '{scar.status}'"))
     if not scar.path_anchors and not scar.pattern_anchors:
         findings.append(Finding("error", "no anchors — scar protects nothing"))
+    # Scan the raw frontmatter for anchor keys the model cannot represent.
+    front = text.split("\n---", 1)[0]
+    for kind in dict.fromkeys(m.group(1) for m in _UNSUPPORTED_ANCHOR.finditer(front)):
+        findings.append(Finding(
+            "warning", f"unsupported anchor type '{kind}:' is ignored — the "
+            "parser only extracts path/pattern anchors, so this gives no "
+            "protection; use a path or pattern anchor instead"))
     for pat in scar.pattern_anchors:
         try:
             re.compile(pat)

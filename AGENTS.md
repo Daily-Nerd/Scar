@@ -56,5 +56,7 @@ as the `scar-authoring` skill.
 - Do not add AI attribution or `Co-Authored-By` lines to commits.
 - Use conventional commit messages.
 - Do not build after changes.
-- Keep runtime dependencies at zero unless there is a strong architectural
-  reason and tests/docs are updated with the tradeoff.
+- Keep the parser and hook hot-path stdlib-only. The human-facing CLI takes a
+  deliberate exception: `rich` + `rich-argparse` for formatted output. Any
+  further runtime dependency needs a strong architectural reason and
+  tests/docs updated with the tradeoff.

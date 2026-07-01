@@ -117,3 +117,35 @@ def test_issue_evidence_skips_url_check():
     )
     findings = lint_text(ok)
     assert findings == []
+
+
+def test_unsupported_symbol_anchor_is_warning():
+    # SPEC-following authors may write `- symbol:` anchors, but the parser only
+    # extracts path/pattern and silently drops the rest — false protection.
+    # Lint must warn (not error: don't break existing repos).
+    bad = GOOD.replace(
+        "  - path: payments/retry.py",
+        "  - path: payments/retry.py\n  - symbol: Foo")
+    findings = lint_text(bad)
+    assert any(f.level == "warning" and "symbol" in f.message for f in findings)
+    assert not any(f.level == "error" for f in findings)
+
+
+def test_unsupported_touch_and_breaks_anchors_are_warnings():
+    bad = GOOD.replace(
+        "  - path: payments/retry.py",
+        "  - path: payments/retry.py\n  - touch: a.py\n  - breaks: b.py")
+    findings = lint_text(bad)
+    assert any(f.level == "warning" and "touch" in f.message for f in findings)
+    assert any(f.level == "warning" and "breaks" in f.message for f in findings)
+    assert not any(f.level == "error" for f in findings)
+
+
+def test_supported_anchors_yield_no_unsupported_warning():
+    # A normal path/pattern scar must not trip the unsupported-anchor warning.
+    ok = GOOD.replace(
+        "  - path: payments/retry.py",
+        '  - path: payments/retry.py\n  - pattern: "redis"')
+    findings = lint_text(ok)
+    assert not any(
+        "unsupported" in f.message or "ignored" in f.message for f in findings)
