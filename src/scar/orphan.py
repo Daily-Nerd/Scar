@@ -18,6 +18,7 @@ from . import symbols
 from .evidence import _commit_shas, _git, _is_shallow, _reachable
 from .match import _path_anchor_matches, _pattern_anchor_matches
 from .model import Scar
+from .renames import RenameResolver
 from .store import ScarStore
 
 # Caller constants — used by the CLI batch that builds RepoContext from disk.
@@ -52,6 +53,7 @@ class OrphanFinding:
     scar_id: int | None
     dead_path_anchors: list[str]      # path anchors that resolved to nothing
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
+    renamed: dict[str, str] = field(default_factory=dict)  # dead path anchor -> git rename target (#109)
 
 
 @dataclass
@@ -75,6 +77,7 @@ class PartialRotFinding:
     scar_id: int | None
     dead_path_anchors: list[str]      # path anchors that resolved to nothing
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
+    renamed: dict[str, str] = field(default_factory=dict)  # dead path anchor -> git rename target (#109)
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +207,22 @@ def _dead_anchors(scar: Scar, ctx: RepoContext,
     return dead_paths, dead_patterns
 
 
-def detect_orphans(store: ScarStore, ctx: RepoContext) -> list[OrphanFinding]:
+def detect_orphans(store: ScarStore, ctx: RepoContext,
+                   repo: Path | None = None) -> list[OrphanFinding]:
     """Scan active + challenged scars and return those whose every anchor is dead.
 
     Read-only. Never writes status. Skips unparseable scar files silently.
+
+    *repo* (#109): when given, each finding's dead CONCRETE path anchors are
+    checked against git's whole-history rename graph. An anchor that resolves
+    to an unambiguous, currently-tracked rename target is reported in
+    finding.renamed — advisory only, does not change orphan classification.
+    Omitting *repo* (the default) skips rename detection entirely, same as
+    before this option existed.
     """
     findings: list[OrphanFinding] = []
+    resolver = RenameResolver(repo)
+    tracked = set(ctx.tracked_paths)
 
     for source, scar in store.firing():
         try:
@@ -224,6 +237,7 @@ def detect_orphans(store: ScarStore, ctx: RepoContext) -> list[OrphanFinding]:
                 scar_id=scar.id,
                 dead_path_anchors=dead_paths,
                 dead_pattern_anchors=dead_patterns,
+                renamed=resolver.resolve(dead_paths, tracked),
             ))
         except Exception:
             # store.firing() already skips ParseError; this guards anything unexpected
@@ -232,15 +246,20 @@ def detect_orphans(store: ScarStore, ctx: RepoContext) -> list[OrphanFinding]:
     return findings
 
 
-def detect_partial_rot(store: ScarStore, ctx: RepoContext) -> list[PartialRotFinding]:
+def detect_partial_rot(store: ScarStore, ctx: RepoContext,
+                       repo: Path | None = None) -> list[PartialRotFinding]:
     """Scan active + challenged scars and return those still firing on ≥1 live
     anchor but carrying ≥1 dead anchor (#35 partial rot).
 
     Mutually exclusive with detect_orphans by construction: an all-dead scar is
     an orphan (skipped here), a fully-live scar has no dead anchors (skipped here).
     Read-only. Never writes status — partial rot is advisory, fixed by re-anchoring.
+
+    *repo* (#109): same rename enrichment as detect_orphans — see its docstring.
     """
     findings: list[PartialRotFinding] = []
+    resolver = RenameResolver(repo)
+    tracked = set(ctx.tracked_paths)
 
     for source, scar in store.firing():
         try:
@@ -255,6 +274,7 @@ def detect_partial_rot(store: ScarStore, ctx: RepoContext) -> list[PartialRotFin
                 scar_id=scar.id,
                 dead_path_anchors=dead_paths,
                 dead_pattern_anchors=dead_patterns,
+                renamed=resolver.resolve(dead_paths, tracked),
             ))
         except Exception:
             continue

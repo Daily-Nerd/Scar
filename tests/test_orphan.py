@@ -486,3 +486,106 @@ def test_detect_symbol_drift_ignores_comment_only_change(tmp_path):
     store = ScarStore.discover(tmp_path)
     findings = detect_symbol_drift(store, tmp_path)
     assert findings == []  # comment-only → identical fingerprint → no drift
+
+
+# ---------------------------------------------------------------------------
+# Issue #109: rename-following for dead path anchors. detect_orphans and
+# detect_partial_rot accept an optional `repo` — when given, a dead CONCRETE
+# path anchor that git can resolve to an unambiguous, currently-tracked
+# rename target is reported via finding.renamed. Classification (orphan vs
+# partial-rot vs live) is unchanged; this only enriches the REPORT.
+# ---------------------------------------------------------------------------
+
+def _real_git_repo(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def _real_commit(tmp_path: Path, msg: str) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=tmp_path, check=True)
+
+
+def test_detect_orphans_reports_rename_target(tmp_path):
+    from scar.orphan import build_repo_context
+
+    _real_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "old.py").write_text("x = 1\n")
+    _real_commit(tmp_path, "add old.py")
+    subprocess.run(["git", "mv", "src/old.py", "src/new.py"],
+                   cwd=tmp_path, check=True)
+    _real_commit(tmp_path, "rename old to new")
+
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-x.deadend.md").write_text(
+        _scar(id=1, status="active", path_anchors=["src/old.py"]))
+    _real_commit(tmp_path, "add scar")
+
+    store = ScarStore.discover(tmp_path)
+    ctx = build_repo_context(tmp_path)
+    findings = detect_orphans(store, ctx, repo=tmp_path)
+    assert len(findings) == 1
+    assert findings[0].renamed == {"src/old.py": "src/new.py"}
+
+
+def test_detect_orphans_without_repo_arg_has_no_renamed(tmp_path):
+    """Back-compat: callers that don't pass repo= get no rename enrichment,
+    never a crash — existing 2-arg call sites keep working unmodified."""
+    store = _make_store(tmp_path, {
+        "0001-gone.deadend.md": _scar(id=1, status="active", path_anchors=["src/old_module/"]),
+    })
+    ctx = _make_repo_context([])
+    findings = detect_orphans(store, ctx)
+    assert len(findings) == 1
+    assert findings[0].renamed == {}
+
+
+def test_detect_orphans_deleted_not_renamed_has_empty_renamed(tmp_path):
+    from scar.orphan import build_repo_context
+
+    _real_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "gone.py").write_text("x = 1\n")
+    _real_commit(tmp_path, "add gone.py")
+    (tmp_path / "src" / "gone.py").unlink()
+    _real_commit(tmp_path, "delete gone.py")
+
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-x.deadend.md").write_text(
+        _scar(id=1, status="active", path_anchors=["src/gone.py"]))
+    _real_commit(tmp_path, "add scar")
+
+    store = ScarStore.discover(tmp_path)
+    ctx = build_repo_context(tmp_path)
+    findings = detect_orphans(store, ctx, repo=tmp_path)
+    assert len(findings) == 1
+    assert findings[0].renamed == {}
+
+
+def test_detect_partial_rot_reports_rename_target(tmp_path):
+    from scar.orphan import build_repo_context, detect_partial_rot
+
+    _real_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "live.py").write_text("x = 1\n")
+    (tmp_path / "src" / "old.py").write_text("y = 2\n")
+    _real_commit(tmp_path, "add files")
+    subprocess.run(["git", "mv", "src/old.py", "src/new.py"],
+                   cwd=tmp_path, check=True)
+    _real_commit(tmp_path, "rename old to new")
+
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-x.deadend.md").write_text(
+        _scar(id=1, status="active",
+              path_anchors=["src/live.py", "src/old.py"]))
+    _real_commit(tmp_path, "add scar")
+
+    store = ScarStore.discover(tmp_path)
+    ctx = build_repo_context(tmp_path)
+    rot = detect_partial_rot(store, ctx, repo=tmp_path)
+    assert len(rot) == 1
+    assert rot[0].renamed == {"src/old.py": "src/new.py"}
+    assert detect_orphans(store, ctx, repo=tmp_path) == []

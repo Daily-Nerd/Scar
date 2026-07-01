@@ -51,12 +51,21 @@ def _cmd_init(_args) -> int:
     return 0
 
 
+def _dead_path_text(finding, anchor: str) -> str:
+    """One dead path anchor's display text — 'renamed: old -> new' when git
+    resolved an unambiguous, currently-tracked rename target (#109), else the
+    bare anchor (plain dead, e.g. deleted-not-renamed)."""
+    target = finding.renamed.get(anchor)
+    return f"renamed: {anchor} -> {target}" if target else anchor
+
+
 def _dead_anchor_summary(finding) -> str:
     """Shared rendering of a finding's dead anchors — used by both orphan and
     partial-rot surfaces so the two never drift on how a dead anchor reads."""
     dead = []
     if finding.dead_path_anchors:
-        dead.append("paths: " + ", ".join(finding.dead_path_anchors))
+        dead.append("paths: " + ", ".join(
+            _dead_path_text(finding, p) for p in finding.dead_path_anchors))
     if finding.dead_pattern_anchors:
         dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
     return "; ".join(dead)
@@ -261,8 +270,8 @@ def _cmd_lint(args) -> int:
     if ctx is None:
         orphans, partial, reverse_hints, drift = [], [], [], []
     else:
-        orphans = detect_orphans(store, ctx)
-        partial = detect_partial_rot(store, ctx)
+        orphans = detect_orphans(store, ctx, repo=store.root)
+        partial = detect_partial_rot(store, ctx, repo=store.root)
         reverse_hints = [s for _f, s in store.parsed()
                          if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
         drift = detect_symbol_drift(store, store.root)
@@ -344,8 +353,8 @@ def _cmd_status(args) -> int:
     if ctx is None:
         detected, partial = [], []
     else:
-        detected = detect_orphans(store, ctx)
-        partial = detect_partial_rot(store, ctx)
+        detected = detect_orphans(store, ctx, repo=store.root)
+        partial = detect_partial_rot(store, ctx, repo=store.root)
     persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
 
     data = {
@@ -513,10 +522,10 @@ def _cmd_orphan(args) -> int:
         print("orphan: git unavailable (not a repository?) — cannot determine "
               "tracked files; orphan detection skipped")
         return 1
-    findings = detect_orphans(store, ctx)
+    findings = detect_orphans(store, ctx, repo=store.root)
 
     if not args.apply:
-        partial = detect_partial_rot(store, ctx)
+        partial = detect_partial_rot(store, ctx, repo=store.root)
         data = {
             "orphan_detected": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)}
                                 for of in findings],
