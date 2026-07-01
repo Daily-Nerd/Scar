@@ -124,6 +124,15 @@ def _comment_archaeology(repo: Path) -> list[dict]:
 # Weight constants: each constant is a "unit of confidence" in the heuristic.
 # Calibration note: all weights are priors based on reasoning, not empirical
 # labels. They should be tuned once a labels.jsonl set reaches ~50 entries.
+#
+# Regime scope (validated by n=2 labeled repos): this prior is calibrated for
+# code-heavy repos, where a revert is a genuine retreat and a deletion a genuine
+# retirement — there it shows positive precision@N lift. It ANTI-CORRELATES on
+# flap-heavy GitOps/config repos, where reverts/removals are routine deployment
+# churn, not deadends (negative lift through precision@20). Do NOT globally
+# reweight to fix the GitOps case: it would break the code case that ranks
+# correctly. Repo-class-aware scoring is deferred until there are enough labeled
+# repos per class to tune without overfitting. See SPEC.md §6 and issue #54.
 
 _PR_REF_RE = re.compile(r"#\d+")
 

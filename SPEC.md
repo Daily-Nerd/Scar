@@ -134,6 +134,8 @@ candidate ──confirm──▶ active ──challenge──▶ challenged ─�
 
 All harvest output is `candidates/`, never active. Precision over recall: a harvest that produces 50 junk candidates kills trust on day one.
 
+**Ranking is calibrated for code-heavy repos (out-of-regime on GitOps).** The signal type-prior — `revert > deleted > flapping > comment` — assumes reverts and component removals mark genuine deadends. That holds on application/library repos, where a revert is a real retreat and a deletion is a real retirement. It **inverts** on flap-heavy GitOps/config repos, where reverts and removals are routine deployment churn (an `A → B → A` config flap returns to origin, so it was never load-bearing; an app "death" is often a temporary teardown). Labeled measurement bears this out: positive lift across `precision@{5,10,20,30}` on a code-heavy repo, negative lift through `precision@20` on a GitOps repo. Treat harvest *ranking* on GitOps repos as unreliable — candidates are still surfaced, but the order carries little signal. A single prior cannot fit both regimes; repo-class-aware scoring is deferred until enough labeled repos exist per class to tune it without overfitting.
+
 ## 7. Non-goals (v0)
 
 - No hosted service, no accounts, no telemetry. A file format and a binary.
