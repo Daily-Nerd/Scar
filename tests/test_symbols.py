@@ -54,3 +54,37 @@ def test_resolve_any_respects_qualified_path_mismatch():
 
 def test_resolve_any_unavailable_or_unknown_ext_is_false():
     assert symbols.resolve_any(["helper"], "notes.txt", PY) is False
+
+
+PY2 = "class SessionStore:\n    def save(self):\n        x = 1\n        return x\n"
+PY2_CHANGED = "class SessionStore:\n    def save(self):\n        return compute(other())\n"
+PY2_COMMENT = "class SessionStore:\n    def save(self):\n        # note\n        x = 1\n        return x\n"
+
+
+def test_fingerprint_identical_source_same_shingles():
+    a = symbols.fingerprint("SessionStore.save", "s.py", PY2)
+    b = symbols.fingerprint("SessionStore.save", "s.py", PY2)
+    assert a is not None and a == b
+
+
+def test_fingerprint_comment_and_whitespace_insensitive():
+    base = symbols.fingerprint("SessionStore.save", "s.py", PY2)
+    commented = symbols.fingerprint("SessionStore.save", "s.py", PY2_COMMENT)
+    assert base == commented  # comments skipped → identical
+
+
+def test_fingerprint_changed_body_drifts():
+    base = symbols.fingerprint("SessionStore.save", "s.py", PY2)
+    changed = symbols.fingerprint("SessionStore.save", "s.py", PY2_CHANGED)
+    assert base != changed
+    assert 0.0 <= symbols.jaccard(base, changed) < 1.0
+
+
+def test_fingerprint_unresolved_is_none():
+    assert symbols.fingerprint("Nope", "s.py", PY2) is None
+
+
+def test_jaccard_identical_is_one_and_empty_pair_is_one():
+    s = frozenset({"a", "b"})
+    assert symbols.jaccard(s, s) == 1.0
+    assert symbols.jaccard(frozenset(), frozenset()) == 1.0

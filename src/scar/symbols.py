@@ -75,24 +75,57 @@ def _walk_defs(node):
         yield from _walk_defs(child)
 
 
-def _resolve_in_tree(root_node, anchor: str, rel_path: str) -> tuple[int, int] | None:
-    # qualified form: path::Symbol.member — the path must match this file.
+def _resolve_node(root_node, anchor: str, rel_path: str):
+    """The tree-sitter node for a symbol anchor, or None. Shares the qualified-
+    path + dotted-member logic with _resolve_in_tree."""
     name = anchor
     if "::" in anchor:
         qpath, name = anchor.split("::", 1)
         if qpath and qpath != rel_path:
             return None
     parts = name.split(".")
-    defs = dict(_walk_defs(root_node))
-    node = defs.get(parts[0])
-    # Walk dotted members (Class.method) into the matched subtree.
+    node = dict(_walk_defs(root_node)).get(parts[0])
     for part in parts[1:]:
         if node is None:
             return None
         node = dict(_walk_defs(node)).get(part)
+    return node
+
+
+def _resolve_in_tree(root_node, anchor: str, rel_path: str) -> tuple[int, int] | None:
+    node = _resolve_node(root_node, anchor, rel_path)
+    return (node.start_byte, node.end_byte) if node is not None else None
+
+
+def _type_sequence(node) -> list[str]:
+    """Pre-order node TYPES in the subtree, skipping comment nodes."""
+    out: list[str] = []
+    if node.type == "comment":
+        return out
+    out.append(node.type)
+    for child in node.children:
+        out.extend(_type_sequence(child))
+    return out
+
+
+def fingerprint(anchor: str, rel_path: str, source: str) -> frozenset[str] | None:
+    tree = _parse(rel_path, source)
+    if tree is None:
+        return None
+    node = _resolve_node(tree.root_node, anchor, rel_path)
     if node is None:
         return None
-    return (node.start_byte, node.end_byte)
+    seq = _type_sequence(node)
+    if len(seq) < 3:
+        return frozenset(seq)  # too small for 3-grams → raw type set
+    return frozenset(
+        f"{seq[i]}|{seq[i + 1]}|{seq[i + 2]}" for i in range(len(seq) - 2))
+
+
+def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    if not a and not b:
+        return 1.0
+    return len(a & b) / len(a | b)
 
 
 def _parse(rel_path: str, source: str):
