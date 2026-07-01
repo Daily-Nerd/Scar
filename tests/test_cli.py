@@ -938,6 +938,7 @@ def test_orphan_tty_renders_dead_anchor_detail(repo, capsys, monkeypatch):
     out = capsys.readouterr().out
     # the dead anchor's identifying detail must survive into the report so a
     # renderer that silently dropped the finding is caught.
+    assert "orphan-detected" in out
     assert "src/dead_dir/" in out       # the dead path anchor
     assert "1 orphan(s) detected" in out
 
