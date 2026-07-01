@@ -239,6 +239,64 @@ def test_comment_base_below_revert_and_deleted_bases():
     assert comment_score < score_candidate("deleted_component", plain_deleted)
 
 
+def test_score_candidate_pins_exact_weighted_values():
+    """CHARACTERIZATION (issue #92 gap #10): pin the CONCRETE score each candidate
+    type produces for a fixed input + fixed `now_months`. Unlike the sibling
+    `a > b` ordering tests (which survive ANY positive weight change), asserting
+    exact floats catches a re-tune of ANY weight constant or the recency term.
+
+    This makes NO claim that the resulting ranking is 'good' — issue #54 showed
+    the scorer's precision@N lift is repo-class-dependent (positive on code
+    repos, negative on flap-heavy GitOps repos), so a hard lift assertion would
+    be false. This only freezes the arithmetic so a silent reweight is caught.
+
+    now_months=24310 → 2025-10; every date below is within 12 months → recency
+    term is at its 1.0 max, so the recency contribution is pinned too.
+    """
+    nm = 24310  # 2025 * 12 + 10 == 2025-10
+
+    # revert: base 3.0 + PR bonus 1.5 + recency 1.0
+    assert score_candidate(
+        "revert",
+        {"commit": "aaa11111", "date": "2025-10-01", "subject": "Revert #42 deploy"},
+        now_months=nm,
+    ) == 5.5
+    # revert: base 3.0 + recency 1.0, no PR ref
+    assert score_candidate(
+        "revert",
+        {"commit": "bbb22222", "date": "2025-10-01", "subject": "Revert broken deploy"},
+        now_months=nm,
+    ) == 4.0
+    # deleted_component: base 2.5 + many-files bonus 1.0 (5 > 3) + recency 1.0
+    assert score_candidate(
+        "deleted_component",
+        {"component": "apps/old", "died": "2025-10-01", "files_deleted": 5},
+        now_months=nm,
+    ) == 4.5
+    # deleted_component: base 2.5 + recency 1.0, files_deleted 2 (not > 3)
+    assert score_candidate(
+        "deleted_component",
+        {"component": "apps/small", "died": "2025-10-01", "files_deleted": 2},
+        now_months=nm,
+    ) == 3.5
+    # flapping: base 2.0 + 0.5 * (3 - 1) oscillation bonus (no recency term)
+    assert score_candidate("flapping", {"oscillation_count": 3}, now_months=nm) == 3.0
+    # flapping: base 2.0, single cycle → no bonus
+    assert score_candidate("flapping", {"oscillation_count": 1}, now_months=nm) == 2.0
+    # comment: base 1.0 + high-specificity bonus 1.5
+    assert score_candidate(
+        "comment",
+        {"location": "src/x.py:1", "text": "DO NOT remove — load-bearing"},
+        now_months=nm,
+    ) == 2.5
+    # comment: base 1.0, generic text → no bonus
+    assert score_candidate(
+        "comment", {"location": "src/y.py:9", "text": "TODO cleanup"}, now_months=nm
+    ) == 1.0
+    # unknown type sorts last at 0.0
+    assert score_candidate("mystery", {"foo": "bar"}, now_months=nm) == 0.0
+
+
 @pytest.fixture
 def multi_history(tmp_path):
     """Richer history: 2 reverts (one with PR ref, one bare) to verify sort order."""
