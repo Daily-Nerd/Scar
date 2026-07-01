@@ -227,3 +227,25 @@ def test_symbol_match_reflects_file_edits_within_process(tmp_path):
     f.write_text("def unrelated():\n    return 0\n")
     os.utime(f, ns=(later, later))
     assert not rank_matches_for_edit(store, f, "")  # stale cache would still match
+
+
+# ---------------------------------------------------------------------------
+# Issue #109: rename detection is explicitly OFF the hot path. match.py (this
+# module) does the anchor scoring on every edit/diff; hooks.py wraps it for
+# the precheck hook. Neither may invoke git — rename-following (scar.renames,
+# used by scar.orphan) must stay confined to the explicit read commands.
+# Source-scan, not import-graph, so this fails loudly even if a transitive
+# import chain sneaks git access in via an innocuous-looking helper import.
+# ---------------------------------------------------------------------------
+
+def test_hot_path_modules_never_invoke_git():
+    import scar.hooks as hooks_mod
+    import scar.match as match_mod
+
+    for mod in (match_mod, hooks_mod):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        assert "import subprocess" not in src, f"{mod.__name__} must never invoke git"
+        assert "subprocess.run" not in src
+        assert "subprocess.Popen" not in src
+        for banned in (".orphan", ".renames", ".evidence"):
+            assert banned not in src, f"{mod.__name__} imports {banned} (git-touching module)"

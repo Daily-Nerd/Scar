@@ -602,6 +602,141 @@ def test_orphan_command_reports_partial_rot_count(tmp_path, monkeypatch, capsys)
 
 
 # ---------------------------------------------------------------------------
+# Issue #109: rename-following for orphaned path anchors.
+# ---------------------------------------------------------------------------
+
+RENAMED_ORPHAN_SCAR = """\
+---
+id: 9
+type: deadend
+title: Anchored to a path that was renamed
+severity: medium
+confidence: 0.8
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/old_home.py
+evidence:
+  - commit: abc1234
+status: active
+---
+
+The anchored file was git mv'd, not deleted.
+"""
+
+
+def _git_repo_with_renamed_anchor(tmp_path):
+    """Real git repo: src/old_home.py existed, then was `git mv`d to
+    src/new_home.py — the scar still anchors the pre-rename path."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "old_home.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add old_home.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "mv", "src/old_home.py", "src/new_home.py"],
+                   cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "rename to new_home.py"], cwd=tmp_path, check=True)
+    (tmp_path / ".scars" / "0009-renamed.deadend.md").write_text(RENAMED_ORPHAN_SCAR)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add scar"], cwd=tmp_path, check=True)
+
+
+def test_orphan_command_reports_rename_target(tmp_path, monkeypatch, capsys):
+    _git_repo_with_renamed_anchor(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    assert "#9" in out
+    assert "src/old_home.py" in out
+    assert "src/new_home.py" in out
+    assert "renamed" in out.lower()
+
+
+def test_lint_reports_rename_target(tmp_path, monkeypatch, capsys):
+    _git_repo_with_renamed_anchor(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "src/old_home.py" in out
+    assert "src/new_home.py" in out
+    assert "renamed" in out.lower()
+
+
+def test_status_reports_rename_target(tmp_path, monkeypatch, capsys):
+    _git_repo_with_renamed_anchor(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "src/old_home.py" in out
+    assert "src/new_home.py" in out
+    assert "renamed" in out.lower()
+
+
+def test_orphan_command_deleted_not_renamed_has_no_rename_text(repo, capsys):
+    """Deleted-not-renamed keeps the plain 'all anchors dead' wording — no
+    'renamed:' text ever appears for a scar with no rename target (#109)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    assert main(["orphan"]) == 0
+    out = capsys.readouterr().out
+    assert "#1" in out
+    assert "renamed" not in out.lower()
+
+
+def test_orphan_fix_renames_rewrites_anchor_line_and_unorphans(tmp_path, monkeypatch, capsys):
+    _git_repo_with_renamed_anchor(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / ".scars" / "0009-renamed.deadend.md"
+    before = f.read_text()
+
+    assert main(["orphan", "--fix-renames"]) == 0
+    out = capsys.readouterr().out
+    assert "#9" in out
+    assert "fixed" in out.lower()
+
+    after = f.read_text()
+    assert after != before
+    before_lines = before.split("\n")
+    after_lines = after.split("\n")
+    assert len(before_lines) == len(after_lines)
+    diffs = [(b, a) for b, a in zip(before_lines, after_lines) if b != a]
+    assert diffs == [("  - path: src/old_home.py", "  - path: src/new_home.py")]
+
+    # Re-run: the scar is no longer orphan-detected now that its anchor
+    # resolves to the (renamed, still-tracked) file.
+    assert main(["orphan"]) == 0
+    out2 = capsys.readouterr().out
+    assert "#9" not in out2
+    assert "no orphan-detected scars" in out2
+
+
+def test_orphan_fix_renames_leaves_unresolvable_scar_untouched(repo, capsys):
+    """No rename target at all (plain delete) → --fix-renames makes no edit
+    and says so; read-only stays the default without the flag."""
+    init_scars(repo)
+    f = repo / ".scars" / "0001-gone.deadend.md"
+    f.write_text(ORPHAN_SCAR)
+    before = f.read_text()
+    assert main(["orphan", "--fix-renames"]) == 0
+    out = capsys.readouterr().out
+    assert "#1" in out
+    assert "not fixed" in out.lower()
+    assert f.read_text() == before
+
+
+def test_orphan_fix_renames_is_opt_in_default_orphan_never_writes(tmp_path, monkeypatch):
+    _git_repo_with_renamed_anchor(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / ".scars" / "0009-renamed.deadend.md"
+    before = f.read_text()
+    assert main(["orphan"]) == 0  # no --fix-renames
+    assert f.read_text() == before
+
+
+# ---------------------------------------------------------------------------
 # Harvest ranking surfaces + label instrument (Issue #38, batch 2)
 # ---------------------------------------------------------------------------
 
