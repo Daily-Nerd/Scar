@@ -387,6 +387,27 @@ def _is_vendored(path: str) -> bool:
     return bool(_VENDORED_SEGMENTS & set(path.split("/")))
 
 
+# Lockfile basenames whose base64/hex integrity hashes false-match COMMENT_RE
+# (no \b per scar 0001, so 'XXX' matches as a substring inside a hash). Unlike
+# _in_scars/_is_vendored this is NOT excluded globally: lockfile version
+# *flapping* is genuine signal and must survive (#87 Part A) — only the
+# comments section is filtered, see harvest()'s _excluded() closure.
+_LOCKFILE_BASENAMES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+    "Cargo.lock", "go.sum", "uv.lock", "Gemfile.lock", "composer.lock",
+    "Pipfile.lock",
+})
+
+
+def _is_lockfile(path: str) -> bool:
+    """True if the candidate path's basename is a known lockfile (#87).
+
+    Matched on basename at any directory depth — a nested
+    frontend/package-lock.json is the same integrity-hash noise.
+    """
+    return path.rsplit("/", 1)[-1] in _LOCKFILE_BASENAMES
+
+
 def _annotate_and_sort(candidates: list[dict], signal_type: str,
                        now_months: int | None = None) -> list[dict]:
     """Add 'score' and 'id' fields to each candidate, then sort by score desc."""
@@ -412,7 +433,11 @@ def harvest(repo: Path) -> dict[str, list[dict]]:
     # empties the whole result set).
     def _excluded(section: str, c: dict) -> bool:
         path = _candidate_path(_SECTION_TYPES[section], c)
-        return _in_scars(path) or _is_vendored(path)
+        # Lockfile basenames are excluded from comments ONLY (#87 Part A):
+        # unlike .scars/vendored noise, lockfile version flapping is genuine
+        # signal in every other section and must survive.
+        return (_in_scars(path) or _is_vendored(path)
+                or (section == "comments" and _is_lockfile(path)))
 
     raw = {
         section: [c for c in candidates if not _excluded(section, c)]
