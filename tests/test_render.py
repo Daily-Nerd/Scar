@@ -72,3 +72,27 @@ def test_injection_context_warns_about_broken_files():
 
 def test_injection_context_empty_when_nothing_to_report():
     assert injection_context([], broken=[], scars_dir=Path(".scars")) == ""
+
+
+def test_demoted_scars_render_as_one_liners():
+    scar = _scar()
+    ctx = injection_context([], [], Path(".scars"),
+                            demoted=[(scar, "path-only match")])
+    assert scar.title in ctx            # label line present
+    assert "path-only match" in ctx            # reason visible
+    assert "scar why" in ctx                   # recovery hint
+    assert scar.body[:80] not in ctx    # body NOT included
+
+
+def test_demoted_counts_in_match_total():
+    scar = _scar()
+    ctx = injection_context([scar], [], Path(".scars"),
+                            demoted=[(scar, "repeat")])
+    assert "2 match(es)" in ctx
+
+
+def test_no_demoted_is_backward_compatible():
+    scar = _scar()
+    old = injection_context([scar], [], Path(".scars"))
+    new = injection_context([scar], [], Path(".scars"), demoted=None)
+    assert old == new

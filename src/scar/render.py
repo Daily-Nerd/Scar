@@ -20,14 +20,21 @@ def label_line(scar: Scar) -> str:
 
 
 def injection_context(scars: list[Scar], broken: list[Path],
-                      scars_dir: Path, max_body: int = MAX_BODY_CHARS) -> str:
-    """The additionalContext payload: matched blocks + broken-file warning."""
+                      scars_dir: Path, max_body: int = MAX_BODY_CHARS,
+                      demoted: list[tuple[Scar, str]] | None = None) -> str:
+    """The additionalContext payload: full matched blocks + demoted one-liners
+    + broken-file warning. Demotion is visible, never silent (principle 3):
+    a demoted scar keeps its label line plus the reason it was demoted."""
     parts = []
-    if scars:
+    demoted = demoted or []
+    total = len(scars) + len(demoted)
+    if total:
         blocks = [f"{label_line(s)}\n{s.body[:max_body]}" for s in scars]
+        blocks += [f"{label_line(s)} — {reason}; full record: `scar why` on the path"
+                   for s, reason in demoted]
         parts.append(
             "SCAR pre-edit check — negative knowledge anchored to code you are "
-            f"about to modify ({len(scars)} match(es)). Honor these unless the "
+            f"about to modify ({total} match(es)). Honor these unless the "
             "user explicitly overrides; full records in .scars/.\n\n"
             + "\n\n".join(blocks))
     if broken:
