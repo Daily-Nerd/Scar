@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -278,6 +279,108 @@ def test_agent_doctor_scar_binary_reports_resolved_path(tmp_path, monkeypatch):
     import scar.agent as agent
     monkeypatch.setattr(agent.shutil, "which", lambda name: "/usr/local/bin/scar")
     assert any("scar binary: /usr/local/bin/scar" in ln for ln in agent.doctor(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# plugin_resolve() (#113) — mirrors plugin/hooks/run.sh's resolution order
+# (PATH, then a fixed candidate-dir list) so `scar agent doctor` can report
+# what the *plugin* wrapper would resolve, distinct from find_scar() (which
+# is venv-aware and only serves `scar hook install`).
+# ---------------------------------------------------------------------------
+
+def test_plugin_resolve_prefers_path(monkeypatch):
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: "/usr/bin/scar")
+    assert agent.plugin_resolve() == "/usr/bin/scar"
+
+
+def test_plugin_resolve_falls_back_to_candidate_dir_when_path_empty(tmp_path, monkeypatch):
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cand = tmp_path / ".local" / "bin" / "scar"
+    cand.parent.mkdir(parents=True)
+    cand.write_text("#!/bin/sh\necho scar\n")
+    cand.chmod(0o755)
+    assert agent.plugin_resolve() == str(cand)
+
+
+def test_plugin_resolve_checks_candidate_dirs_in_declared_order(tmp_path, monkeypatch):
+    """Every dir in _PLUGIN_CANDIDATE_DIRS must be reachable — write to the
+    LAST candidate and confirm it's still found (proves the loop doesn't stop
+    early on a dir that merely doesn't exist)."""
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    last = agent._PLUGIN_CANDIDATE_DIRS[-1]
+    cand = Path(last.replace("~", str(tmp_path), 1))
+    cand.parent.mkdir(parents=True)
+    cand.write_text("#!/bin/sh\necho scar\n")
+    cand.chmod(0o755)
+    assert agent.plugin_resolve() == str(cand)
+
+
+def test_plugin_resolve_returns_none_when_unresolvable(tmp_path, monkeypatch):
+    import scar.agent as agent
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert agent.plugin_resolve() is None
+
+
+def test_agent_doctor_reports_plugin_resolution_when_found(tmp_path, monkeypatch):
+    import scar.agent as agent
+    monkeypatch.setattr(agent, "plugin_resolve", lambda: "/usr/bin/scar")
+    assert any("plugin PATH resolution: /usr/bin/scar" in ln for ln in agent.doctor(tmp_path))
+
+
+def test_agent_doctor_reports_plugin_unresolvable(tmp_path, monkeypatch):
+    import scar.agent as agent
+    monkeypatch.setattr(agent, "plugin_resolve", lambda: None)
+    assert any("plugin PATH resolution: not resolvable — plugin hooks will no-op" in ln
+               for ln in agent.doctor(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# plugin/hooks/run.sh (#113) — the wrapper plugin.json invokes instead of a
+# bare `scar`, so a missing binary is visible (session-notice) instead of a
+# silent forever no-op. Run with a scrubbed PATH + fake HOME to control
+# resolution end to end.
+# ---------------------------------------------------------------------------
+
+_RUN_SH = Path(__file__).resolve().parents[1] / "plugin" / "hooks" / "run.sh"
+
+
+def _run_wrapper(kind, home, path="/usr/bin:/bin"):
+    return subprocess.run(
+        ["/bin/sh", str(_RUN_SH), kind],
+        env={"HOME": str(home), "PATH": path},
+        input="{}", capture_output=True, text=True, timeout=30)
+
+
+def test_run_sh_unresolvable_session_notice_warns(tmp_path):
+    proc = _run_wrapper("session-notice", tmp_path)
+    assert proc.returncode == 0
+    out = json.loads(proc.stdout)
+    ctx = out["hookSpecificOutput"]
+    assert ctx["hookEventName"] == "SessionStart"
+    assert "scar-cli binary was not found" in ctx["additionalContext"]
+    assert "uv tool install scar-cli" in ctx["additionalContext"]
+
+
+def test_run_sh_unresolvable_precheck_is_silent(tmp_path):
+    proc = _run_wrapper("precheck", tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_run_sh_resolves_from_candidate_dir_and_execs(tmp_path):
+    fake = tmp_path / ".local" / "bin" / "scar"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\necho \"invoked hook $2\"\n")
+    fake.chmod(0o755)
+    proc = _run_wrapper("precheck", tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "invoked hook precheck"
 
 
 def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):

@@ -1,0 +1,50 @@
+name: "SCAR lint"
+description: "Run `scar lint` as a CI gate — fails on unparseable scars, optionally on orphan-detected scars (#106)."
+author: "Daily-Nerd"
+
+inputs:
+  fail-orphans:
+    description: "Exit non-zero when any scar is orphan-detected (passes --fail-orphans)."
+    required: false
+    default: 'true'
+  version:
+    description: "scar-cli version to install (PyPI version specifier, e.g. '0.11.0'). Empty = latest."
+    required: false
+    default: ''
+  args:
+    description: "Extra arguments appended verbatim to the `scar lint` invocation."
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install scar-cli
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          pip install "scar-cli==${{ inputs.version }}"
+        else
+          pip install scar-cli
+        fi
+
+    - name: scar lint
+      shell: bash
+      run: |
+        set -- lint
+        if [ "${{ inputs.fail-orphans }}" = "true" ]; then
+          set -- "$@" --fail-orphans
+        fi
+        if [ -n "${{ inputs.args }}" ]; then
+          set -- "$@" ${{ inputs.args }}
+        fi
+        scar "$@"
+
+branding:
+  icon: "shield"
+  color: "red"

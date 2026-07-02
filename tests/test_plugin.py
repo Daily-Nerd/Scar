@@ -41,17 +41,24 @@ def test_plugin_skill_mirror_is_byte_identical_to_canonical():
     assert mir_tmpl == can_tmpl
 
 
-def test_plugin_hooks_use_bare_path_resolved_scar_command():
+def test_plugin_hooks_invoke_resolver_wrapper():
+    """#113: hooks must go through the plugin-root wrapper, never a bare
+    `scar` — a bare command silently no-ops forever when the plugin
+    runtime's PATH misses the binary, and nobody is ever told."""
     manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text())
     expected = {
-        "PreToolUse": "scar hook precheck",
-        "SessionStart": "scar hook session-notice",
-        "Stop": "scar hook stop-drafter",
+        "PreToolUse": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh precheck",
+        "SessionStart": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh session-notice",
+        "Stop": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh stop-drafter",
     }
     for event, command in expected.items():
         commands = [h["command"]
                     for group in manifest["hooks"][event]
                     for h in group["hooks"]]
-        assert command in commands, f"{event} must use bare '{command}'"
-        for c in commands:
-            assert not c.startswith("/"), f"{event} command must be PATH-resolved, not absolute: {c}"
+        assert command in commands, f"{event} must invoke the wrapper: '{command}'"
+
+
+def test_plugin_wrapper_script_is_shipped_and_executable():
+    run_sh = ROOT / "plugin" / "hooks" / "run.sh"
+    assert run_sh.is_file(), "plugin/hooks/run.sh missing — plugin.json points at it"
+    assert run_sh.stat().st_mode & 0o111, "run.sh must be executable"
