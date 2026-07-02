@@ -1388,6 +1388,20 @@ diff --git a/src/thing.py b/src/thing.py
     assert data["violations"] == []
 
 
+def test_check_exit_code_trips_on_violation_even_with_zero_top_k(repo, capsys):
+    # Violations bypass --top-k truncation — even when scars list is empty,
+    # exit-code should trip if violations are found. This pins the
+    # `(hits or violations)` OR-branch at line 546 of cli.py.
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    capsys.readouterr()
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--exit-code", "--top-k", "0", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["scars"] == []  # --top-k 0 truncates all scars
+    assert len(data["violations"]) == 1  # but violation still present
+    assert data["violations"][0]["scar_id"] == 42
+
+
 def test_check_path_mode_json_has_no_violations_key(repo, capsys):
     # path (non-diff) mode is unchanged: no violations key at all.
     init_scars(repo)
