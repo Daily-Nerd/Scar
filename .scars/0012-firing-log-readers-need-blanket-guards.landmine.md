@@ -9,6 +9,7 @@ authors: ["claude-code", "kibukx"]
 anchors:
   - path: src/scar/gc.py
   - pattern: "firing[-_]?log"
+violation: "except \((KeyError|TypeError|ValueError|AttributeError|IndexError)[^)]*\)"
 evidence:
   - pr: 122
   - issue: 124
