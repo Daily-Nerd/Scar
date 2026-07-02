@@ -1,11 +1,11 @@
 ---
-id: 0
+id: 11
 type: landmine
 title: lint only re.compiles pattern anchors — pathological regex passes the gate then hangs search()
 severity: high
 confidence: 0.9
 created: 2026-06-30
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/lint.py
   - path: src/scar/match.py
@@ -16,7 +16,7 @@ evidence:
 expires:
   condition: "lint gains full regex-safety analysis OR the matcher runs on a hardened regex engine with a hard timeout"
   review_after: 2027-06-30
-status: candidate
+status: active
 ---
 
 A pattern anchor's regex is validated in `lint.py` by `re.compile()` ONLY — a
