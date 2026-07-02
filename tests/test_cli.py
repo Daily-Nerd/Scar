@@ -229,6 +229,18 @@ def test_agent_config_returns_setup_text_per_target(target, token):
     assert token in config(target)
 
 
+@pytest.mark.parametrize("target", ["codex", "cursor", "opencode", "windsurf"])
+def test_agent_config_includes_draft_check_block_for_every_target(target):
+    """#117: every runtime's setup text carries the reciprocal-duty +
+    draft-check block, runtime-neutral wording, same block for all four."""
+    from scar.agent import config
+    text = config(target)
+    assert "scar draft-check" in text
+    assert "Reciprocal duty" in text
+    assert ".scars/candidates/" in text
+    assert "status: candidate" in text
+
+
 def test_agent_config_unknown_target_raises_value_error():
     """The unknown-target path (agent.py:64) raises ValueError naming the input
     and the valid choices. This is the real error path — argparse's choices=
