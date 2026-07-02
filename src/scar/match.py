@@ -52,6 +52,18 @@ class ScarMatch:
         return d
 
 
+# Signal types that prove the EDIT is related to the scar (not merely the
+# file): a pattern hit inside the new content, or a symbol resolution.
+# Path-prefix and pattern-on-path matches only prove file proximity — they
+# render as one-line hints, not full bodies (precision engine).
+CONTENT_SIGNALS = frozenset({"content_pattern", "symbol"})
+
+
+def has_content_signal(match: ScarMatch) -> bool:
+    """True iff the match carries an edit-content signal — full-body tier."""
+    return bool(CONTENT_SIGNALS.intersection(match.matched_by))
+
+
 def _path_anchor_matches(anchor: str, rel_path: str) -> bool:
     """One path anchor vs one path: prefix match. THE shared rule — orphan
     detection imports this so detection and injection can never disagree."""

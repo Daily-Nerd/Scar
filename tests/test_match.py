@@ -1,6 +1,7 @@
 """Anchor matching + injection ranking — the read-side brain."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,7 @@ from scar import symbols
 from scar.match import (
     MAX_ANCHOR_SCAN,
     _pattern_anchor_matches,
+    has_content_signal,
     rank_for_edit,
     rank_matches_for_diff,
     rank_matches_for_edit,
@@ -250,3 +252,19 @@ def test_hot_path_modules_never_invoke_git():
         assert "subprocess.Popen" not in src
         for banned in (".orphan", ".renames", ".evidence", ".reanchor"):
             assert banned not in src, f"{mod.__name__} imports {banned} (git-touching module)"
+
+
+def test_content_pattern_is_content_signal():
+    assert has_content_signal(SimpleNamespace(matched_by=("path", "content_pattern")))
+
+
+def test_symbol_is_content_signal():
+    assert has_content_signal(SimpleNamespace(matched_by=("symbol",)))
+
+
+def test_path_only_is_not_content_signal():
+    assert not has_content_signal(SimpleNamespace(matched_by=("path", "path_pattern")))
+
+
+def test_empty_matched_by_is_not_content_signal():
+    assert not has_content_signal(SimpleNamespace(matched_by=()))
