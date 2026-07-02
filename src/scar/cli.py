@@ -1327,6 +1327,14 @@ def _cmd_agent(args) -> int:
 
 
 def _cmd_hook_lifecycle(args) -> int:
+    if getattr(args, "git", False):
+        from .installer import git_hook_install, git_hook_status, git_hook_uninstall
+        repo = Path.cwd()
+        if args.kind == "install":
+            return git_hook_install(repo, dry=args.dry_run)
+        if args.kind == "uninstall":
+            return git_hook_uninstall(repo, dry=args.dry_run)
+        return git_hook_status(repo)
     from .installer import install, status, uninstall
     if args.kind == "install":
         return install(dry=args.dry_run)
@@ -1470,6 +1478,10 @@ def build_parser() -> argparse.ArgumentParser:
                                     "precheck", "session-notice", "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
+    p.add_argument("--git", action="store_true",
+                   help="with install/uninstall/status: target this repo's "
+                        ".git/hooks/post-commit trigger for `scar draft-check` "
+                        "(#117) instead of Claude Code's settings.json")
 
     p = _add(sub, "skill", help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])

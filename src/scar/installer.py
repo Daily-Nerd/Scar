@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -153,6 +154,148 @@ def status() -> int:
         state = ("legacy (run install to migrate)" if legacy
                  else "installed" if ours else "not installed")
         print(f"{spec['kind']:16} {spec['event']:13} {state}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# git post-commit hook (#117) — the trigger for `scar draft-check`. Separate
+# lifecycle from the Claude Code hooks above: this writes into the REPO's
+# .git/hooks/, not the user's global ~/.claude/settings.json, and is invoked
+# per-repo (`scar hook install --git` from inside the repo), not once
+# globally.
+# ---------------------------------------------------------------------------
+
+GIT_HOOK_NAME = "post-commit"
+GIT_HOOK_MARKER = "draft-check --from-hook"
+
+
+def _repo_git_dir(repo: Path) -> Path | None:
+    """The repo's real .git dir (worktrees, submodules use a `.git` FILE
+    pointing elsewhere — `git rev-parse --git-dir` is the only correct way
+    to resolve it). None means *repo* is not inside a git repository."""
+    proc = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-dir"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    git_dir = Path(proc.stdout.strip())
+    return git_dir if git_dir.is_absolute() else (repo / git_dir)
+
+
+def _hooks_externally_managed(repo: Path) -> str | None:
+    """A short human-readable reason when this repo's hooks are managed by
+    something else (husky, lefthook, a custom core.hooksPath) — in which
+    case `scar hook install --git` must NOT touch .git/hooks/ (issue #117:
+    print manual instructions instead). None means safe to install."""
+    proc = subprocess.run(["git", "-C", str(repo), "config", "core.hooksPath"],
+                          capture_output=True, text=True)
+    configured = proc.stdout.strip()
+    if proc.returncode == 0 and configured:
+        return f"core.hooksPath is set to '{configured}'"
+    if (repo / ".husky").is_dir():
+        return "a .husky/ directory was found (husky-managed hooks)"
+    for name in ("lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"):
+        if (repo / name).is_file():
+            return f"{name} was found (lefthook-managed hooks)"
+    return None
+
+
+def git_hook_install(repo: Path, dry: bool = False) -> int:
+    scar_path = find_scar()
+    if not scar_path:
+        print("scar binary not found on PATH.")
+        if os.environ.get("VIRTUAL_ENV"):
+            print("Note: an active venv is ignored on purpose — hooks must "
+                  "bind to a stable install, not a venv shim (scar 0003).")
+        print("Install it first: uv tool install scar-cli")
+        return 1
+
+    line = f"{scar_path} draft-check --from-hook || true"
+
+    reason = _hooks_externally_managed(repo)
+    if reason:
+        print(f"[git-hook] skipped: {reason}.")
+        print("  Add this line to your managed post-commit hook yourself:")
+        print(f"    {line}")
+        return 0
+
+    git_dir = _repo_git_dir(repo)
+    if git_dir is None:
+        print(f"[git-hook] {repo} is not a git repository.")
+        return 1
+
+    hooks_dir = git_dir / "hooks"
+    hook_path = hooks_dir / GIT_HOOK_NAME
+
+    if hook_path.exists():
+        content = hook_path.read_text(encoding="utf-8")
+        if GIT_HOOK_MARKER in content:
+            print(f"[git-hook] {hook_path}: up-to-date")
+            return 0
+        print(f"[git-hook] {hook_path}: appending scar draft-check trigger")
+        if not dry:
+            new_content = content if content.endswith("\n") else content + "\n"
+            new_content += line + "\n"
+            hook_path.write_text(new_content, encoding="utf-8")
+        return 0
+
+    print(f"[git-hook] {hook_path}: create (post-commit)")
+    if not dry:
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        hook_path.write_text(f"#!/bin/sh\n{line}\n", encoding="utf-8")
+        hook_path.chmod(0o755)
+    return 0
+
+
+def git_hook_uninstall(repo: Path, dry: bool = False) -> int:
+    git_dir = _repo_git_dir(repo)
+    if git_dir is None:
+        print(f"[git-hook] {repo} is not a git repository.")
+        return 1
+
+    hook_path = git_dir / "hooks" / GIT_HOOK_NAME
+    if not hook_path.exists():
+        print(f"[git-hook] {hook_path}: not installed")
+        return 0
+
+    content = hook_path.read_text(encoding="utf-8")
+    if GIT_HOOK_MARKER not in content:
+        print(f"[git-hook] {hook_path}: no scar draft-check line found")
+        return 0
+
+    kept = [ln for ln in content.splitlines(keepends=True)
+           if GIT_HOOK_MARKER not in ln]
+    remaining = [ln for ln in kept if ln.strip() and not ln.strip().startswith("#!")]
+
+    if dry:
+        verb = "would remove the file (ours only)" if not remaining else "would remove our line"
+        print(f"[git-hook] {hook_path}: {verb}")
+        return 0
+
+    if not remaining:
+        hook_path.unlink()
+        print(f"[git-hook] {hook_path}: removed (the file was ours only)")
+    else:
+        hook_path.write_text("".join(kept), encoding="utf-8")
+        print(f"[git-hook] {hook_path}: removed our line")
+    return 0
+
+
+def git_hook_status(repo: Path) -> int:
+    reason = _hooks_externally_managed(repo)
+    if reason:
+        print(f"git-hook: externally managed ({reason})")
+        return 0
+    git_dir = _repo_git_dir(repo)
+    if git_dir is None:
+        print(f"git-hook: {repo} is not a git repository")
+        return 0
+    hook_path = git_dir / "hooks" / GIT_HOOK_NAME
+    if not hook_path.exists():
+        print(f"git-hook: not installed ({hook_path})")
+        return 0
+    content = hook_path.read_text(encoding="utf-8")
+    state = "installed" if GIT_HOOK_MARKER in content else "post-commit exists, not ours"
+    print(f"git-hook: {state} ({hook_path})")
     return 0
 
 
