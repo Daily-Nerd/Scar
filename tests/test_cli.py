@@ -1313,6 +1313,91 @@ diff --git a/docs/x.md b/docs/x.md
     assert main(["check", "--diff", diff, "--exit-code"]) == 0
 
 
+# ---------------------------------------------------------------------------
+# Task 5: `scar check --diff` surfaces violations (violation field, Task 4's
+# find_violations_for_diff feeding the CLI)
+# ---------------------------------------------------------------------------
+
+VIOLATION_SCAR = """\
+---
+id: 42
+type: fence
+title: No raw sleep calls
+severity: critical
+confidence: 0.9
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/
+evidence:
+  - commit: abc1234
+violation: "sleep\\((?:[0-6])\\)"
+status: active
+---
+
+Do not call sleep with a small value.
+"""
+
+DIFF_WITH_VIOLATION = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++time.sleep(2)
+"""
+
+
+def test_check_diff_violation_appears_in_json_exit_zero_without_flag(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    capsys.readouterr()
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["violations"] == [{
+        "scar_id": 42,
+        "title": "No raw sleep calls",
+        "path": "src/thing.py",
+        "excerpt": "time.sleep(2)",
+    }]
+
+
+def test_check_diff_violation_exit_code_returns_nonzero(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--exit-code"]) == 1
+
+
+def test_check_diff_scars_fire_but_no_violation_gives_empty_list(repo, capsys):
+    # #106-adjacent: a scar can fire on a diff via its path anchor without its
+    # (absent or non-matching) violation regex ever tripping — violations must
+    # report [] rather than being conflated with the scars list.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["check", "--diff", diff, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["scars"]  # the scar did fire (path anchor)
+    assert data["violations"] == []
+
+
+def test_check_path_mode_json_has_no_violations_key(repo, capsys):
+    # path (non-diff) mode is unchanged: no violations key at all.
+    init_scars(repo)
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["check", "src/thing.py", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "violations" not in data
+
+
 def test_why_json_lists_records(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)

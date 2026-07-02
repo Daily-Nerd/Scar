@@ -18,6 +18,7 @@ from rich_argparse import RichHelpFormatter
 
 from .lint import _is_redos_prone, lint_text
 from .match import (
+    find_violations_for_diff,
     has_content_signal,
     rank_matches_for_diff,
     rank_matches_for_edit,
@@ -183,18 +184,20 @@ def _lint_rich(data: dict) -> None:
                   f"{len(data['unreachable_evidence'])} unreachable-evidence")
 
 
-def _check_rich(label: str, hits) -> None:
+def _check_rich(label: str, hits, violations=()) -> None:
     from rich.panel import Panel
 
     console = output.console
     if not hits:
         console.print(f"[green]no scars anchored to[/] {label}")
-        return
-    for s in hits:
-        title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
-                 f"confidence: {s.confidence}")
-        console.print(Panel(s.body[:200].strip(), title=title,
-                            subtitle=f"[bold]{s.title}[/]", title_align="left"))
+    else:
+        for s in hits:
+            title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
+                     f"confidence: {s.confidence}")
+            console.print(Panel(s.body[:200].strip(), title=title,
+                                subtitle=f"[bold]{s.title}[/]", title_align="left"))
+    for v in violations:
+        console.print(f"[red]VIOLATION[/] scar #{v.scar.id} on {v.path}: {v.scar.title}")
 
 
 def _why_rich(rel: str, records) -> None:
@@ -504,9 +507,11 @@ def _cmd_check(args) -> int:
 
     if diff_text is not None:
         matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+        violations = find_violations_for_diff(store, diff_text)
     else:
         matches = rank_matches_for_paths(store, args.path, args.content or "",
                                          top_k=args.top_k)
+        violations = []
     hits = [m.scar for m in matches]
 
     data = {
@@ -515,21 +520,30 @@ def _cmd_check(args) -> int:
                    "confidence": s.confidence, "status": s.status, "title": s.title,
                    "body": s.body[:200]} for s in hits],
     }
+    if diff_text is not None:
+        # --diff mode only: violations is ALWAYS present ([] when none) — a
+        # separate, stronger signal from the ranked "scars" list (a scar can
+        # fire on path-anchor proximity alone without its violation regex
+        # ever matching the added content).
+        data["violations"] = [{"scar_id": v.scar.id, "title": v.scar.title,
+                                "path": v.path, "excerpt": v.excerpt} for v in violations]
     if diff_text is None and len(args.path) == 1:
         data["path"] = args.path[0]  # back-compat: single-path shape unchanged
 
     def plain():
         if not hits:
             print(f"no scars anchored to {label}")
-            return
-        for s in hits:
-            print(label_line(s))
-            print("  " + s.body[:200].replace("\n", "\n  "))
+        else:
+            for s in hits:
+                print(label_line(s))
+                print("  " + s.body[:200].replace("\n", "\n  "))
+        for v in violations:
+            print(f"VIOLATION scar #{v.scar.id} on {v.path}: {v.scar.title}")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _check_rich(label, hits), plain=plain)
+                  tty=lambda: _check_rich(label, hits, violations), plain=plain)
 
-    if getattr(args, "exit_code", False) and hits:
+    if getattr(args, "exit_code", False) and (hits or violations):
         return 1
     return 0
 
@@ -1422,8 +1436,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p.add_argument("--exit-code", action="store_true",
-                   help="exit 1 if any scar fires on the checked path(s)/diff (CI gate); "
-                        "default is always 0 (back-compat)")
+                   help="exit 1 if any scar fires on the checked path(s)/diff, or any "
+                        "violation tripped (CI gate); default is always 0 (back-compat)")
 
     p = _add(sub, "why", help="history of pain for a path (any status)")
     p.add_argument("path")
