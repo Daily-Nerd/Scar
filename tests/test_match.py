@@ -363,3 +363,12 @@ diff --git a/payments/y.py b/payments/y.py
 """
     hits = find_violations_for_diff(store, diff)
     assert hits == []
+
+
+def test_violation_regex_matches_across_line_boundaries(tmp_path):
+    # Violation regex spanning line boundary (foo\s+bar matching "foo\nbar")
+    # must match against the whole capped text, not per-line.
+    store = _write_violation_scar(tmp_path, "foo\\s+bar")
+    hits = find_violations(store, "payments/test.py", "foo\nbar\n")
+    assert len(hits) == 1
+    assert hits[0].excerpt == "foo"

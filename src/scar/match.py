@@ -240,16 +240,23 @@ class Violation:
 
 def _violation_excerpt(pattern: str, text: str) -> str | None:
     """First line of `text` matching `pattern`, trimmed to ~120 chars.
-    Invalid regex -> None (lint's job; never crash the read path — mirrors
-    _pattern_anchor_matches)."""
+    Searches the whole capped text for the pattern, then extracts the line
+    containing the match. Invalid regex -> None (lint's job; never crash the
+    read path — mirrors _pattern_anchor_matches)."""
     try:
         rx = re.compile(pattern, re.IGNORECASE)
     except re.error:
         return None
-    for line in text[:MAX_ANCHOR_SCAN].splitlines():
-        if rx.search(line):
-            return line[:120]
-    return None
+    capped = text[:MAX_ANCHOR_SCAN]
+    m = rx.search(capped)
+    if m is None:
+        return None
+    # Extract the line containing the match
+    line_start = capped.rfind("\n", 0, m.start()) + 1
+    line_end = capped.find("\n", m.start())
+    if line_end == -1:
+        line_end = len(capped)
+    return capped[line_start:line_end][:120]
 
 
 def _violations_for_target(firing: list, root: Path, rel_path: str,
