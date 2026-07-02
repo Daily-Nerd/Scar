@@ -145,6 +145,17 @@ def test_truncate_firing_log_malformed_lines_counted_not_parsed(tmp_path):
     assert log.read_text(encoding="utf-8").splitlines() == lines[-2:]
 
 
+def test_truncate_to_zero_empties_log(tmp_path):
+    """max_entries=0 should empty the log entirely."""
+    log = tmp_path / "firing-log.jsonl"
+    log.write_text('{"a": 1}\n{"b": 2}\n{"c": 3}\n', encoding="utf-8")
+
+    dropped = gc.truncate_firing_log(log, 0)
+
+    assert dropped == 3
+    assert log.read_text(encoding="utf-8") == ""
+
+
 def test_truncate_firing_log_atomic_no_temp_file_left(tmp_path):
     log = tmp_path / "firing-log.jsonl"
     lines = [f'{{"n": {i}}}' for i in range(20)]
