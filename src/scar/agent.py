@@ -44,6 +44,31 @@ Configure a local MCP server named "scar" with:
 }
 """
 
+# Appended to every target's setup text below (#117) — runtime-neutral on
+# purpose, same block regardless of MCP vs shell-only integration. Mirrors
+# the reciprocal-duty wording hooks.py's session_notice() already puts in
+# front of Claude Code (hooks.py ~132-141): same contract, same paths, so a
+# human copying this into AGENTS.md gets the identical convention no matter
+# which runtime reads it.
+_AGENTS_MD_BLOCK = """\
+
+Add this to AGENTS.md (or your runtime's always-loaded instructions file):
+
+## SCAR — negative knowledge
+
+Reciprocal duty: when you abandon an approach (deadend), keep intentional-
+looking weirdness (fence), or discover non-obvious coupling (landmine),
+record it. COPY .scars/template.md (YAML frontmatter is mandatory — scars
+without it never fire), write to .scars/candidates/<slug>.md with
+status: candidate, and never write directly into .scars/ — only a human
+reviewer promotes.
+
+Run `scar draft-check` before ending a session. It reads recent git history
+(revert language, actual reverts/resets, high-churn files) and tells you
+whether this session shows abandonment signals worth writing up — no
+transcript access required, so it works the same for every runtime.
+"""
+
 # target -> setup text; adding a runtime is one entry here, no logic change
 CONFIGS = {
     "codex": """\
@@ -72,6 +97,11 @@ Add this to opencode.jsonc:
 """,
     "windsurf": "Cascade: " + _MCP_SERVERS_SNIPPET,
 }
+
+# Every target carries the same reciprocal-duty + draft-check block (#117):
+# one place to extend, applied uniformly, instead of appending it four times
+# above where a fifth runtime could forget it.
+CONFIGS = {target: text + _AGENTS_MD_BLOCK for target, text in CONFIGS.items()}
 
 TARGETS = tuple(sorted(CONFIGS))
 

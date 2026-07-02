@@ -113,6 +113,37 @@ scar mcp
 It exposes `scar_query`, `scar_why`, and `scar_draft`. Drafting writes only to
 `.scars/candidates/`; active enforcement still requires human promotion.
 
+## Authoring from any agent
+
+`stop_drafter` (the Claude Code `Stop` hook) is transcript-based, so it only
+exists inside Claude Code. `scar draft-check` closes that gap for every other
+runtime — Codex, Cursor, opencode, a human at a terminal — with the same
+prompt, driven entirely by git evidence instead of a transcript: revert
+language in commit messages, actual `git revert`/`reset --hard` history, and
+files churned across recent commits. Advisory only — it never blocks
+anything and always exits 0.
+
+**With the hook (any git repo):**
+
+```bash
+scar hook install --git      # writes .git/hooks/post-commit
+scar hook status --git
+scar hook uninstall --git
+```
+
+Every commit runs `scar draft-check --from-hook`, throttled to at most one
+nudge per hour per repo so a commit-heavy session isn't nagged repeatedly. If
+hooks are already managed elsewhere (`core.hooksPath`, husky, lefthook),
+install prints the one line to add manually instead of touching anything.
+
+**Without the hook:** run `scar draft-check` yourself (or have the agent run
+it) before ending a session — `scar agent config <target>` and AGENTS.md both
+carry the instruction to do so. When it trips, follow the same two-branch
+contract as `stop_drafter`: write a short candidate scar, or — if nothing was
+actually abandoned — log one line to `.scars/candidates/fp-log.txt` tagged
+`draft-check`, so false-trigger data from git evidence stays separate from
+transcript-based false triggers.
+
 ## CI / pre-commit
 
 SCAR ships a `.pre-commit-hooks.yaml` (repo root) for one-line adoption via
