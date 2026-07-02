@@ -1530,8 +1530,8 @@ def test_stats_aggregates_counts_and_never_fired(repo, capsys, monkeypatch):
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["total_firings"] == 3
-    assert {"id": 1, "count": 2} in data["per_scar"]
-    assert {"id": 2, "count": 1} in data["per_scar"]
+    assert {"id": 1, "count": 2, "violations": 0} in data["per_scar"]
+    assert {"id": 2, "count": 1, "violations": 0} in data["per_scar"]
     assert data["most_fired"] == 1
     assert data["last_fired"] == "2026-06-11T09:00:00"
     assert data["never_fired"] == []
@@ -1580,6 +1580,44 @@ def test_stats_no_advisory_below_thresholds(repo, capsys, monkeypatch):
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["advisories"] == []
+
+
+def test_stats_counts_violations_from_log(repo, capsys, monkeypatch):
+    """Violation records in the firing log contribute violation_ids counts
+    to per_scar entries; a scar can have violations without firing."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 2
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1 == {"id": 1, "count": 2, "violations": 1}
+
+
+def test_stats_violations_default_to_zero_no_crash(repo, capsys, monkeypatch):
+    """Old-format firing logs with no violation records do not crash;
+    violations field defaults to 0."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["violations"] == 0
 
 
 # ---------------------------------------------------------------------------

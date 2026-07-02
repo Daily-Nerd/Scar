@@ -228,7 +228,10 @@ def _stats_rich(data: dict) -> None:
         t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
         t.add_column("id", justify="right"); t.add_column("firings", justify="right")
         for e in data["per_scar"]:
-            t.add_row(f"#{e['id']}", str(e["count"]))
+            row = f"#{e['id']}", str(e["count"])
+            if e.get("violations", 0) > 0:
+                row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
+            t.add_row(*row)
         console.print(t)
     if data["never_fired"]:
         console.print(f"[yellow]never fired:[/] "
@@ -236,8 +239,8 @@ def _stats_rich(data: dict) -> None:
     for adv in data.get("advisories", []):
         console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
                       f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
-    console.print("[dim]note: firing counts only — whether the agent honored an "
-                  "injected scar is not tracked (unobservable from inside the hook)[/]")
+    console.print("[dim]note: firing + violation counts — whether the agent honored an "
+                  "injected scar is unobservable from inside the hook[/]")
 
 
 def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
@@ -954,14 +957,24 @@ def _cmd_stats(args) -> int:
                 continue
 
     counts: dict[int, int] = {}
+    violations: dict[int, int] = {}
     last_fired = None
     for rec in records:
         for sid in rec.get("scar_ids", []):
             counts[sid] = counts.get(sid, 0) + 1
+        try:
+            for vid in rec.get("violation_ids", []):
+                violations[vid] = violations.get(vid, 0) + 1
+        except (TypeError, AttributeError):
+            # Guard: violation_ids might be garbage in corrupted records
+            pass
         ts = rec.get("ts")
         if ts and (last_fired is None or ts > last_fired):
             last_fired = ts
-    per_scar = sorted(({"id": sid, "count": c} for sid, c in counts.items()),
+    # Merge counts and violations: include all scars that fired OR violated
+    all_scar_ids = set(counts.keys()) | set(violations.keys())
+    per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
+                       for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
     most_fired = per_scar[0]["id"] if per_scar else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
@@ -990,7 +1003,10 @@ def _cmd_stats(args) -> int:
     def plain():
         print(f"scar stats: {data['total_firings']} firing(s) recorded ({log_path})")
         for e in per_scar:
-            print(f"  #{e['id']}: {e['count']} fire(s)")
+            line = f"  #{e['id']}: {e['count']} fire(s)"
+            if e.get("violations", 0) > 0:
+                line += f", violations: x{e['violations']}"
+            print(line)
         if most_fired is not None:
             print(f"  most-fired: #{most_fired}")
         if last_fired:
@@ -1000,8 +1016,8 @@ def _cmd_stats(args) -> int:
         for adv in data["advisories"]:
             print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
                   f"firings — {adv['note']}")
-        print("  note: firing counts only — whether the agent honored an "
-              "injected scar is not tracked (unobservable from inside the hook)")
+        print("  note: firing + violation counts — whether the agent honored an "
+              "injected scar is unobservable from inside the hook)")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_rich(data), plain=plain)
