@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.0](https://github.com/Daily-Nerd/Scar/compare/v0.12.0...v0.13.0) (2026-07-02)
+
+
+### Features
+
+* precision engine — tiered rendering, repetition collapse, over-broad advisory ([#122](https://github.com/Daily-Nerd/Scar/issues/122)) ([df0e900](https://github.com/Daily-Nerd/Scar/commit/df0e900a730f01960df6ac470c454197613505d7))
+* violation field — post-edit compliance tripwire ([#127](https://github.com/Daily-Nerd/Scar/issues/127)) ([8d1223f](https://github.com/Daily-Nerd/Scar/commit/8d1223fba0cd8818b2009c3df5b268874ca14d62))
+
+
+### Bug Fixes
+
+* **gc:** --max-firings 0 now actually empties the firing log ([#125](https://github.com/Daily-Nerd/Scar/issues/125)) ([66a72be](https://github.com/Daily-Nerd/Scar/commit/66a72be2abbb43f59f7f3dbca1965e37ceb8796e))
+
 ## [0.12.0](https://github.com/Daily-Nerd/Scar/compare/v0.11.0...v0.12.0) (2026-07-02)
 
 
