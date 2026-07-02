@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "scar hook precheck",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh precheck",
             "timeout": 10
           }
         ]
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "scar hook session-notice",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh session-notice",
             "timeout": 10
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "scar hook stop-drafter",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh stop-drafter",
             "timeout": 15
           }
         ]
