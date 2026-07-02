@@ -6,6 +6,7 @@ contract, single library code path is the point.
 
 import io
 import json
+import time
 
 import pytest
 
@@ -306,3 +307,83 @@ def test_firing_log_records_demoted_ids(repo, monkeypatch, capsys):
     rec = json.loads(log[-1])
     assert rec["demoted_ids"] == [1]
     assert rec["scar_ids"] == [1]
+
+
+# --- repetition collapse (4h cooldown) ---
+
+SECOND_FENCE = """\
+---
+id: 2
+type: fence
+title: Retry needs backoff
+severity: critical
+confidence: 0.9
+created: 2026-06-09
+authors: [mara]
+anchors:
+  - path: payments/
+evidence:
+  - commit: bbb2222
+status: active
+---
+
+Do not retry without backoff.
+"""
+
+
+def _precheck_ctx(repo, monkeypatch, capsys, new_string):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": new_string}})
+    assert main(["hook", "precheck"]) == 0
+    return out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_recent_full_body_showing_collapses_to_one_liner(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    first = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in first        # first: full body
+    second = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Sleep is 7s" in second                   # still visible
+    assert "already shown" in second                 # collapse reason
+    assert "Do not lower the sleep." not in second   # body collapsed
+
+
+def _write_log_line(repo, ts, scar_ids, demoted_ids):
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": ts, "repo": str(repo),
+           "target": str(repo / "payments" / "retry.py"),
+           "scar_ids": scar_ids, "count": len(scar_ids),
+           "demoted_ids": demoted_ids}
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def test_stale_showing_does_not_collapse(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    stale = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 5 * 3600))
+    _write_log_line(repo, stale, [1], [])
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx          # 5h old — outside window
+
+
+def test_demoted_showing_does_not_suppress_later_content_match(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    fresh = time.strftime("%Y-%m-%dT%H:%M:%S")
+    _write_log_line(repo, fresh, [1], [1])           # shown only as one-liner
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx          # one-liner != seen body
+
+
+def test_mixed_full_and_demoted_showing_logs_strict_subset(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    (repo / ".scars" / "0002-retry.fence.md").write_text(SECOND_FENCE)
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx           # scar 1: content signal, full body
+    assert "Retry needs backoff" in ctx               # scar 2: label visible
+    assert "Do not retry without backoff." not in ctx  # scar 2: body demoted (path-only)
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["scar_ids"] == [1, 2]
+    assert rec["demoted_ids"] == [2]
+    assert set(rec["demoted_ids"]) < set(rec["scar_ids"])

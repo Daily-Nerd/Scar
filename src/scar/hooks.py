@@ -43,6 +43,37 @@ def firing_log_path() -> Path:
     return _state_dir() / "firing-log.jsonl"
 
 
+COOLDOWN_SECONDS = 4 * 3600  # fixed constant — deliberately not a config knob
+
+
+def _recently_fired(repo: str, target: str) -> set[int]:
+    """Scar ids shown FULL-BODY for this repo+target within the cooldown.
+    One-liner (demoted) showings don't count — a later content-signal match
+    still deserves the full body. Best-effort: any failure returns empty set
+    (module contract: never fail or delay the edit)."""
+    try:
+        lines = firing_log_path().read_text(encoding="utf-8").splitlines()[-200:]
+    except Exception:
+        return set()
+    cutoff = time.time() - COOLDOWN_SECONDS
+    recent: set[int] = set()
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("repo") != repo or rec.get("target") != target:
+            continue
+        try:
+            ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))
+        except (KeyError, ValueError, OverflowError):
+            continue
+        if ts >= cutoff:
+            recent.update(set(rec.get("scar_ids", []))
+                          - set(rec.get("demoted_ids", [])))
+    return recent
+
+
 def _read_payload() -> dict | None:
     """Hook payload from stdin; None means 'tty — hint printed, do nothing'."""
     if sys.stdin.isatty():
@@ -103,9 +134,15 @@ def precheck() -> int:
         new_content = " ".join(str(tool_input.get(k, ""))
                                for k in ("content", "new_string", "new_source"))
         matches = rank_matches_for_edit(store, Path(target), new_content)
-        full = [m.scar for m in matches if has_content_signal(m)]
-        demoted = [(m.scar, "path-only match")
-                   for m in matches if not has_content_signal(m)]
+        recent = _recently_fired(str(store.root), target)
+        full, demoted = [], []
+        for m in matches:
+            if not has_content_signal(m):
+                demoted.append((m.scar, "path-only match"))
+            elif m.scar.id is not None and m.scar.id in recent:
+                demoted.append((m.scar, "already shown in the last 4h"))
+            else:
+                full.append(m.scar)
         context = injection_context(full, store.broken(), store.scars_dir,
                                     demoted=demoted)
         hits = [m.scar for m in matches]
