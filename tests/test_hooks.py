@@ -85,6 +85,75 @@ def test_precheck_never_crashes_on_garbage_stdin(repo, monkeypatch, capsys):
     assert out_json(capsys) is None
 
 
+VIOLATION_FENCE = r"""---
+id: 9
+type: fence
+title: Sleep cap must stay under 6s
+severity: critical
+confidence: 0.9
+created: 2026-06-09
+authors: [mara]
+anchors:
+  - path: payments/
+evidence:
+  - commit: ddd4444
+violation: "sleep\((?:[0-6])\)"
+status: active
+---
+
+Do not lower the sleep.
+"""
+
+
+# --- posttool (PostToolUse violation tripwire) ---
+
+def test_posttool_emits_warning_on_violation(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "posttool"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Sleep cap must stay under 6s" in ctx
+    assert "reconsider before proceeding" in ctx
+    assert "scar why" in ctx
+
+
+def test_posttool_silent_when_no_violation(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(9)"}})
+    assert main(["hook", "posttool"]) == 0
+    assert out_json(capsys) is None
+
+
+def test_posttool_logs_violation_record(repo, monkeypatch, capsys, tmp_path):
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "posttool"]) == 0
+    rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
+    assert rec["violation_ids"] == [9]
+    assert rec["count"] == 1
+    assert rec["repo"] == str(repo)
+    assert "target" in rec and "ts" in rec
+
+
+def test_posttool_never_crashes_on_garbage_stdin(repo, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json at all"))
+    assert main(["hook", "posttool"]) == 0
+    assert out_json(capsys) is None
+
+
+def test_posttool_silent_outside_scars_repo(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".git").mkdir()
+    feed(monkeypatch, {"tool_input": {"file_path": str(tmp_path / "x.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "posttool"]) == 0
+    assert out_json(capsys) is None
+
+
 def test_hook_on_interactive_tty_explains_instead_of_hanging(repo, monkeypatch, capsys):
     """Found live: `scar hook precheck` in a terminal blocks forever waiting
     for stdin. A tty invocation must print a hint and exit immediately."""

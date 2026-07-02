@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from .match import has_content_signal, rank_matches_for_edit
+from .match import find_violations, has_content_signal, rank_matches_for_edit
 from .render import injection_context
 from .store import ScarStore
 
@@ -118,6 +118,64 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             fh.write(json.dumps(record) + "\n")
     except Exception:
         pass
+
+
+def _log_violation_firing(store: ScarStore, target: str, violations: list) -> None:
+    """Append one line to the firing log when posttool actually flags a
+    violation. Best-effort only, mirroring _log_firing: this must NEVER raise
+    or delay the caller, so any failure (permissions, disk full, bad
+    SCAR_STATE_DIR, whatever) is swallowed here rather than propagated."""
+    try:
+        log_path = firing_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "repo": str(store.root),
+            "target": target,
+            "violation_ids": [v.scar.id for v in violations],
+            "count": len(violations),
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def posttool() -> int:
+    payload = _read_payload()
+    if payload is None:
+        return 0
+    tool_input = payload.get("tool_input", {})
+    target = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not target:
+        return 0
+    try:
+        store = ScarStore.discover(Path(target))
+        if store is None:
+            return 0
+        new_content = " ".join(str(tool_input.get(k, ""))
+                               for k in ("content", "new_string", "new_source"))
+        try:
+            rel_path = str(Path(target).resolve().relative_to(store.root))
+        except ValueError:
+            return 0
+        violations = find_violations(store, rel_path, new_content)
+        if not violations:
+            return 0
+        lines = [
+            f"[{v.scar.id}] {v.scar.title}: the edit you just made matches "
+            "this scar's violation pattern — reconsider before proceeding; "
+            f"run `scar why {v.path}` for the full record"
+            for v in violations
+        ]
+        _emit("PostToolUse", "\n".join(lines))
+        _log_violation_firing(store, target, violations)
+    except Exception:
+        # Contract (module docstring): a hook must NEVER fail or delay the
+        # user's action. Fail OPEN on any unexpected error — emit nothing
+        # rather than raise.
+        return 0
+    return 0
 
 
 def precheck() -> int:
@@ -272,5 +330,5 @@ def stop_drafter() -> int:
     return 0
 
 
-HANDLERS = {"precheck": precheck, "session-notice": session_notice,
-            "stop-drafter": stop_drafter}
+HANDLERS = {"precheck": precheck, "posttool": posttool,
+            "session-notice": session_notice, "stop-drafter": stop_drafter}

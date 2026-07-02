@@ -1511,7 +1511,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
-                                    "precheck", "session-notice", "stop-drafter"])
+                                    "precheck", "posttool", "session-notice",
+                                    "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
     p.add_argument("--git", action="store_true",
