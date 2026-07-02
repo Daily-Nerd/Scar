@@ -48,7 +48,7 @@ def test_fresh_install_writes_shebang_and_invocation(git_repo, capsys):
     assert hook.exists()
     content = hook.read_text(encoding="utf-8")
     assert content.startswith("#!/bin/sh\n")
-    assert f"{FAKE_SCAR} draft-check --from-hook || true" in content
+    assert f"{FAKE_SCAR} draft-check --from-hook 2>/dev/null || true" in content
 
 
 def test_fresh_install_makes_hook_executable(git_repo):

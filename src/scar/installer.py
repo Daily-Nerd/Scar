@@ -209,7 +209,11 @@ def git_hook_install(repo: Path, dry: bool = False) -> int:
         print("Install it first: uv tool install scar-cli")
         return 1
 
-    line = f"{scar_path} draft-check --from-hook || true"
+    # 2>/dev/null: a stale binary (installed hook, older global scar without
+    # draft-check) must not spray usage errors on every commit — nudges ride
+    # stdout, breakage stays silent. `|| true`: post-commit advisory, never
+    # fail the commit. Found live during #117 smoke testing.
+    line = f"{scar_path} draft-check --from-hook 2>/dev/null || true"
 
     reason = _hooks_externally_managed(repo)
     if reason:
