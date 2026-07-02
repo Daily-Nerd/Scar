@@ -1604,6 +1604,49 @@ def test_stats_counts_violations_from_log(repo, capsys, monkeypatch):
     assert per_scar_1 == {"id": 1, "count": 2, "violations": 1}
 
 
+def test_stats_most_fired_excludes_zero_firing_scar(repo, capsys, monkeypatch):
+    """A scar that only has a violation record (never actually fired) must
+    not be reported as most_fired while simultaneously appearing in
+    never_fired — that is contradictory."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["most_fired"] is None
+    assert 1 in data["never_fired"]
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["count"] == 0
+    assert per_scar_1["violations"] == 1
+
+
+def test_stats_rejects_string_violation_ids(repo, capsys, monkeypatch):
+    """A malformed record with violation_ids as a string (not a list) must be
+    skipped entirely, not iterated character-by-character into phantom
+    per_scar entries with string ids."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": "12"},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    ids = [e["id"] for e in data["per_scar"]]
+    assert "1" not in ids
+    assert "2" not in ids
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["count"] == 1
+    assert per_scar_1["violations"] == 0
+
+
 def test_stats_violations_default_to_zero_no_crash(repo, capsys, monkeypatch):
     """Old-format firing logs with no violation records do not crash;
     violations field defaults to 0."""

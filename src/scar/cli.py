@@ -962,12 +962,14 @@ def _cmd_stats(args) -> int:
     for rec in records:
         for sid in rec.get("scar_ids", []):
             counts[sid] = counts.get(sid, 0) + 1
-        try:
-            for vid in rec.get("violation_ids", []):
-                violations[vid] = violations.get(vid, 0) + 1
-        except (TypeError, AttributeError):
-            # Guard: violation_ids might be garbage in corrupted records
-            pass
+        vids = rec.get("violation_ids", [])
+        if isinstance(vids, list):
+            # Guard: violation_ids might be garbage in corrupted records —
+            # skip the whole record unless it's a list, and skip any
+            # non-int element within it, rather than coercing or crashing.
+            for vid in vids:
+                if isinstance(vid, int):
+                    violations[vid] = violations.get(vid, 0) + 1
         ts = rec.get("ts")
         if ts and (last_fired is None or ts > last_fired):
             last_fired = ts
@@ -976,7 +978,8 @@ def _cmd_stats(args) -> int:
     per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
                        for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
-    most_fired = per_scar[0]["id"] if per_scar else None
+    fired_scars = [e for e in per_scar if e["count"] > 0]
+    most_fired = fired_scars[0]["id"] if fired_scars else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
     never_fired = sorted(firing_ids - set(counts))
 
@@ -1017,7 +1020,7 @@ def _cmd_stats(args) -> int:
             print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
                   f"firings — {adv['note']}")
         print("  note: firing + violation counts — whether the agent honored an "
-              "injected scar is unobservable from inside the hook)")
+              "injected scar is unobservable from inside the hook")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_rich(data), plain=plain)
