@@ -233,6 +233,38 @@ def _stats_rich(data: dict) -> None:
                   "injected scar is not tracked (unobservable from inside the hook)[/]")
 
 
+def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = output.console
+    verb, fverb = ("would remove", "would drop") if data["dry_run"] else ("removed", "dropped")
+    console.print(Panel.fit(
+        f"{verb} {data['removed_markers']} stale marker(s) (older than {days}d)\n"
+        f"{fverb} {data['dropped_firings']} firing-log line(s) (kept newest {max_firings})\n"
+        f"[dim]{state_dir}[/]",
+        title="scar gc" + (" (dry-run)" if data["dry_run"] else "")))
+
+    candidates = data["candidates"]
+    if candidates:
+        t = Table(title="Candidates pending review (oldest first)",
+                  show_edge=False, expand=False)
+        t.add_column("name"); t.add_column("age (days)", justify="right")
+        for c in candidates:
+            t.add_row(c["name"], str(c["age_days"]))
+        console.print(t)
+        console.print("[dim]review with `scar promote <path>` or delete rejected files[/]")
+    else:
+        console.print("[dim]0 candidates pending review[/]")
+
+    fp_log = data["fp_log"]
+    if fp_log["present"]:
+        console.print(f"[dim]fp-log.txt: {fp_log['lines']} line(s), {fp_log['size']} byte(s) "
+                      "— drafter-precision instrument data, not auto-cleaned[/]")
+    else:
+        console.print("[dim]fp-log.txt: not present[/]")
+
+
 def _orphan_rich(findings, partial) -> None:
     console = output.console
     if not findings:
@@ -943,6 +975,60 @@ def _cmd_stats(args) -> int:
     return 0
 
 
+def _cmd_gc(args) -> int:
+    """Clean machine state (~/.claude/scar-state/ or SCAR_STATE_DIR), report
+    repo hygiene. Posture (#115): machine state is regenerable, so gc ACTS on
+    it (deletes stale drafted-* markers, truncates firing-log.jsonl); .scars/
+    is human-gated, so gc only ever REPORTS on it — candidate ages, fp-log.txt
+    presence — never writes there (same ethos as promote/reanchor)."""
+    from .hooks import _state_dir, firing_log_path
+    from . import gc as gc_mod
+
+    store = _require_store()
+    if store is None:
+        return 1
+
+    dry_run = args.dry_run
+    state_dir = _state_dir()
+    removed_markers = gc_mod.prune_markers(state_dir, args.days, dry_run=dry_run)
+    dropped_firings = gc_mod.truncate_firing_log(
+        firing_log_path(), args.max_firings, dry_run=dry_run)
+    candidates = gc_mod.candidate_ages(store)
+    fp_log = gc_mod.fp_log_report(store)
+
+    data = {
+        "removed_markers": len(removed_markers),
+        "dropped_firings": dropped_firings,
+        "dry_run": dry_run,
+        "candidates": candidates,
+        "fp_log": fp_log,
+    }
+
+    def plain():
+        verb = "would remove" if dry_run else "removed"
+        fverb = "would drop" if dry_run else "dropped"
+        print(f"scar gc: {verb} {data['removed_markers']} stale marker(s) "
+              f"(older than {args.days}d) in {state_dir}")
+        print(f"  firing log: {fverb} {dropped_firings} line(s) "
+              f"(kept newest {args.max_firings})")
+        print(f"  {len(candidates)} candidate(s) pending review")
+        for c in candidates:
+            print(f"    {c['name']} — {c['age_days']}d old")
+        if candidates:
+            print("    review with `scar promote <path>` or delete rejected files")
+        if fp_log["present"]:
+            print(f"  fp-log.txt: {fp_log['lines']} line(s), {fp_log['size']} byte(s) "
+                  "— drafter-precision instrument data, not auto-cleaned")
+        else:
+            print("  fp-log.txt: not present")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _gc_rich(data, days=args.days,
+                                       max_firings=args.max_firings, state_dir=state_dir),
+                  plain=plain)
+    return 0
+
+
 def _cmd_inject(args) -> int:
     """Machine mode for hooks: JSON additionalContext or silence."""
     start = Path(args.path).resolve() if args.path else Path.cwd()
@@ -1262,6 +1348,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "stats", help="firing counts from the precheck hook's firing log")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    p = _add(sub, "gc", help="clean machine state (markers, firing log); "
+                             "report .scars/ hygiene (never touches .scars/)")
+    p.add_argument("--days", type=int, default=7,
+                   help="delete drafted-* markers older than this many days (default 7)")
+    p.add_argument("--max-firings", type=int, default=10000,
+                   help="truncate firing-log.jsonl to the newest N entries (default 10000)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="report what would be removed/truncated; change nothing")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     p = _add(sub, "challenge", help="dispute a scar (still fires, marked challenged)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why the scar may no longer hold")
@@ -1359,7 +1455,7 @@ def main(argv: list[str] | None = None) -> int:
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
         "reanchor": _cmd_reanchor,
-        "agent": _cmd_agent, "stats": _cmd_stats,
+        "agent": _cmd_agent, "stats": _cmd_stats, "gc": _cmd_gc,
     }[args.command]
     return handler(args)
 

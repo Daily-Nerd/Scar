@@ -1836,3 +1836,168 @@ def test_reanchor_json_output_matches_plain_facts(tmp_path, monkeypatch, capsys)
     assert p["dead_anchor"] == "src/old_module.py"
     assert p["proposed_anchor"] == "src/new_module.py"
     assert p["confidence"] == "high"
+
+
+# ---------------------------------------------------------------------------
+# scar gc (#115) — acts on machine state (state dir: markers, firing log),
+# reports read-only on repo state (.scars/: candidates, fp-log.txt).
+# ---------------------------------------------------------------------------
+
+def _touch_marker(state_dir, name, *, age_days):
+    import os
+    import time
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    p = state_dir / name
+    p.write_text("")
+    mtime = time.time() - age_days * 86400
+    os.utime(p, (mtime, mtime))
+    return p
+
+
+def test_gc_requires_scars_dir(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["gc"]) == 1
+    assert "scar init" in capsys.readouterr().out
+
+
+def test_gc_json_shape_empty_state(repo, capsys, monkeypatch):
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    assert main(["gc", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == {
+        "removed_markers": 0,
+        "dropped_firings": 0,
+        "dry_run": False,
+        "candidates": [],
+        "fp_log": {"present": False, "size": 0, "lines": 0},
+    }
+
+
+def test_gc_removes_old_markers_and_reports_count(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    old = _touch_marker(state, "drafted-old", age_days=10)
+    fresh = _touch_marker(state, "drafted-fresh", age_days=1)
+
+    assert main(["gc", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["removed_markers"] == 1
+    assert not old.exists()
+    assert fresh.exists()
+
+
+def test_gc_respects_days_flag(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    marker = _touch_marker(state, "drafted-3d", age_days=3)
+
+    assert main(["gc", "--days", "1", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["removed_markers"] == 1
+    assert not marker.exists()
+
+
+def test_gc_dry_run_marks_true_and_removes_nothing(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    old = _touch_marker(state, "drafted-old", age_days=10)
+    _write_firing_log(state, [{"ts": "t", "repo": "r", "target": "x",
+                               "scar_ids": [], "count": 0} for _ in range(20)])
+
+    assert main(["gc", "--max-firings", "5", "--dry-run", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["dry_run"] is True
+    assert data["removed_markers"] == 1
+    assert data["dropped_firings"] == 15
+    assert old.exists()  # dry-run: nothing actually deleted
+    lines = (state / "firing-log.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 20  # dry-run: log untouched
+
+
+def test_gc_truncates_firing_log_respects_max_firings_flag(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    _write_firing_log(state, [{"ts": "t", "repo": "r", "target": "x",
+                               "scar_ids": [], "count": 0} for _ in range(30)])
+
+    assert main(["gc", "--max-firings", "10", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["dropped_firings"] == 20
+    lines = (state / "firing-log.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 10
+
+
+def test_gc_json_reports_candidate_ages_and_fp_log(repo, capsys, monkeypatch):
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    cand = repo / ".scars" / "candidates"
+    (cand / "a.md").write_text(CANDIDATE)
+    fp_log = cand / "fp-log.txt"
+    fp_log.write_text("2026-06-10 false trigger\n")
+
+    assert main(["gc", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["candidates"] == [{"name": "a.md", "age_days": 0.0}]
+    assert data["fp_log"] == {"present": True, "size": fp_log.stat().st_size, "lines": 1}
+
+
+def test_gc_plain_output_reports_removals_nudge_and_fp_log_note(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    _touch_marker(state, "drafted-old", age_days=10)
+    cand = repo / ".scars" / "candidates"
+    (cand / "a.md").write_text(CANDIDATE)
+    (cand / "fp-log.txt").write_text("2026-06-10 false trigger\n")
+
+    assert main(["gc"]) == 0
+    out = capsys.readouterr().out
+    assert "1" in out  # removed marker count
+    assert "a.md" in out
+    assert "scar promote" in out
+    assert "drafter-precision" in out
+    assert "not auto-cleaned" in out
+
+
+def test_gc_dry_run_plain_output_marks_would_not_did(repo, capsys, monkeypatch):
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    _touch_marker(state, "drafted-old", age_days=10)
+
+    assert main(["gc", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "would" in out.lower()
+
+
+def test_gc_scars_dir_never_touched(repo, capsys, monkeypatch):
+    """Structural guarantee at the CLI boundary, mirroring test_gc.py's
+    hash-before/after: running `scar gc` end to end must not change any
+    byte in .scars/."""
+    import hashlib
+
+    init_scars(repo)
+    state = repo / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    _touch_marker(state, "drafted-old", age_days=10)
+    cand = repo / ".scars" / "candidates"
+    (cand / "a.md").write_text(CANDIDATE)
+    (cand / "fp-log.txt").write_text("2026-06-10 false trigger\n")
+
+    def _hash_dir(path):
+        out = {}
+        for f in sorted(path.rglob("*")):
+            if f.is_file():
+                out[str(f.relative_to(path))] = hashlib.sha256(f.read_bytes()).hexdigest()
+        return out
+
+    before = _hash_dir(repo / ".scars")
+    assert main(["gc"]) == 0
+    after = _hash_dir(repo / ".scars")
+    assert before == after
