@@ -205,6 +205,37 @@ diff --git a/src/thing.py b/src/thing.py
     assert "Tried X" in payload["hookSpecificOutput"]["additionalContext"]
 
 
+def _patterned_scar(id: int, title: str) -> str:
+    return _active_scar(id, title).replace(
+        "anchors:\n  - path: src/",
+        'anchors:\n  - path: src/\n  - pattern: "forbidden_call"')
+
+
+def test_inject_demotes_path_only_match(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-s1.deadend.md").write_text(_active_scar(1, "Scar one"))
+    assert main(["inject", "--path", "src/thing.py", "--content", "x = 1"]) == 0
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "Scar one" in ctx                 # label line stays
+    assert "path-only match" in ctx          # reason visible
+    assert "Body." not in ctx                # body demoted
+
+
+def test_inject_diff_mode_full_body_on_content_hit(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-s1.deadend.md").write_text(_patterned_scar(1, "Scar one"))
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++forbidden_call()
+"""
+    assert main(["inject", "--diff", diff]) == 0
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "Body." in ctx                    # full body on content signal
+
+
 def test_agent_config_prints_opencode_mcp_snippet(repo, capsys):
     assert main(["agent", "config", "opencode"]) == 0
     out = capsys.readouterr().out

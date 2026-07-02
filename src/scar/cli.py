@@ -18,6 +18,7 @@ from rich_argparse import RichHelpFormatter
 
 from .lint import _is_redos_prone, lint_text
 from .match import (
+    has_content_signal,
     rank_matches_for_diff,
     rank_matches_for_edit,
     rank_matches_for_paths,
@@ -1105,8 +1106,11 @@ def _cmd_inject(args) -> int:
                                         args.content or "", top_k=top_k)
     else:
         matches = []
-    context = injection_context([m.scar for m in matches], store.broken(),
-                                store.scars_dir)
+    full = [m.scar for m in matches if has_content_signal(m)]
+    demoted = [(m.scar, "path-only match")
+               for m in matches if not has_content_signal(m)]
+    context = injection_context(full, store.broken(), store.scars_dir,
+                                demoted=demoted)
     if context:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": args.hook_event, "additionalContext": context}}))
