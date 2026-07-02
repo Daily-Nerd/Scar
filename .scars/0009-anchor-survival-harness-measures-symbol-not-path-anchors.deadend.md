@@ -10,6 +10,7 @@ anchors:
   - path: experiments/anchor-survival/replay_shipped.py
   - path: experiments/anchor-survival/replay.py
   - path: src/scar/renames.py
+violation: "(scar\.renames|from scar import renames)"
 evidence:
   - issue: 109
   - issue: 102

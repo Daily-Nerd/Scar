@@ -39,3 +39,11 @@ that the scar parses. Prefer a `path:` anchor when the target is a file or dir;
 path anchors do not go through regex escaping and cannot self-match. If you must
 use a regex with escapes, test it against tracked content excluding the scar's
 own file before trusting it.
+
+Measured clarification (2026-07-02, arming violation tripwires): the frontmatter
+parser is NOT a YAML parser — `pattern:` and `violation:` values pass through
+RAW, with only the surrounding quotes stripped. Nothing collapses; nothing
+un-escapes. Write the regex exactly as it must execute (`\b` stays `\b`,
+`\(` stays `\(`), and doubling backslashes "for YAML" is itself the
+over-escape this scar warns about. Verify a `violation:` regex with a
+synthetic `scar check --diff` that proves both the fire AND the no-fire case.
