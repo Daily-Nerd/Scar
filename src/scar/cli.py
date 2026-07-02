@@ -1029,6 +1029,60 @@ def _cmd_gc(args) -> int:
     return 0
 
 
+def _cmd_draft_check(args) -> int:
+    """Universal authoring trigger (#117): transcript-free abandonment
+    detection from git evidence, for any runtime (not just Claude Code's
+    stop_drafter). Advisory only — ALWAYS returns 0, whatever happens; a
+    hook can't gate a commit that already landed, and a direct human
+    invocation should never fail a shell script that chains it."""
+    from . import draftcheck
+    from .hooks import _state_dir
+
+    try:
+        state_dir = _state_dir()
+        repo = Path.cwd()
+
+        if args.from_hook and draftcheck.is_throttled(state_dir, repo):
+            return 0  # nudged within the last hour; stay silent, don't re-analyze
+
+        result = draftcheck.analyze(state_dir, repo)
+        if result is None:
+            return 0  # not a git repo (or git unusable here) — silent, never a crash
+
+        data = {"triggered": result.triggered, **result.signal_counts()}
+
+        if not result.triggered:
+            output.render(data=data, json_flag=getattr(args, "json", False),
+                          tty=lambda: None, plain=lambda: None)
+            return 0
+
+        store = ScarStore.discover(repo)
+        if store is None:
+            return 0  # nowhere to write a candidate — same posture as the other hooks
+
+        text = draftcheck.contract_text(store, result)
+        data["message"] = text
+
+        def plain():
+            print(text)
+
+        def tty():
+            from rich.panel import Panel
+            output.console.print(Panel(text, title="scar draft-check", border_style="yellow"))
+
+        output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
+
+        if args.from_hook:
+            draftcheck.touch_throttle(state_dir, repo)
+        return 0
+    except Exception:
+        # Contract (issue #117): advisory only, ALWAYS exit 0. A hook can't
+        # gate a commit that already landed, and no internal failure here
+        # (bad SCAR_STATE_DIR, git surprises, whatever) may propagate — same
+        # fail-open posture as hooks.py's precheck (#91).
+        return 0
+
+
 def _cmd_inject(args) -> int:
     """Machine mode for hooks: JSON additionalContext or silence."""
     start = Path(args.path).resolve() if args.path else Path.cwd()
@@ -1404,6 +1458,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--at", default=None,
                    help="with --precision: comma-separated N values (default 5,10,20)")
 
+    p = _add(sub, "draft-check", help="git-native abandonment nudge — universal "
+                                      "authoring trigger for any runtime (#117)")
+    p.add_argument("--from-hook", action="store_true",
+                   help="invoked by the post-commit git hook; adds a 1h throttle "
+                        "per repo so commit-heavy sessions aren't nagged")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "session-notice", "stop-drafter"])
@@ -1456,6 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
         "reanchor": _cmd_reanchor,
         "agent": _cmd_agent, "stats": _cmd_stats, "gc": _cmd_gc,
+        "draft-check": _cmd_draft_check,
     }[args.command]
     return handler(args)
 
