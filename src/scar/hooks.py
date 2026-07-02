@@ -66,7 +66,7 @@ def _recently_fired(repo: str, target: str) -> set[int]:
             continue
         try:
             ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))
-        except (KeyError, ValueError, OverflowError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
         if ts >= cutoff:
             recent.update(set(rec.get("scar_ids", []))

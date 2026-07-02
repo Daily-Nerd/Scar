@@ -375,6 +375,24 @@ def test_demoted_showing_does_not_suppress_later_content_match(repo, monkeypatch
     assert "Do not lower the sleep." in ctx          # one-liner != seen body
 
 
+def test_malformed_firing_log_timestamp_does_not_abort_precheck(repo, monkeypatch, capsys):
+    """If a firing-log line has ts=null or non-string ts, _recently_fired must
+    skip that record (not abort with TypeError), so precheck still injects scars."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    # Write a malformed log line with ts=None
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": None, "repo": str(repo),
+           "target": str(repo / "payments" / "retry.py"),
+           "scar_ids": [1], "count": 1, "demoted_ids": []}
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    # Run precheck with a content-signal match
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    # The full body must still be injected (not suppressed by the TypeError)
+    assert "Do not lower the sleep." in ctx
+
+
 def test_mixed_full_and_demoted_showing_logs_strict_subset(repo, monkeypatch, capsys):
     (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
     (repo / ".scars" / "0002-retry.fence.md").write_text(SECOND_FENCE)
