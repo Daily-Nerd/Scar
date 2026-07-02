@@ -21,7 +21,22 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
+      # scar promotions move a reviewed candidate into .scars/ — the human
+      # sign-off already happened at `scar promote` (reviewer recorded in the
+      # scar's authors). The issue-first gate governs code contributions, so
+      # scars-only PRs skip the two issue steps; label/title/branch still apply.
+      - name: Detect scars-only change
+        id: scars_only
+        run: |
+          files="$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path')"
+          if [ -n "$files" ] && ! grep -qvE '^\.scars/' <<<"$files"; then
+            echo "scars_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scars_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check Issue Reference
+        if: steps.scars_only.outputs.scars_only != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
           if ! grep -qiE '(closes|fixes|resolves) #[0-9]+' <<<"$body"; then
@@ -30,6 +45,7 @@ jobs:
           fi
 
       - name: Check Issue Has status:approved
+        if: steps.scars_only.outputs.scars_only != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
           issue="$(grep -oiE '(closes|fixes|resolves) #[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
