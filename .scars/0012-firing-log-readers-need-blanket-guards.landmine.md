@@ -1,11 +1,11 @@
 ---
-id: 0
+id: 12
 type: landmine
 title: firing-log.jsonl handlers are a bug cluster — guard every line blanket, distrust slice math
 severity: high
 confidence: 0.85
 created: 2026-07-02
-authors: ["claude-code"]
+authors: ["claude-code", "kibukx"]
 anchors:
   - path: src/scar/gc.py
   - pattern: "firing[-_]?log"
@@ -15,7 +15,7 @@ evidence:
 expires:
   condition: "firing log gains a schema-validated reader shared by hooks/stats/gc"
   review_after: 2026-10-01
-status: candidate
+status: active
 ---
 
 Three firing-log bugs shipped or were caught in two days (PR #122, issue #124).
