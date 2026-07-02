@@ -235,7 +235,7 @@ class Violation:
     scar: Scar
     source: Path      # scar file relative to root
     path: str         # edited file that tripped it
-    excerpt: str      # first matching line (trimmed ~120 chars)
+    excerpt: str      # line containing the first match (trimmed ~120 chars)
 
 
 def _violation_excerpt(pattern: str, text: str) -> str | None:

@@ -114,8 +114,42 @@ def test_posttool_emits_warning_on_violation(repo, monkeypatch, capsys):
     assert main(["hook", "posttool"]) == 0
     ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
     assert "Sleep cap must stay under 6s" in ctx
+    assert "this file now contains code matching this scar's violation pattern" in ctx
     assert "reconsider before proceeding" in ctx
     assert "scar why" in ctx
+
+
+def test_posttool_detects_violation_in_multiedit(repo, monkeypatch, capsys):
+    """MultiEdit sends `edits: [{old_string, new_string}, ...]` instead of a
+    top-level new_string — found live: reading only the top-level key meant
+    MultiEdit content was always empty and violations never tripped for it."""
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, {"tool_input": {
+        "file_path": str(repo / "payments" / "retry.py"),
+        "edits": [
+            {"old_string": "x = 1", "new_string": "y = 2"},
+            {"old_string": "z = 3", "new_string": "time.sleep(3)"},
+        ]}})
+    assert main(["hook", "posttool"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Sleep cap must stay under 6s" in ctx
+
+
+def test_posttool_fails_open_on_internal_error(repo, monkeypatch, capsys):
+    """Parity with test_precheck_fails_open_on_internal_error: if the
+    violation-finding path raises unexpectedly, posttool must fail OPEN —
+    exit 0, no output — not propagate the exception."""
+    import scar.hooks as hooks
+
+    def boom(*a, **k):
+        raise RuntimeError("simulated internal failure")
+
+    monkeypatch.setattr(hooks, "find_violations", boom)
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "posttool"]) == 0        # clean exit, no raise
+    assert out_json(capsys) is None               # nothing emitted
 
 
 def test_posttool_silent_when_no_violation(repo, monkeypatch, capsys):
@@ -363,6 +397,22 @@ def test_content_pattern_match_gets_full_body(repo, monkeypatch, capsys):
     (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
     feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
                                       "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Do not lower the sleep." in ctx          # full body present
+
+
+def test_content_pattern_match_in_multiedit_gets_full_body(repo, monkeypatch, capsys):
+    """MultiEdit-shaped payload: content signal lives in edits[].new_string,
+    not a top-level new_string — must still earn the full-body tier, not the
+    path-only demotion."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    feed(monkeypatch, {"tool_input": {
+        "file_path": str(repo / "payments" / "retry.py"),
+        "edits": [
+            {"old_string": "a", "new_string": "b"},
+            {"old_string": "c", "new_string": "lower the sleep to 3"},
+        ]}})
     assert main(["hook", "precheck"]) == 0
     ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
     assert "Do not lower the sleep." in ctx          # full body present
