@@ -38,6 +38,7 @@ def repo(tmp_path, monkeypatch):
     init_scars(tmp_path)
     (tmp_path / ".scars" / "0001-vendor.fence.md").write_text(FENCE)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
     return tmp_path
 
 
@@ -264,8 +265,44 @@ def test_precheck_fails_open_on_internal_error(repo, monkeypatch, capsys):
     def boom(*a, **k):
         raise RuntimeError("simulated internal failure")
 
-    monkeypatch.setattr(hooks, "rank_for_edit", boom)
+    monkeypatch.setattr(hooks, "rank_matches_for_edit", boom)
     feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
                                       "new_string": "time.sleep(3)"}})
     assert main(["hook", "precheck"]) == 0        # clean exit, no raise
     assert out_json(capsys) is None               # nothing injected
+
+
+# --- precheck tiering (precision engine) ---
+
+PATTERNED_FENCE = FENCE.replace(
+    "anchors:\n  - path: payments/",
+    'anchors:\n  - path: payments/\n  - pattern: "lower.{0,10}sleep"')
+
+
+def test_path_only_match_demotes_to_one_liner(repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "x = 1"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Sleep is 7s" in ctx                      # label line stays visible
+    assert "path-only match" in ctx                  # demotion reason shown
+    assert "Do not lower the sleep." not in ctx      # body demoted away
+
+
+def test_content_pattern_match_gets_full_body(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Do not lower the sleep." in ctx          # full body present
+
+
+def test_firing_log_records_demoted_ids(repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "x = 1"}})
+    assert main(["hook", "precheck"]) == 0
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["demoted_ids"] == [1]
+    assert rec["scar_ids"] == [1]

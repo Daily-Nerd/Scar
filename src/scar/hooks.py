@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from .match import rank_for_edit
+from .match import has_content_signal, rank_matches_for_edit
 from .render import injection_context
 from .store import ScarStore
 
@@ -63,7 +63,8 @@ def _emit(event: str, context: str) -> None:
         "hookEventName": event, "additionalContext": context}}))
 
 
-def _log_firing(store: ScarStore, target: str, hits: list) -> None:
+def _log_firing(store: ScarStore, target: str, hits: list,
+                demoted_ids: list | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -79,6 +80,7 @@ def _log_firing(store: ScarStore, target: str, hits: list) -> None:
             "target": target,
             "scar_ids": [s.id for s in hits],
             "count": len(hits),
+            "demoted_ids": demoted_ids or [],
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
@@ -100,12 +102,18 @@ def precheck() -> int:
             return 0
         new_content = " ".join(str(tool_input.get(k, ""))
                                for k in ("content", "new_string", "new_source"))
-        hits = rank_for_edit(store, Path(target), new_content)
-        context = injection_context(hits, store.broken(), store.scars_dir)
+        matches = rank_matches_for_edit(store, Path(target), new_content)
+        full = [m.scar for m in matches if has_content_signal(m)]
+        demoted = [(m.scar, "path-only match")
+                   for m in matches if not has_content_signal(m)]
+        context = injection_context(full, store.broken(), store.scars_dir,
+                                    demoted=demoted)
+        hits = [m.scar for m in matches]
         if context:
             _emit("PreToolUse", context)
         if hits:
-            _log_firing(store, target, hits)
+            _log_firing(store, target, hits,
+                        demoted_ids=[s.id for s, _ in demoted])
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than
