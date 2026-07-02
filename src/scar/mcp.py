@@ -150,7 +150,7 @@ def _why(args: dict[str, Any]) -> dict[str, Any]:
 TOOLS = [
     {
         "name": "scar_query",
-        "description": "Return ranked negative-knowledge scars for paths, content, or a unified diff.",
+        "description": "Return ranked negative-knowledge scars for paths, content, or a unified diff. Tier on matched_by: content_pattern/symbol indicate high-relevance matches; path/path_pattern only prove file proximity.",
         "inputSchema": {
             "type": "object",
             "properties": {
