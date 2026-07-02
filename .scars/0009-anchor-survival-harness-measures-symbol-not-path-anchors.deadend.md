@@ -1,14 +1,11 @@
 ---
-# COPY THIS FILE — do not edit the template itself.
-# New scars: write to .scars/candidates/<slug>.md with status: candidate.
-# A human reviewer promotes to .scars/NNNN-<slug>.<type>.md with status: active.
-id: 0
+id: 9
 type: deadend
 title: replay_shipped.py measures SYMBOL-anchor survival only — there is no seam to wire PATH-anchor rename-following (#109) into it
 severity: low
 confidence: 0.85
 created: 2026-07-01
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: experiments/anchor-survival/replay_shipped.py
   - path: experiments/anchor-survival/replay.py
@@ -19,7 +16,7 @@ evidence:
 expires:
   condition: "the anchor-survival harness grows a path-anchor survival mode (a new replay script or a --anchor-kind flag), or scar.renames is imported anywhere under experiments/"
   review_after: 2027-01-01
-status: candidate
+status: active
 ---
 
 Body: #109 asked to "wire rename-following into the shipped-mechanism replay

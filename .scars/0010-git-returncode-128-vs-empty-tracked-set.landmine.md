@@ -1,14 +1,11 @@
 ---
-# COPY THIS FILE — do not edit the template itself.
-# New scars: write to .scars/candidates/<slug>.md with status: candidate.
-# A human reviewer promotes to .scars/NNNN-<slug>.<type>.md with status: active.
-id: 0
+id: 10
 type: landmine
 title: A bare .git/ dir is "git failed" (rc 128), not an empty tracked set — do not fake repos with mkdir
 severity: medium
 confidence: 0.8
 created: 2026-06-30
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/orphan.py
   - path: src/scar/harvest.py
@@ -18,7 +15,7 @@ evidence:
 expires:
   condition: "git invocations move behind a single resolver layer with its own repo-presence check"
   review_after: 2027-06-30
-status: candidate
+status: active
 ---
 
 Body: git shell-outs must distinguish two empty outcomes that look identical if
