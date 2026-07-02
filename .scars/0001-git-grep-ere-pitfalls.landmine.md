@@ -10,6 +10,7 @@ anchors:
   - path: experiments/anchor-survival/
   - path: src/scar/harvest.py
   - pattern: "git.{0,20}grep"
+violation: "git.{0,60}grep.{0,120}\\b"
 evidence:
   - note: "orphaned receipt — pre-v0.1.0 commit 5c63b14 produced a fake 0% anchor-survival run before diagnosis (gate 0.2); resolves at github.com/Daily-Nerd/Scar/commit/5c63b14 until GC, not in fresh clones (rewritten at the v0.1.0 release)"
 expires:
