@@ -230,6 +230,9 @@ def _stats_rich(data: dict) -> None:
     if data["never_fired"]:
         console.print(f"[yellow]never fired:[/] "
                       + ", ".join(f"#{i}" for i in data["never_fired"]))
+    for adv in data.get("advisories", []):
+        console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
+                      f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
     console.print("[dim]note: firing counts only — whether the agent honored an "
                   "injected scar is not tracked (unobservable from inside the hook)[/]")
 
@@ -950,12 +953,24 @@ def _cmd_stats(args) -> int:
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
     never_fired = sorted(firing_ids - set(counts))
 
+    ADVISORY_MIN_TOTAL = 20
+    ADVISORY_SHARE = 0.5
+    total = sum(counts.values())
+    advisories = [
+        {"id": e["id"], "share": round(e["count"] / total, 2),
+         "note": ("likely over-broad — narrow the path anchor or rely on a "
+                  "pattern/symbol anchor so it fires on relevant edits only")}
+        for e in per_scar
+        if total > ADVISORY_MIN_TOTAL and e["count"] / total > ADVISORY_SHARE
+    ]
+
     data = {
         "total_firings": sum(counts.values()),
         "per_scar": per_scar,
         "most_fired": most_fired,
         "last_fired": last_fired,
         "never_fired": never_fired,
+        "advisories": advisories,
     }
 
     def plain():
@@ -968,6 +983,9 @@ def _cmd_stats(args) -> int:
             print(f"  last fired: {last_fired}")
         if never_fired:
             print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
+        for adv in data["advisories"]:
+            print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
+                  f"firings — {adv['note']}")
         print("  note: firing counts only — whether the agent honored an "
               "injected scar is not tracked (unobservable from inside the hook)")
 

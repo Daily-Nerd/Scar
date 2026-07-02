@@ -1451,6 +1451,38 @@ def test_stats_plain_output_reports_never_fired_and_disclaimer(repo, capsys, mon
     assert "honor" in out.lower()
 
 
+def _stats_log(repo, monkeypatch, entries):
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        for scar_ids in entries:
+            fh.write(json.dumps({"ts": "2026-07-02T10:00:00", "repo": str(repo),
+                                 "target": "x", "scar_ids": scar_ids,
+                                 "count": len(scar_ids)}) + "\n")
+
+
+def test_stats_advisory_on_skewed_distribution(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    _stats_log(repo, monkeypatch, [[1]] * 30 + [[2]] * 2)
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["advisories"][0]["id"] == 1
+    assert "over-broad" in data["advisories"][0]["note"]
+
+
+def test_stats_no_advisory_below_thresholds(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    _stats_log(repo, monkeypatch, [[1]] * 5 + [[2]] * 5)
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["advisories"] == []
+
+
 # ---------------------------------------------------------------------------
 # scar reanchor (#111) — orphan recovery v1: propose new anchors for
 # orphaned/partial-rot scars. Propose-only by default, read-only. --apply
