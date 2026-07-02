@@ -78,12 +78,13 @@ def truncate_firing_log(path: Path, max_entries: int, *, dry_run: bool = False) 
     if dry_run:
         return dropped
 
-    keep = lines[-max_entries:]
+    keep = lines[-max_entries:] if max_entries > 0 else []
     fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(keep) + "\n")
+            if keep:
+                fh.write("\n".join(keep) + "\n")
         os.replace(tmp_name, path)
     except Exception:
         try:
