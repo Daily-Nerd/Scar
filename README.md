@@ -39,7 +39,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 - Each scar is **anchored** to code via paths, symbol names, and content fingerprints — not line numbers — so anchors survive refactors.
 - Enforcement happens **at the moment of action**:
   - `scar check <path>... [--diff FILE] --exit-code` — CLI gate for humans and CI (non-zero exit when a scar fires)
-  - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file
+  - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file. Path-only matches render as one-line hints; the full scar body is injected only when the edit content or a symbol actually trips the scar's pattern — and a body already shown for the same file in the last 4 hours collapses to a one-liner.
   - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
 - Scars are **advisory, never blocking, by default** — and stale knowledge has a lifecycle: `scar challenge <id> --reason` disputes a scar (it still fires, marked as disputed), `scar archive <id> --reason` retires it (never fires again; `scar why` keeps the history), and `scar lint`/`scar status` surface any scar whose `review_after` date has passed. Nothing expires automatically — archiving is a human decision, same governance as promotion.

@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from .match import rank_for_edit
+from .match import has_content_signal, rank_matches_for_edit
 from .render import injection_context
 from .store import ScarStore
 
@@ -43,6 +43,38 @@ def firing_log_path() -> Path:
     return _state_dir() / "firing-log.jsonl"
 
 
+COOLDOWN_SECONDS = 4 * 3600  # fixed constant — deliberately not a config knob
+
+
+def _recently_fired(repo: str, target: str) -> set[int]:
+    """Scar ids shown FULL-BODY for this repo+target within the cooldown.
+    One-liner (demoted) showings don't count — a later content-signal match
+    still deserves the full body. Best-effort: any failure returns empty set
+    (module contract: never fail or delay the edit)."""
+    try:
+        # 200-line tail cap is LINE-COUNT-based, not time-based: on a busy log
+        # a recent full-body showing can scroll out past 200 lines before the
+        # cooldown window elapses, so the scar re-renders full body early.
+        # Under-collapsing fails safe (over-inform), so this is not fixed.
+        lines = firing_log_path().read_text(encoding="utf-8").splitlines()[-200:]
+    except Exception:
+        return set()
+    cutoff = time.time() - COOLDOWN_SECONDS
+    recent: set[int] = set()
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            if rec.get("repo") != repo or rec.get("target") != target:
+                continue
+            ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))
+            if ts >= cutoff:
+                recent.update(set(rec.get("scar_ids", []))
+                              - set(rec.get("demoted_ids", [])))
+        except Exception:
+            continue
+    return recent
+
+
 def _read_payload() -> dict | None:
     """Hook payload from stdin; None means 'tty — hint printed, do nothing'."""
     if sys.stdin.isatty():
@@ -63,7 +95,8 @@ def _emit(event: str, context: str) -> None:
         "hookEventName": event, "additionalContext": context}}))
 
 
-def _log_firing(store: ScarStore, target: str, hits: list) -> None:
+def _log_firing(store: ScarStore, target: str, hits: list,
+                demoted_ids: list | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -79,6 +112,7 @@ def _log_firing(store: ScarStore, target: str, hits: list) -> None:
             "target": target,
             "scar_ids": [s.id for s in hits],
             "count": len(hits),
+            "demoted_ids": demoted_ids or [],
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
@@ -100,12 +134,24 @@ def precheck() -> int:
             return 0
         new_content = " ".join(str(tool_input.get(k, ""))
                                for k in ("content", "new_string", "new_source"))
-        hits = rank_for_edit(store, Path(target), new_content)
-        context = injection_context(hits, store.broken(), store.scars_dir)
+        matches = rank_matches_for_edit(store, Path(target), new_content)
+        recent = _recently_fired(str(store.root), target)
+        full, demoted = [], []
+        for m in matches:
+            if not has_content_signal(m):
+                demoted.append((m.scar, "path-only match"))
+            elif m.scar.id is not None and m.scar.id in recent:
+                demoted.append((m.scar, "already shown in the last 4h"))
+            else:
+                full.append(m.scar)
+        context = injection_context(full, store.broken(), store.scars_dir,
+                                    demoted=demoted)
+        hits = [m.scar for m in matches]
         if context:
             _emit("PreToolUse", context)
         if hits:
-            _log_firing(store, target, hits)
+            _log_firing(store, target, hits,
+                        demoted_ids=[s.id for s, _ in demoted])
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than

@@ -6,6 +6,7 @@ contract, single library code path is the point.
 
 import io
 import json
+import time
 
 import pytest
 
@@ -38,6 +39,7 @@ def repo(tmp_path, monkeypatch):
     init_scars(tmp_path)
     (tmp_path / ".scars" / "0001-vendor.fence.md").write_text(FENCE)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
     return tmp_path
 
 
@@ -264,8 +266,161 @@ def test_precheck_fails_open_on_internal_error(repo, monkeypatch, capsys):
     def boom(*a, **k):
         raise RuntimeError("simulated internal failure")
 
-    monkeypatch.setattr(hooks, "rank_for_edit", boom)
+    monkeypatch.setattr(hooks, "rank_matches_for_edit", boom)
     feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
                                       "new_string": "time.sleep(3)"}})
     assert main(["hook", "precheck"]) == 0        # clean exit, no raise
     assert out_json(capsys) is None               # nothing injected
+
+
+# --- precheck tiering (precision engine) ---
+
+PATTERNED_FENCE = FENCE.replace(
+    "anchors:\n  - path: payments/",
+    'anchors:\n  - path: payments/\n  - pattern: "lower.{0,10}sleep"')
+
+
+def test_path_only_match_demotes_to_one_liner(repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "x = 1"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Sleep is 7s" in ctx                      # label line stays visible
+    assert "path-only match" in ctx                  # demotion reason shown
+    assert "Do not lower the sleep." not in ctx      # body demoted away
+
+
+def test_content_pattern_match_gets_full_body(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "Do not lower the sleep." in ctx          # full body present
+
+
+def test_firing_log_records_demoted_ids(repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "x = 1"}})
+    assert main(["hook", "precheck"]) == 0
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["demoted_ids"] == [1]
+    assert rec["scar_ids"] == [1]
+
+
+# --- repetition collapse (4h cooldown) ---
+
+SECOND_FENCE = """\
+---
+id: 2
+type: fence
+title: Retry needs backoff
+severity: critical
+confidence: 0.9
+created: 2026-06-09
+authors: [mara]
+anchors:
+  - path: payments/
+evidence:
+  - commit: bbb2222
+status: active
+---
+
+Do not retry without backoff.
+"""
+
+
+def _precheck_ctx(repo, monkeypatch, capsys, new_string):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": new_string}})
+    assert main(["hook", "precheck"]) == 0
+    return out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_recent_full_body_showing_collapses_to_one_liner(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    first = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in first        # first: full body
+    second = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Sleep is 7s" in second                   # still visible
+    assert "already shown" in second                 # collapse reason
+    assert "Do not lower the sleep." not in second   # body collapsed
+
+
+def _write_log_line(repo, ts, scar_ids, demoted_ids):
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": ts, "repo": str(repo),
+           "target": str(repo / "payments" / "retry.py"),
+           "scar_ids": scar_ids, "count": len(scar_ids),
+           "demoted_ids": demoted_ids}
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def test_stale_showing_does_not_collapse(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    stale = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 5 * 3600))
+    _write_log_line(repo, stale, [1], [])
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx          # 5h old — outside window
+
+
+def test_demoted_showing_does_not_suppress_later_content_match(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    fresh = time.strftime("%Y-%m-%dT%H:%M:%S")
+    _write_log_line(repo, fresh, [1], [1])           # shown only as one-liner
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx          # one-liner != seen body
+
+
+def test_malformed_firing_log_timestamp_does_not_abort_precheck(repo, monkeypatch, capsys):
+    """If a firing-log line has ts=null or non-string ts, _recently_fired must
+    skip that record (not abort with TypeError), so precheck still injects scars."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    # Write a malformed log line with ts=None
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": None, "repo": str(repo),
+           "target": str(repo / "payments" / "retry.py"),
+           "scar_ids": [1], "count": 1, "demoted_ids": []}
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    # Run precheck with a content-signal match
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    # The full body must still be injected (not suppressed by the TypeError)
+    assert "Do not lower the sleep." in ctx
+
+
+def test_non_dict_firing_log_line_does_not_abort_precheck(repo, monkeypatch, capsys):
+    """A firing-log line that is syntactically valid JSON but not a dict (bare
+    `null` or `[]`) parses fine via json.loads, but rec.get("repo") then raises
+    AttributeError (None/list has no .get). That exception escapes the narrow
+    per-step except clauses in _recently_fired, propagates into precheck()'s
+    outer `except Exception: return 0`, and fails precheck open (injects
+    nothing) — permanently, since the bad line never leaves the log. Each
+    per-line iteration must be guarded so one malformed line is skipped, not
+    fatal."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("null\n")
+        fh.write("[]\n")
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx
+
+
+def test_mixed_full_and_demoted_showing_logs_strict_subset(repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    (repo / ".scars" / "0002-retry.fence.md").write_text(SECOND_FENCE)
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx           # scar 1: content signal, full body
+    assert "Retry needs backoff" in ctx               # scar 2: label visible
+    assert "Do not retry without backoff." not in ctx  # scar 2: body demoted (path-only)
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["scar_ids"] == [1, 2]
+    assert rec["demoted_ids"] == [2]
+    assert set(rec["demoted_ids"]) < set(rec["scar_ids"])
