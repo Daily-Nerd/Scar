@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/Daily-Nerd/Scar/compare/v0.11.0...v0.12.0) (2026-07-02)
+
+
+### Features
+
+* credibility batch — check gate, firing observability, label leak fix ([#107](https://github.com/Daily-Nerd/Scar/issues/107)) ([b50518c](https://github.com/Daily-Nerd/Scar/commit/b50518cec84d98680825de3254cd10b6dbb38644)), closes [#106](https://github.com/Daily-Nerd/Scar/issues/106)
+* distribution batch — pre-commit hooks, GitHub Action, plugin PATH resolution ([#114](https://github.com/Daily-Nerd/Scar/issues/114)) ([a6a4128](https://github.com/Daily-Nerd/Scar/commit/a6a4128fe5e7dfd7164ff339ffae519db4c535f3))
+* follow git renames for dead path anchors + scar orphan --fix-renames ([#110](https://github.com/Daily-Nerd/Scar/issues/110)) ([478afb3](https://github.com/Daily-Nerd/Scar/commit/478afb3e5d58e8d56919332d56b9875a2f8d20e9))
+* scar draft-check — universal git-native authoring trigger for any agent ([#118](https://github.com/Daily-Nerd/Scar/issues/118)) ([462ecb5](https://github.com/Daily-Nerd/Scar/commit/462ecb5df288c69aaa106ab1d626a3959e85aa42))
+* scar gc — prune machine state, report repo hygiene read-only ([#116](https://github.com/Daily-Nerd/Scar/issues/116)) ([0eef648](https://github.com/Daily-Nerd/Scar/commit/0eef648d6ac4064587b1268610c902aa9926deed))
+* scar reanchor — propose and apply new anchors for orphaned/partial-rot scars ([#112](https://github.com/Daily-Nerd/Scar/issues/112)) ([0959aee](https://github.com/Daily-Nerd/Scar/commit/0959aee55cf6cc75882d0c5a828d2fac571cf40c)), closes [#111](https://github.com/Daily-Nerd/Scar/issues/111)
+
 ## [0.11.0](https://github.com/Daily-Nerd/Scar/compare/v0.10.0...v0.11.0) (2026-07-01)
 
 
