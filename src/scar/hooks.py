@@ -52,6 +52,10 @@ def _recently_fired(repo: str, target: str) -> set[int]:
     still deserves the full body. Best-effort: any failure returns empty set
     (module contract: never fail or delay the edit)."""
     try:
+        # 200-line tail cap is LINE-COUNT-based, not time-based: on a busy log
+        # a recent full-body showing can scroll out past 200 lines before the
+        # cooldown window elapses, so the scar re-renders full body early.
+        # Under-collapsing fails safe (over-inform), so this is not fixed.
         lines = firing_log_path().read_text(encoding="utf-8").splitlines()[-200:]
     except Exception:
         return set()
@@ -60,17 +64,14 @@ def _recently_fired(repo: str, target: str) -> set[int]:
     for line in lines:
         try:
             rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("repo") != repo or rec.get("target") != target:
-            continue
-        try:
+            if rec.get("repo") != repo or rec.get("target") != target:
+                continue
             ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))
-        except (KeyError, TypeError, ValueError, OverflowError):
+            if ts >= cutoff:
+                recent.update(set(rec.get("scar_ids", []))
+                              - set(rec.get("demoted_ids", [])))
+        except Exception:
             continue
-        if ts >= cutoff:
-            recent.update(set(rec.get("scar_ids", []))
-                          - set(rec.get("demoted_ids", [])))
     return recent
 
 

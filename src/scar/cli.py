@@ -965,7 +965,7 @@ def _cmd_stats(args) -> int:
     ]
 
     data = {
-        "total_firings": sum(counts.values()),
+        "total_firings": total,
         "per_scar": per_scar,
         "most_fired": most_fired,
         "last_fired": last_fired,

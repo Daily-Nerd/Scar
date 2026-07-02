@@ -393,6 +393,25 @@ def test_malformed_firing_log_timestamp_does_not_abort_precheck(repo, monkeypatc
     assert "Do not lower the sleep." in ctx
 
 
+def test_non_dict_firing_log_line_does_not_abort_precheck(repo, monkeypatch, capsys):
+    """A firing-log line that is syntactically valid JSON but not a dict (bare
+    `null` or `[]`) parses fine via json.loads, but rec.get("repo") then raises
+    AttributeError (None/list has no .get). That exception escapes the narrow
+    per-step except clauses in _recently_fired, propagates into precheck()'s
+    outer `except Exception: return 0`, and fails precheck open (injects
+    nothing) — permanently, since the bad line never leaves the log. Each
+    per-line iteration must be guarded so one malformed line is skipped, not
+    fatal."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    with open(state / "firing-log.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("null\n")
+        fh.write("[]\n")
+    ctx = _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")
+    assert "Do not lower the sleep." in ctx
+
+
 def test_mixed_full_and_demoted_showing_logs_strict_subset(repo, monkeypatch, capsys):
     (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
     (repo / ".scars" / "0002-retry.fence.md").write_text(SECOND_FENCE)
