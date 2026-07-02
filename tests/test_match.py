@@ -9,6 +9,8 @@ from scar import symbols
 from scar.match import (
     MAX_ANCHOR_SCAN,
     _pattern_anchor_matches,
+    find_violations,
+    find_violations_for_diff,
     has_content_signal,
     rank_for_edit,
     rank_matches_for_diff,
@@ -268,3 +270,105 @@ def test_path_only_is_not_content_signal():
 
 def test_empty_matched_by_is_not_content_signal():
     assert not has_content_signal(SimpleNamespace(matched_by=()))
+
+
+# ---------------------------------------------------------------------------
+# Task 4: single-source violation matcher — find_violations / _for_diff
+# ---------------------------------------------------------------------------
+
+def _write_violation_scar(tmp_path, violation=None):
+    """One scar path-anchored to payments/, optionally carrying `violation`."""
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    init_scars(tmp_path)
+    lines = [
+        "---",
+        "id: 9",
+        "type: fence",
+        "title: Sleep cap",
+        "severity: critical",
+        "confidence: 0.9",
+        "created: 2026-06-09",
+        "authors: [mara]",
+        "anchors:",
+        "  - path: payments/",
+        "evidence:",
+        "  - commit: ddd4444",
+    ]
+    if violation is not None:
+        lines.append(f'violation: "{violation}"')
+    lines += ["status: active", "---", "", "Do not lower the sleep.", ""]
+    (tmp_path / ".scars" / "0009-sleep.fence.md").write_text("\n".join(lines))
+    return ScarStore.discover(tmp_path)
+
+
+SLEEP_VIOLATION = "sleep\\((?:[0-6])\\)"
+
+
+def test_violation_fires_on_anchored_path_with_matching_added_content(tmp_path):
+    store = _write_violation_scar(tmp_path, SLEEP_VIOLATION)
+    hits = find_violations(store, "payments/x.py", "time.sleep(3)")
+    assert len(hits) == 1
+    assert hits[0].path == "payments/x.py"
+    assert "time.sleep(3)" in hits[0].excerpt
+    assert hits[0].scar.id == 9
+
+
+def test_violation_gated_by_path_anchor_proximity(tmp_path):
+    store = _write_violation_scar(tmp_path, SLEEP_VIOLATION)
+    # same offending content, but the file isn't under the scar's path anchor
+    hits = find_violations(store, "docs/x.md", "time.sleep(3)")
+    assert hits == []
+
+
+def test_scar_without_violation_field_never_returns(tmp_path):
+    store = _write_violation_scar(tmp_path, violation=None)
+    hits = find_violations(store, "payments/x.py", "time.sleep(3)")
+    assert hits == []
+
+
+def test_invalid_violation_regex_is_silently_ignored(tmp_path):
+    store = _write_violation_scar(tmp_path, "sleep((")  # unbalanced -> re.error
+    hits = find_violations(store, "payments/x.py", "time.sleep(3)")
+    assert hits == []
+
+
+def test_diff_violation_matches_added_lines(tmp_path):
+    store = _write_violation_scar(tmp_path, SLEEP_VIOLATION)
+    diff = """\
+diff --git a/payments/x.py b/payments/x.py
+--- a/payments/x.py
++++ b/payments/x.py
+@@ -0,0 +1 @@
++time.sleep(2)
+"""
+    hits = find_violations_for_diff(store, diff)
+    assert len(hits) == 1
+    assert hits[0].path == "payments/x.py"
+    assert "time.sleep(2)" in hits[0].excerpt
+
+
+def test_diff_violation_ignores_context_lines(tmp_path):
+    store = _write_violation_scar(tmp_path, SLEEP_VIOLATION)
+    # the offending call only appears as an unchanged context line; the added
+    # line ("sleep(9)") is out of the matched range and must not fire either
+    diff = """\
+diff --git a/payments/y.py b/payments/y.py
+--- a/payments/y.py
++++ b/payments/y.py
+@@ -1,3 +1,3 @@
+ def f():
+-    time.sleep(1)
++    time.sleep(9)
+     time.sleep(2)
+"""
+    hits = find_violations_for_diff(store, diff)
+    assert hits == []
+
+
+def test_violation_regex_matches_across_line_boundaries(tmp_path):
+    # Violation regex spanning line boundary (foo\s+bar matching "foo\nbar")
+    # must match against the whole capped text, not per-line.
+    store = _write_violation_scar(tmp_path, "foo\\s+bar")
+    hits = find_violations(store, "payments/test.py", "foo\nbar\n")
+    assert len(hits) == 1
+    assert hits[0].excerpt == "foo"

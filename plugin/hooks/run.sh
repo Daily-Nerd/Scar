@@ -21,7 +21,14 @@ if [ -z "$scar_bin" ]; then
 fi
 
 if [ -n "$scar_bin" ]; then
-    exec "$scar_bin" hook "$kind"
+    # 2>/dev/null: a stale binary (old install, plugin.json passing a hook
+    # kind its argparse predates, e.g. "posttool") must not spray "invalid
+    # choice" on every single edit — hook handlers are contractually always
+    # exit 0 regardless of outcome, so this is pure noise, not signal. Not
+    # `exec`: a plain call lets us force the exit code below rather than
+    # trust the (possibly stale, possibly non-zero-on-argparse-error) binary.
+    "$scar_bin" hook "$kind" 2>/dev/null
+    exit 0
 fi
 
 # Unresolvable. precheck/stop-drafter fail open silently (hot path — never

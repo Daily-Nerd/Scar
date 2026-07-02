@@ -1313,6 +1313,105 @@ diff --git a/docs/x.md b/docs/x.md
     assert main(["check", "--diff", diff, "--exit-code"]) == 0
 
 
+# ---------------------------------------------------------------------------
+# Task 5: `scar check --diff` surfaces violations (violation field, Task 4's
+# find_violations_for_diff feeding the CLI)
+# ---------------------------------------------------------------------------
+
+VIOLATION_SCAR = """\
+---
+id: 42
+type: fence
+title: No raw sleep calls
+severity: critical
+confidence: 0.9
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/
+evidence:
+  - commit: abc1234
+violation: "sleep\\((?:[0-6])\\)"
+status: active
+---
+
+Do not call sleep with a small value.
+"""
+
+DIFF_WITH_VIOLATION = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++time.sleep(2)
+"""
+
+
+def test_check_diff_violation_appears_in_json_exit_zero_without_flag(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    capsys.readouterr()
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["violations"] == [{
+        "scar_id": 42,
+        "title": "No raw sleep calls",
+        "path": "src/thing.py",
+        "excerpt": "time.sleep(2)",
+    }]
+
+
+def test_check_diff_violation_exit_code_returns_nonzero(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--exit-code"]) == 1
+
+
+def test_check_diff_scars_fire_but_no_violation_gives_empty_list(repo, capsys):
+    # #106-adjacent: a scar can fire on a diff via its path anchor without its
+    # (absent or non-matching) violation regex ever tripping — violations must
+    # report [] rather than being conflated with the scars list.
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    main(["promote", "tried-x", "--reviewer", "k"])
+    capsys.readouterr()
+    diff = """\
+diff --git a/src/thing.py b/src/thing.py
+--- a/src/thing.py
++++ b/src/thing.py
+@@ -0,0 +1 @@
++print("x")
+"""
+    assert main(["check", "--diff", diff, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["scars"]  # the scar did fire (path anchor)
+    assert data["violations"] == []
+
+
+def test_check_exit_code_trips_on_violation_even_with_zero_top_k(repo, capsys):
+    # Violations bypass --top-k truncation — even when scars list is empty,
+    # exit-code should trip if violations are found. This pins the
+    # `(hits or violations)` OR-branch at line 546 of cli.py.
+    init_scars(repo)
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(VIOLATION_SCAR)
+    capsys.readouterr()
+    assert main(["check", "--diff", DIFF_WITH_VIOLATION, "--exit-code", "--top-k", "0", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["scars"] == []  # --top-k 0 truncates all scars
+    assert len(data["violations"]) == 1  # but violation still present
+    assert data["violations"][0]["scar_id"] == 42
+
+
+def test_check_path_mode_json_has_no_violations_key(repo, capsys):
+    # path (non-diff) mode is unchanged: no violations key at all.
+    init_scars(repo)
+    (repo / "src").mkdir()
+    capsys.readouterr()
+    assert main(["check", "src/thing.py", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "violations" not in data
+
+
 def test_why_json_lists_records(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
@@ -1431,8 +1530,8 @@ def test_stats_aggregates_counts_and_never_fired(repo, capsys, monkeypatch):
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["total_firings"] == 3
-    assert {"id": 1, "count": 2} in data["per_scar"]
-    assert {"id": 2, "count": 1} in data["per_scar"]
+    assert {"id": 1, "count": 2, "violations": 0} in data["per_scar"]
+    assert {"id": 2, "count": 1, "violations": 0} in data["per_scar"]
     assert data["most_fired"] == 1
     assert data["last_fired"] == "2026-06-11T09:00:00"
     assert data["never_fired"] == []
@@ -1481,6 +1580,87 @@ def test_stats_no_advisory_below_thresholds(repo, capsys, monkeypatch):
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["advisories"] == []
+
+
+def test_stats_counts_violations_from_log(repo, capsys, monkeypatch):
+    """Violation records in the firing log contribute violation_ids counts
+    to per_scar entries; a scar can have violations without firing."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 2
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1 == {"id": 1, "count": 2, "violations": 1}
+
+
+def test_stats_most_fired_excludes_zero_firing_scar(repo, capsys, monkeypatch):
+    """A scar that only has a violation record (never actually fired) must
+    not be reported as most_fired while simultaneously appearing in
+    never_fired — that is contradictory."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["most_fired"] is None
+    assert 1 in data["never_fired"]
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["count"] == 0
+    assert per_scar_1["violations"] == 1
+
+
+def test_stats_rejects_string_violation_ids(repo, capsys, monkeypatch):
+    """A malformed record with violation_ids as a string (not a list) must be
+    skipped entirely, not iterated character-by-character into phantom
+    per_scar entries with string ids."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T09:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": "12"},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    ids = [e["id"] for e in data["per_scar"]]
+    assert "1" not in ids
+    assert "2" not in ids
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["count"] == 1
+    assert per_scar_1["violations"] == 0
+
+
+def test_stats_violations_default_to_zero_no_crash(repo, capsys, monkeypatch):
+    """Old-format firing logs with no violation records do not crash;
+    violations field defaults to 0."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    per_scar_1 = [e for e in data["per_scar"] if e["id"] == 1][0]
+    assert per_scar_1["violations"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from rich_argparse import RichHelpFormatter
 
 from .lint import _is_redos_prone, lint_text
 from .match import (
+    find_violations_for_diff,
     has_content_signal,
     rank_matches_for_diff,
     rank_matches_for_edit,
@@ -183,18 +184,20 @@ def _lint_rich(data: dict) -> None:
                   f"{len(data['unreachable_evidence'])} unreachable-evidence")
 
 
-def _check_rich(label: str, hits) -> None:
+def _check_rich(label: str, hits, violations=()) -> None:
     from rich.panel import Panel
 
     console = output.console
     if not hits:
         console.print(f"[green]no scars anchored to[/] {label}")
-        return
-    for s in hits:
-        title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
-                 f"confidence: {s.confidence}")
-        console.print(Panel(s.body[:200].strip(), title=title,
-                            subtitle=f"[bold]{s.title}[/]", title_align="left"))
+    else:
+        for s in hits:
+            title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
+                     f"confidence: {s.confidence}")
+            console.print(Panel(s.body[:200].strip(), title=title,
+                                subtitle=f"[bold]{s.title}[/]", title_align="left"))
+    for v in violations:
+        console.print(f"[red]VIOLATION[/] scar #{v.scar.id} on {v.path}: {v.scar.title}")
 
 
 def _why_rich(rel: str, records) -> None:
@@ -225,7 +228,10 @@ def _stats_rich(data: dict) -> None:
         t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
         t.add_column("id", justify="right"); t.add_column("firings", justify="right")
         for e in data["per_scar"]:
-            t.add_row(f"#{e['id']}", str(e["count"]))
+            row = f"#{e['id']}", str(e["count"])
+            if e.get("violations", 0) > 0:
+                row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
+            t.add_row(*row)
         console.print(t)
     if data["never_fired"]:
         console.print(f"[yellow]never fired:[/] "
@@ -233,8 +239,8 @@ def _stats_rich(data: dict) -> None:
     for adv in data.get("advisories", []):
         console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
                       f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
-    console.print("[dim]note: firing counts only — whether the agent honored an "
-                  "injected scar is not tracked (unobservable from inside the hook)[/]")
+    console.print("[dim]note: firing + violation counts — whether the agent honored an "
+                  "injected scar is unobservable from inside the hook[/]")
 
 
 def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
@@ -504,9 +510,11 @@ def _cmd_check(args) -> int:
 
     if diff_text is not None:
         matches = rank_matches_for_diff(store, diff_text, top_k=args.top_k)
+        violations = find_violations_for_diff(store, diff_text)
     else:
         matches = rank_matches_for_paths(store, args.path, args.content or "",
                                          top_k=args.top_k)
+        violations = []
     hits = [m.scar for m in matches]
 
     data = {
@@ -515,21 +523,30 @@ def _cmd_check(args) -> int:
                    "confidence": s.confidence, "status": s.status, "title": s.title,
                    "body": s.body[:200]} for s in hits],
     }
+    if diff_text is not None:
+        # --diff mode only: violations is ALWAYS present ([] when none) — a
+        # separate, stronger signal from the ranked "scars" list (a scar can
+        # fire on path-anchor proximity alone without its violation regex
+        # ever matching the added content).
+        data["violations"] = [{"scar_id": v.scar.id, "title": v.scar.title,
+                                "path": v.path, "excerpt": v.excerpt} for v in violations]
     if diff_text is None and len(args.path) == 1:
         data["path"] = args.path[0]  # back-compat: single-path shape unchanged
 
     def plain():
         if not hits:
             print(f"no scars anchored to {label}")
-            return
-        for s in hits:
-            print(label_line(s))
-            print("  " + s.body[:200].replace("\n", "\n  "))
+        else:
+            for s in hits:
+                print(label_line(s))
+                print("  " + s.body[:200].replace("\n", "\n  "))
+        for v in violations:
+            print(f"VIOLATION scar #{v.scar.id} on {v.path}: {v.scar.title}")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _check_rich(label, hits), plain=plain)
+                  tty=lambda: _check_rich(label, hits, violations), plain=plain)
 
-    if getattr(args, "exit_code", False) and hits:
+    if getattr(args, "exit_code", False) and (hits or violations):
         return 1
     return 0
 
@@ -940,16 +957,29 @@ def _cmd_stats(args) -> int:
                 continue
 
     counts: dict[int, int] = {}
+    violations: dict[int, int] = {}
     last_fired = None
     for rec in records:
         for sid in rec.get("scar_ids", []):
             counts[sid] = counts.get(sid, 0) + 1
+        vids = rec.get("violation_ids", [])
+        if isinstance(vids, list):
+            # Guard: violation_ids might be garbage in corrupted records —
+            # skip the whole record unless it's a list, and skip any
+            # non-int element within it, rather than coercing or crashing.
+            for vid in vids:
+                if isinstance(vid, int):
+                    violations[vid] = violations.get(vid, 0) + 1
         ts = rec.get("ts")
         if ts and (last_fired is None or ts > last_fired):
             last_fired = ts
-    per_scar = sorted(({"id": sid, "count": c} for sid, c in counts.items()),
+    # Merge counts and violations: include all scars that fired OR violated
+    all_scar_ids = set(counts.keys()) | set(violations.keys())
+    per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
+                       for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
-    most_fired = per_scar[0]["id"] if per_scar else None
+    fired_scars = [e for e in per_scar if e["count"] > 0]
+    most_fired = fired_scars[0]["id"] if fired_scars else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
     never_fired = sorted(firing_ids - set(counts))
 
@@ -976,7 +1006,10 @@ def _cmd_stats(args) -> int:
     def plain():
         print(f"scar stats: {data['total_firings']} firing(s) recorded ({log_path})")
         for e in per_scar:
-            print(f"  #{e['id']}: {e['count']} fire(s)")
+            line = f"  #{e['id']}: {e['count']} fire(s)"
+            if e.get("violations", 0) > 0:
+                line += f", violations: x{e['violations']}"
+            print(line)
         if most_fired is not None:
             print(f"  most-fired: #{most_fired}")
         if last_fired:
@@ -986,8 +1019,8 @@ def _cmd_stats(args) -> int:
         for adv in data["advisories"]:
             print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
                   f"firings — {adv['note']}")
-        print("  note: firing counts only — whether the agent honored an "
-              "injected scar is not tracked (unobservable from inside the hook)")
+        print("  note: firing + violation counts — whether the agent honored an "
+              "injected scar is unobservable from inside the hook")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_rich(data), plain=plain)
@@ -1422,8 +1455,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p.add_argument("--exit-code", action="store_true",
-                   help="exit 1 if any scar fires on the checked path(s)/diff (CI gate); "
-                        "default is always 0 (back-compat)")
+                   help="exit 1 if any scar fires on the checked path(s)/diff, or any "
+                        "violation tripped (CI gate); default is always 0 (back-compat)")
 
     p = _add(sub, "why", help="history of pain for a path (any status)")
     p.add_argument("path")
@@ -1497,7 +1530,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
-                                    "precheck", "session-notice", "stop-drafter"])
+                                    "precheck", "posttool", "session-notice",
+                                    "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
     p.add_argument("--git", action="store_true",

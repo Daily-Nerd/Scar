@@ -206,6 +206,42 @@ def test_path_anchor_inline_comment_still_stripped():
     assert s.path_anchors == ["services/auth/"]
 
 
+def test_violation_field_parses_quoted():
+    # Task 1: violation is an optional top-level frontmatter scalar — a
+    # post-edit tripwire regex. Quoted form, mirroring expires.condition.
+    text = VALID.replace(
+        'expires:\n  condition: "sessions become re-derivable"\n  review_after: 2027-03-12\n',
+        'expires:\n  condition: "sessions become re-derivable"\n  review_after: 2027-03-12\n'
+        'violation: "shutil\\.which"\n',
+    )
+    s = parse_scar_text(text)
+    assert s.violation == "shutil\\.which"
+
+
+def test_violation_field_parses_unquoted():
+    text = VALID.replace("status: active\n", "violation: shutil.which\nstatus: active\n")
+    s = parse_scar_text(text)
+    assert s.violation == "shutil.which"
+
+
+def test_violation_defaults_empty_when_absent():
+    s = parse_scar_text(VALID)
+    assert s.violation == ""
+
+
+def test_violation_roundtrip_via_to_text():
+    s = Scar(title="t", type="deadend", severity="high", confidence=0.9,
+             status="active", path_anchors=["src/"], violation="shutil\\.which")
+    s2 = parse_scar_text(s.to_text())
+    assert s2.violation == s.violation
+
+
+def test_to_text_omits_violation_line_when_absent():
+    s = Scar(title="t", type="deadend", severity="high", confidence=0.9,
+             status="active", path_anchors=["src/"])
+    assert "violation:" not in s.to_text()
+
+
 def test_existing_evidence_prefixes_still_parse():
     text = """\
 ---

@@ -20,10 +20,10 @@ def test_plugin_version_matches_pyproject():
         f"plugin.json version {plugin['version']!r} != pyproject {py_version!r}")
 
 
-def test_plugin_manifest_is_valid_and_declares_three_hook_events():
+def test_plugin_manifest_is_valid_and_declares_four_hook_events():
     manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text())
     assert manifest["name"] == "scar"
-    assert set(manifest["hooks"]) == {"PreToolUse", "SessionStart", "Stop"}
+    assert set(manifest["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "Stop"}
 
 
 def test_marketplace_manifest_lists_the_plugin():
@@ -48,6 +48,7 @@ def test_plugin_hooks_invoke_resolver_wrapper():
     manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text())
     expected = {
         "PreToolUse": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh precheck",
+        "PostToolUse": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh posttool",
         "SessionStart": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh session-notice",
         "Stop": "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh stop-drafter",
     }

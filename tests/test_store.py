@@ -89,6 +89,19 @@ def test_promote_moves_assigns_id_status_reviewer(repo):
     assert "id: 1" in text and "status: active" in text and "kibukx" in text
 
 
+def test_promote_preserves_violation_field(repo):
+    # Task 1: promote goes through parse_scar_text + Scar.to_text() — the
+    # same landmine class as scar #4 (expires/evidence silently dropped by
+    # a field-wise rewrite). Verify violation survives that roundtrip.
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    text = CANDIDATE.replace("status: candidate", 'violation: "shutil\\.which"\nstatus: candidate')
+    cand.write_text(text)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="kibukx")
+    promoted_text = new_path.read_text()
+    assert 'violation: "shutil\\.which"' in promoted_text
+
+
 def test_promote_refuses_scar_with_lint_errors(repo):
     cand = repo / ".scars" / "candidates" / "bad.md"
     cand.write_text("# not a scar\n")

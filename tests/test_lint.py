@@ -164,3 +164,30 @@ def test_supported_anchors_yield_no_unsupported_warning():
     findings = lint_text(ok)
     assert not any(
         "unsupported" in f.message or "ignored" in f.message for f in findings)
+
+
+def test_bad_violation_regex_is_error():
+    bad = GOOD.replace("status: active", 'violation: "[unclosed"\nstatus: active')
+    findings = lint_text(bad)
+    assert any(f.level == "error" and "violation" in f.message for f in findings)
+
+
+def test_nested_quantifier_violation_is_error():
+    # A valid-but-pathological violation: re.compile accepts (a+)+$ but search()
+    # backtracks catastrophically on adversarial input. Lint must reject it at
+    # the gate so it can never cause ReDoS on a code read.
+    bad = GOOD.replace("status: active", 'violation: "(a+)+$"\nstatus: active')
+    findings = lint_text(bad)
+    assert any(f.level == "error" and "violation" in f.message for f in findings)
+
+
+def test_valid_violation_not_flagged():
+    ok = GOOD.replace("status: active", 'violation: "foo"\nstatus: active')
+    findings = lint_text(ok)
+    assert not any("violation" in f.message for f in findings)
+
+
+def test_absent_violation_silent():
+    # When violation is not specified, no violation-related messages.
+    findings = lint_text(GOOD)
+    assert not any("violation" in f.message for f in findings)

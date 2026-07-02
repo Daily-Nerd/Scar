@@ -228,3 +228,66 @@ def rank_matches_for_diff(store: ScarStore, diff_text: str,
     lists = [_match_target(firing, store.root, rel_path, added)[:top_k]
              for rel_path, added in _diff_targets(diff_text)]
     return merge_best_matches(lists, top_k)
+
+
+@dataclass(frozen=True)
+class Violation:
+    scar: Scar
+    source: Path      # scar file relative to root
+    path: str         # edited file that tripped it
+    excerpt: str      # line containing the first match (trimmed ~120 chars)
+
+
+def _violation_excerpt(pattern: str, text: str) -> str | None:
+    """First line of `text` matching `pattern`, trimmed to ~120 chars.
+    Searches the whole capped text for the pattern, then extracts the line
+    containing the match. Invalid regex -> None (lint's job; never crash the
+    read path — mirrors _pattern_anchor_matches)."""
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return None
+    capped = text[:MAX_ANCHOR_SCAN]
+    m = rx.search(capped)
+    if m is None:
+        return None
+    # Extract the line containing the match
+    line_start = capped.rfind("\n", 0, m.start()) + 1
+    line_end = capped.find("\n", m.start())
+    if line_end == -1:
+        line_end = len(capped)
+    return capped[line_start:line_end][:120]
+
+
+def _violations_for_target(firing: list, root: Path, rel_path: str,
+                           new_content: str) -> list["Violation"]:
+    out: list[Violation] = []
+    for source, scar in firing:
+        if not scar.violation:
+            continue
+        # Candidacy: path-proximity anchors only (empty content -> content
+        # anchors can never contribute, mirroring the injection anchor gate).
+        strength, _ = _anchor_signal(scar, rel_path, "", root)
+        if strength <= 0:
+            continue
+        excerpt = _violation_excerpt(scar.violation, new_content)
+        if excerpt is None:
+            continue
+        out.append(Violation(scar=scar, source=source.relative_to(root),
+                             path=rel_path, excerpt=excerpt))
+    return out
+
+
+def find_violations(store: ScarStore, rel_path: str, new_content: str) -> list[Violation]:
+    """Firing scars whose `violation` regex matches new_content on an
+    already-anchored path — post-edit tripwire, not injection."""
+    return _violations_for_target(store.firing(), store.root, rel_path, new_content)
+
+
+def find_violations_for_diff(store: ScarStore, diff_text: str) -> list[Violation]:
+    """Same as find_violations, scanning only added lines per diff file."""
+    firing = store.firing()
+    out: list[Violation] = []
+    for rel_path, added in _diff_targets(diff_text):
+        out.extend(_violations_for_target(firing, store.root, rel_path, added))
+    return out

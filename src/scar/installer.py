@@ -21,13 +21,16 @@ SKILLS_DIR = CLAUDE_DIR / "skills"
 SKILL_NAME = "scar-authoring"
 
 LEGACY_SCRIPTS = ("scar-precheck.py", "scar-session-notice.py", "scar-stop-drafter.py")
-OURS_RE = re.compile(r"(scar[^ ]*) hook (precheck|session-notice|stop-drafter)"
+OURS_RE = re.compile(r"(scar[^ ]*) hook (precheck|posttool|session-notice|stop-drafter)"
                      r"|" + "|".join(re.escape(s) for s in LEGACY_SCRIPTS))
 
 HOOKS = [
     {"kind": "precheck", "event": "PreToolUse",
      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
      "timeout": 10, "status": "Checking scars..."},
+    {"kind": "posttool", "event": "PostToolUse",
+     "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+     "timeout": 10, "status": "Checking for violations..."},
     {"kind": "session-notice", "event": "SessionStart",
      "matcher": None, "timeout": 10, "status": "Checking scar conventions..."},
     {"kind": "stop-drafter", "event": "Stop",

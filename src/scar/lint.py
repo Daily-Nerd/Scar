@@ -91,6 +91,16 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             findings.append(Finding(
                 "error", f"pathological pattern anchor /{pat}/: nested quantifier "
                 "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+    if scar.violation:
+        try:
+            re.compile(scar.violation)
+        except re.error as exc:
+            findings.append(Finding("error", f"invalid violation /{scar.violation}/: {exc}"))
+        else:
+            if _is_redos_prone(scar.violation):
+                findings.append(Finding(
+                    "error", f"pathological violation /{scar.violation}/: nested quantifier "
+                    "risks catastrophic backtracking (ReDoS) — simplify the regex"))
     if not scar.evidence:
         findings.append(Finding("warning", "no evidence links — challengeable on sight"))
     for e in scar.evidence:

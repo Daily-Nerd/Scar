@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from .match import has_content_signal, rank_matches_for_edit
+from .match import find_violations, has_content_signal, rank_matches_for_edit
 from .render import injection_context
 from .store import ScarStore
 
@@ -90,6 +90,27 @@ def _read_payload() -> dict | None:
         return {}
 
 
+def _extract_edit_content(tool_input: dict) -> str:
+    """Best-effort join of all edit content in a tool_input payload.
+
+    Covers Write/Edit (top-level `content`/`new_string`/`new_source`) AND
+    MultiEdit, whose payload carries no top-level `new_string` at all — it
+    sends `edits: [{old_string, new_string}, ...]` instead. Reading only the
+    top-level keys meant MultiEdit content was always empty, so injections
+    and violations silently never fired for it. Blanket-tolerant: a
+    malformed `edits` (not a list, or elements that aren't dicts) is skipped
+    rather than raised — this helper must never fail the caller (module
+    contract: a hook must NEVER fail or delay the user's action)."""
+    parts = [str(tool_input.get(k, ""))
+             for k in ("content", "new_string", "new_source")]
+    edits = tool_input.get("edits")
+    if isinstance(edits, list):
+        for e in edits:
+            if isinstance(e, dict):
+                parts.append(str(e.get("new_string", "")))
+    return " ".join(parts)
+
+
 def _emit(event: str, context: str) -> None:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": event, "additionalContext": context}}))
@@ -120,6 +141,63 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         pass
 
 
+def _log_violation_firing(store: ScarStore, target: str, violations: list) -> None:
+    """Append one line to the firing log when posttool actually flags a
+    violation. Best-effort only, mirroring _log_firing: this must NEVER raise
+    or delay the caller, so any failure (permissions, disk full, bad
+    SCAR_STATE_DIR, whatever) is swallowed here rather than propagated."""
+    try:
+        log_path = firing_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "repo": str(store.root),
+            "target": target,
+            "violation_ids": [v.scar.id for v in violations],
+            "count": len(violations),
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def posttool() -> int:
+    payload = _read_payload()
+    if payload is None:
+        return 0
+    tool_input = payload.get("tool_input", {})
+    target = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not target:
+        return 0
+    try:
+        store = ScarStore.discover(Path(target))
+        if store is None:
+            return 0
+        new_content = _extract_edit_content(tool_input)
+        try:
+            rel_path = str(Path(target).resolve().relative_to(store.root))
+        except ValueError:
+            return 0
+        violations = find_violations(store, rel_path, new_content)
+        if not violations:
+            return 0
+        lines = [
+            f"[{v.scar.id}] {v.scar.title}: this file now contains code "
+            "matching this scar's violation pattern — reconsider before "
+            f"proceeding; run `scar why {v.path}` for the full record"
+            for v in violations
+        ]
+        _emit("PostToolUse", "\n".join(lines))
+        _log_violation_firing(store, target, violations)
+    except Exception:
+        # Contract (module docstring): a hook must NEVER fail or delay the
+        # user's action. Fail OPEN on any unexpected error — emit nothing
+        # rather than raise.
+        return 0
+    return 0
+
+
 def precheck() -> int:
     payload = _read_payload()
     if payload is None:
@@ -132,8 +210,7 @@ def precheck() -> int:
         store = ScarStore.discover(Path(target))
         if store is None:
             return 0
-        new_content = " ".join(str(tool_input.get(k, ""))
-                               for k in ("content", "new_string", "new_source"))
+        new_content = _extract_edit_content(tool_input)
         matches = rank_matches_for_edit(store, Path(target), new_content)
         recent = _recently_fired(str(store.root), target)
         full, demoted = [], []
@@ -272,5 +349,5 @@ def stop_drafter() -> int:
     return 0
 
 
-HANDLERS = {"precheck": precheck, "session-notice": session_notice,
-            "stop-drafter": stop_drafter}
+HANDLERS = {"precheck": precheck, "posttool": posttool,
+            "session-notice": session_notice, "stop-drafter": stop_drafter}

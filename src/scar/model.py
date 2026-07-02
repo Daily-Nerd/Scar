@@ -44,6 +44,7 @@ class Scar:
     evidence: list[str] = field(default_factory=list)
     expires_condition: str = ""
     review_after: str = ""
+    violation: str = ""
     status: str = "active"
     body: str = ""
 
@@ -70,6 +71,8 @@ class Scar:
                 lines.append(f'  condition: "{self.expires_condition}"')
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
+        if self.violation:
+            lines.append(f'violation: "{self.violation}"')
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
 
@@ -138,6 +141,7 @@ def parse_scar_text(text: str) -> Scar:
         evidence=evidence,
         expires_condition=_field(front, "condition").strip('"'),
         review_after=_field(front, "review_after"),
+        violation=_field(front, "violation").strip('"'),
         status=_field(front, "status", "active"),
         body=body.strip(),
     )

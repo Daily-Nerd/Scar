@@ -82,7 +82,7 @@ def isolated_settings(tmp_path, monkeypatch):
 def test_cli_hook_install_then_uninstall(isolated_settings, capsys):
     assert main(["hook", "install"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
-    assert settings.count("/stable/bin/scar hook") == 3
+    assert settings.count("/stable/bin/scar hook") == 4
 
     assert main(["hook", "uninstall"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
@@ -101,7 +101,8 @@ def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
     assert "precheck" in out
     assert "session-notice" in out
     assert "stop-drafter" in out
-    assert out.count("not installed") == 3
+    assert "posttool" in out
+    assert out.count("not installed") == 4
 
 
 def test_skill_install_dry_run_reports_target_without_writing(tmp_path, monkeypatch):
