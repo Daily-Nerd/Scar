@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/Daily-Nerd/Scar/compare/v0.14.0...v0.15.0) (2026-07-03)
+
+
+### Features
+
+* **harvest:** --write N renders top candidates as reviewable drafts ([#139](https://github.com/Daily-Nerd/Scar/issues/139)) ([1cd495d](https://github.com/Daily-Nerd/Scar/commit/1cd495d0efb39119a823017bb3b883d6e1526eae))
+* **init:** guided first-run — harvest on-ramp and hook install pointers ([#143](https://github.com/Daily-Nerd/Scar/issues/143)) ([753f701](https://github.com/Daily-Nerd/Scar/commit/753f701d47cb9d66f4238e8a69244cb9cc5b7ec9))
+* **init:** seed a worked-example candidate on fresh init ([#147](https://github.com/Daily-Nerd/Scar/issues/147)) ([1e75061](https://github.com/Daily-Nerd/Scar/commit/1e750618b188d4f061d4febf77cf7fefa747b42d))
+
+
+### Bug Fixes
+
+* **parser:** strip inline comments from evidence values ([#145](https://github.com/Daily-Nerd/Scar/issues/145)) ([6ccd2c2](https://github.com/Daily-Nerd/Scar/commit/6ccd2c2ffaca631431044c38566ff32b48a38ff8))
+
 ## [0.14.0](https://github.com/Daily-Nerd/Scar/compare/v0.13.0...v0.14.0) (2026-07-03)
 
 
