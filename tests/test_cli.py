@@ -135,6 +135,40 @@ def test_promote_unknown_candidate_fails(repo, capsys):
     assert main(["promote", "nope"]) == 1
 
 
+def test_promote_reviewer_falls_back_to_git_user_name(repo, capsys):
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x"]) == 0
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "Repo Reviewer" in text
+    assert "reviewer: Repo Reviewer (from git config)" in capsys.readouterr().out
+
+
+def test_promote_reviewer_flag_wins_over_git_config(repo, capsys):
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x", "--reviewer", "kibukx"]) == 0
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "kibukx" in text
+    assert "Repo Reviewer" not in text
+
+
+def test_promote_without_reviewer_or_git_identity_keeps_authors(
+        repo, capsys, monkeypatch):
+    # Blind git to global/system config so user.name is genuinely unset.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x"]) == 0
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert 'authors: ["claude-code"]' in text
+
+
 def test_check_lists_scars_for_path(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
