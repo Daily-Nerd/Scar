@@ -49,6 +49,44 @@ def test_init_creates_layout_and_reports(repo, capsys):
     assert ".scars" in capsys.readouterr().out
 
 
+# --- init example seed (#136 item 3) ---
+
+def test_init_seeds_lintclean_example_candidate(repo, capsys):
+    """Fresh init drops one self-describing example scar in candidates/ so the
+    format and lifecycle are visible before real pain accumulates (#136). It
+    must be a real, lint-clean candidate — parseable by the one true parser."""
+    from scar.lint import lint_text
+    from scar.model import parse_scar_text
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    example = repo / ".scars" / "candidates" / "example-first-scar.md"
+    assert example.exists()
+    assert "example-first-scar.md" in out
+    text = example.read_text(encoding="utf-8")
+    scar = parse_scar_text(text)
+    assert scar.status == "candidate"
+    assert scar.path_anchors or scar.pattern_anchors
+    assert "promote" in scar.body.lower()
+    assert "delete" in scar.body.lower()
+    errors = [f for f in lint_text(text) if f.level == "error"]
+    assert errors == []
+
+
+def test_init_no_seed_flag_skips_example(repo, capsys):
+    assert main(["init", "--no-seed"]) == 0
+    assert not (repo / ".scars" / "candidates" / "example-first-scar.md").exists()
+
+
+def test_init_never_reseeds_an_existing_scars_dir(repo, capsys):
+    """The user deleting the example is a decision, not damage — re-running
+    init on an existing .scars/ must not resurrect it (#136)."""
+    assert main(["init"]) == 0
+    example = repo / ".scars" / "candidates" / "example-first-scar.md"
+    example.unlink()
+    assert main(["init"]) == 0
+    assert not example.exists()
+
+
 # --- init guided first-run (#136 item 2) ---
 
 def test_init_prints_harvest_onramp_when_history_exists(repo, capsys):

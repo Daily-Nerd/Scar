@@ -64,10 +64,19 @@ def _has_git_history(repo: Path) -> bool:
         return False
 
 
-def _cmd_init(_args) -> int:
+def _cmd_init(args) -> int:
+    from .store import EXAMPLE_SEED, EXAMPLE_SEED_NAME
+    fresh = not (Path.cwd() / ".scars").is_dir()
     scars = init_scars(Path.cwd())
     print(f"initialized {scars} (README.md, template.md, candidates/)")
     print("convention: new scars -> candidates/, humans promote via `scar promote`")
+    # Example seed (#136 item 3): FRESH init only — the user deleting it is a
+    # decision, not damage, so re-running init never resurrects it.
+    if fresh and not getattr(args, "no_seed", False):
+        example = scars / "candidates" / EXAMPLE_SEED_NAME
+        example.write_text(EXAMPLE_SEED, encoding="utf-8")
+        print(f"seeded a worked example: candidates/{EXAMPLE_SEED_NAME} "
+              "(read once, delete anytime; --no-seed skips)")
     if _has_git_history(Path.cwd()):
         print("next steps (this repo has minable history):")
         print("  preview candidates:  scar harvest --top-k 10")
@@ -1687,7 +1696,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"scar {_scar_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    _add(sub, "init", help="create .scars/ layout in the current repo")
+    p = _add(sub, "init", help="create .scars/ layout in the current repo")
+    p.add_argument("--no-seed", action="store_true",
+                   help="skip the worked-example candidate seeded on fresh init")
     p = _add(sub, "lint", help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
