@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/Daily-Nerd/Scar/compare/v0.13.0...v0.14.0) (2026-07-03)
+
+
+### Features
+
+* **cli:** promote --reviewer falls back to git user.name ([#134](https://github.com/Daily-Nerd/Scar/issues/134)) ([c1c858e](https://github.com/Daily-Nerd/Scar/commit/c1c858e055e68addda06d42164b8c6e12b919b40)), closes [#133](https://github.com/Daily-Nerd/Scar/issues/133)
+
+
+### Bug Fixes
+
+* **stats:** scope firing counts to the current repo ([#137](https://github.com/Daily-Nerd/Scar/issues/137)) ([#138](https://github.com/Daily-Nerd/Scar/issues/138)) ([6bc8d37](https://github.com/Daily-Nerd/Scar/commit/6bc8d373c05821b6d6051866ce1c3643bb66f2e7))
+
 ## [0.13.0](https://github.com/Daily-Nerd/Scar/compare/v0.12.0...v0.13.0) (2026-07-02)
 
 
