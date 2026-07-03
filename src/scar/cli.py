@@ -52,10 +52,28 @@ def _require_store(start: Path | None = None) -> ScarStore | None:
     return store
 
 
+def _has_git_history(repo: Path) -> bool:
+    """True iff the repo has at least one commit. `git rev-parse --verify HEAD`
+    fails both outside git and in a zero-commit repo — either way there is
+    nothing for harvest to mine, so init keeps its legacy two-line output."""
+    import subprocess
+    try:
+        return subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "HEAD"],
+                              capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
 def _cmd_init(_args) -> int:
     scars = init_scars(Path.cwd())
     print(f"initialized {scars} (README.md, template.md, candidates/)")
     print("convention: new scars -> candidates/, humans promote via `scar promote`")
+    if _has_git_history(Path.cwd()):
+        print("next steps (this repo has minable history):")
+        print("  preview candidates:  scar harvest --top-k 10")
+        print("  write top drafts:    scar harvest --write 5  (-> .scars/candidates/, review + promote)")
+        print("  wire your agent:     scar hook install        (Claude Code)")
+        print("                       scar hook install --git  (any agent, git-native)")
     return 0
 
 
