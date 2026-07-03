@@ -464,12 +464,22 @@ def _cmd_promote(args) -> int:
         opts = ", ".join(c.name for c in store.candidates()) or "(none)"
         print(f"need exactly one candidate matching '{args.candidate}'; have: {opts}")
         return 1
+    # Promote is human-run by contract; when --reviewer is omitted the git
+    # identity of whoever runs it is the reviewer. Unset identity degrades to
+    # the old behavior (no reviewer appended).
+    reviewer = args.reviewer
+    from_git = False
+    if not reviewer:
+        reviewer = _git(store.root, "config", "user.name").stdout.strip()
+        from_git = bool(reviewer)
     try:
-        new_path = store.promote(matches[0], reviewer=args.reviewer)
+        new_path = store.promote(matches[0], reviewer=reviewer)
     except ValueError as exc:
         print(str(exc))
         return 1
     print(f"promoted -> {new_path.relative_to(store.root)}")
+    if from_git:
+        print(f"  reviewer: {reviewer} (from git config)")
 
     # Non-blocking advisory: a freshly promoted scar whose anchors already
     # resolve to nothing is born orphan-detected. Promote still succeeds — the
@@ -1445,7 +1455,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "promote", help="review a candidate into an active scar")
     p.add_argument("candidate", help="candidate filename (or unique substring)")
-    p.add_argument("--reviewer", default="", help="human reviewer to add to authors")
+    p.add_argument("--reviewer", default="",
+                   help="human reviewer to add to authors "
+                        "(default: git config user.name)")
 
     p = _add(sub, "check", help="scars anchored to a path (CI gate with --exit-code)")
     p.add_argument("path", nargs="*", default=[], help="path(s) to check")
