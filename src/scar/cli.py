@@ -220,7 +220,7 @@ def _stats_rich(data: dict) -> None:
 
     console = output.console
     console.print(Panel.fit(
-        f"{data['total_firings']} firing(s) recorded\n"
+        f"{data['total_firings']} firing(s) recorded — {data['repo']}\n"
         f"most-fired: {'#' + str(data['most_fired']) if data['most_fired'] is not None else '(none yet)'} · "
         f"last fired: {data['last_fired'] or '(never)'}",
         title="scar stats"))
@@ -241,6 +241,28 @@ def _stats_rich(data: dict) -> None:
                       f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
     console.print("[dim]note: firing + violation counts — whether the agent honored an "
                   "injected scar is unobservable from inside the hook[/]")
+
+
+def _stats_all_repos_rich(data: dict, log_path: Path) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = output.console
+    console.print(Panel.fit(
+        f"{len(data['repos'])} repo(s) recorded in {log_path}",
+        title="scar stats --all-repos"))
+    for g in data["repos"]:
+        t = Table(title=f"{g['repo']} — {g['total_firings']} firing(s)",
+                  show_edge=False, expand=False)
+        t.add_column("id", justify="right"); t.add_column("firings", justify="right")
+        for e in g["per_scar"]:
+            row = f"#{e['id']}", str(e["count"])
+            if e.get("violations", 0) > 0:
+                row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
+            t.add_row(*row)
+        console.print(t)
+    console.print("[dim]note: ids are per-repo — the same number in two repos "
+                  "is two different scars[/]")
 
 
 def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
@@ -943,18 +965,11 @@ def _cmd_why(args) -> int:
     return 0
 
 
-def _cmd_stats(args) -> int:
-    """Aggregate the firing log the precheck hook writes (#106): total
-    firings, per-scar counts, the most-fired scar, the last-fired timestamp,
-    and which currently-firing scars have never fired. FIRING COUNTS only —
-    this cannot report whether the agent honored an injected scar, only that
-    it was shown to it (unobservable from inside the hook)."""
-    from .hooks import firing_log_path
-    store = _require_store()
-    if store is None:
-        return 1
-
-    log_path = firing_log_path()
+def _read_firing_log(log_path: Path) -> list[dict]:
+    """Read the machine-global firing log, keeping only dict records. The log
+    is written best-effort from a fail-open hook, so ANY JSON shape can appear
+    on a line (landmine #12) — `null`, `[]`, numbers all parse fine and then
+    crash at rec.get(); skip everything that isn't a dict."""
     records = []
     if log_path.exists():
         for line in log_path.read_text(encoding="utf-8").splitlines():
@@ -962,16 +977,27 @@ def _cmd_stats(args) -> int:
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(rec, dict):
+                records.append(rec)
+    return records
 
+
+def _aggregate_firings(records: list[dict]) -> dict:
+    """Aggregate firing-log records into per-scar counts. Callers must pass
+    records from ONE repo only — scar ids are per-repo sequential ints, so
+    aggregating across repos sums different scars under one id (#137)."""
     counts: dict[int, int] = {}
     violations: dict[int, int] = {}
     last_fired = None
     for rec in records:
-        for sid in rec.get("scar_ids", []):
-            counts[sid] = counts.get(sid, 0) + 1
+        sids = rec.get("scar_ids", [])
+        if isinstance(sids, list):
+            for sid in sids:
+                if isinstance(sid, int):
+                    counts[sid] = counts.get(sid, 0) + 1
         vids = rec.get("violation_ids", [])
         if isinstance(vids, list):
             # Guard: violation_ids might be garbage in corrupted records —
@@ -981,13 +1007,44 @@ def _cmd_stats(args) -> int:
                 if isinstance(vid, int):
                     violations[vid] = violations.get(vid, 0) + 1
         ts = rec.get("ts")
-        if ts and (last_fired is None or ts > last_fired):
+        if isinstance(ts, str) and (last_fired is None or ts > last_fired):
             last_fired = ts
     # Merge counts and violations: include all scars that fired OR violated
     all_scar_ids = set(counts.keys()) | set(violations.keys())
     per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
                        for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
+    return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
+            "total": sum(counts.values())}
+
+
+def _cmd_stats(args) -> int:
+    """Aggregate the firing log the precheck hook writes (#106): total
+    firings, per-scar counts, the most-fired scar, the last-fired timestamp,
+    and which currently-firing scars have never fired. The log is
+    machine-global but scar ids are per-repo, so the default view is scoped
+    to the current repo's records (#137); --all-repos shows every repo,
+    grouped, never merging ids across repos. FIRING COUNTS only — this cannot
+    report whether the agent honored an injected scar, only that it was shown
+    to it (unobservable from inside the hook)."""
+    from .hooks import firing_log_path
+
+    log_path = firing_log_path()
+    records = _read_firing_log(log_path)
+
+    if getattr(args, "all_repos", False):
+        return _stats_all_repos(records, log_path, args)
+
+    store = _require_store()
+    if store is None:
+        return 1
+
+    # Scope to this repo: the hook stamps each record with str(store.root)
+    # (resolved), so exact string match is the same resolution on both sides.
+    # Records missing the field can't be attributed — excluded, not guessed.
+    repo_key = str(store.root)
+    agg = _aggregate_firings([r for r in records if r.get("repo") == repo_key])
+    counts, per_scar, last_fired = agg["counts"], agg["per_scar"], agg["last_fired"]
     fired_scars = [e for e in per_scar if e["count"] > 0]
     most_fired = fired_scars[0]["id"] if fired_scars else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
@@ -1005,6 +1062,7 @@ def _cmd_stats(args) -> int:
     ]
 
     data = {
+        "repo": repo_key,
         "total_firings": total,
         "per_scar": per_scar,
         "most_fired": most_fired,
@@ -1014,7 +1072,8 @@ def _cmd_stats(args) -> int:
     }
 
     def plain():
-        print(f"scar stats: {data['total_firings']} firing(s) recorded ({log_path})")
+        print(f"scar stats: {data['total_firings']} firing(s) recorded "
+              f"for {repo_key} ({log_path})")
         for e in per_scar:
             line = f"  #{e['id']}: {e['count']} fire(s)"
             if e.get("violations", 0) > 0:
@@ -1034,6 +1093,44 @@ def _cmd_stats(args) -> int:
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_rich(data), plain=plain)
+    return 0
+
+
+def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
+    """Machine-global stats view (#137): one group per repo recorded in the
+    log, each aggregated independently. Ids are NEVER merged across repos —
+    a foreign repo's #1 is a different scar than this repo's #1. Repo-local
+    surfaces (never-fired, advisories, most-fired) don't apply here; they
+    need a .scars/ store to mean anything."""
+    by_repo: dict[str, list[dict]] = {}
+    for rec in records:
+        repo = rec.get("repo")
+        key = repo if isinstance(repo, str) and repo else "(unknown)"
+        by_repo.setdefault(key, []).append(rec)
+
+    groups = []
+    for repo_key in sorted(by_repo):
+        agg = _aggregate_firings(by_repo[repo_key])
+        groups.append({"repo": repo_key, "total_firings": agg["total"],
+                       "per_scar": agg["per_scar"],
+                       "last_fired": agg["last_fired"]})
+    groups.sort(key=lambda g: (-g["total_firings"], g["repo"]))
+    data = {"all_repos": True, "repos": groups}
+
+    def plain():
+        print(f"scar stats --all-repos: {len(groups)} repo(s) in {log_path}")
+        for g in groups:
+            print(f"  {g['repo']}: {g['total_firings']} firing(s)")
+            for e in g["per_scar"]:
+                line = f"    #{e['id']}: {e['count']} fire(s)"
+                if e.get("violations", 0) > 0:
+                    line += f", violations: x{e['violations']}"
+                print(line)
+        print("  note: ids are per-repo — the same number in two repos is "
+              "two different scars")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _stats_all_repos_rich(data, log_path), plain=plain)
     return 0
 
 
@@ -1476,6 +1573,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "stats", help="firing counts from the precheck hook's firing log")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p.add_argument("--all-repos", action="store_true",
+                   help="show the whole machine-global log grouped per repo "
+                        "(default: only the current repo's records)")
 
     p = _add(sub, "gc", help="clean machine state (markers, firing log); "
                              "report .scars/ hygiene (never touches .scars/)")

@@ -1697,6 +1697,93 @@ def test_stats_violations_default_to_zero_no_crash(repo, capsys, monkeypatch):
     assert per_scar_1["violations"] == 0
 
 
+def test_stats_filters_out_other_repos_records(repo, capsys, monkeypatch):
+    """The firing log is machine-global; stats must scope to the current repo
+    (#137). Scar ids are per-repo sequential ints, so a foreign repo's #1 is a
+    DIFFERENT scar than this repo's #1 — counting it both inflates the count
+    and corrupts never-fired/advisory math."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    (repo / ".scars" / "0002-b.deadend.md").write_text(_active_scar(2, "Scar two"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        # Foreign repo: colliding id (#1) and an id this repo doesn't have (#9)
+        {"ts": "2026-06-12T10:00:00", "repo": "/somewhere/else", "target": "x",
+         "scar_ids": [1, 9], "count": 2},
+        {"ts": "2026-06-13T10:00:00", "repo": "/somewhere/else", "target": "x",
+         "violation_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["repo"] == str(repo)
+    assert data["total_firings"] == 1
+    assert data["per_scar"] == [{"id": 1, "count": 1, "violations": 0}]
+    assert data["last_fired"] == "2026-06-10T10:00:00"
+    assert data["never_fired"] == [2]
+
+
+def test_stats_excludes_records_missing_repo_field(repo, capsys, monkeypatch):
+    """A record with no repo field cannot be attributed to this repo — exclude
+    it from the scoped view rather than guessing (#137)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 0
+    assert data["never_fired"] == [1]
+
+
+def test_stats_survives_non_dict_log_lines(repo, capsys, monkeypatch):
+    """The log is written best-effort from a fail-open hook, so any JSON shape
+    can appear (landmine #12): `null`, `[]`, bare numbers. Valid JSON that
+    isn't a dict must be skipped, not crash the reader at rec.get()."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    state = repo / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    (state / "firing-log.jsonl").write_text(
+        "null\n[]\n42\n"
+        + json.dumps({"ts": "2026-06-10T10:00:00", "repo": str(repo),
+                      "target": "x", "scar_ids": [1], "count": 1}) + "\n")
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 1
+
+
+def test_stats_all_repos_groups_per_repo_without_merging_ids(repo, capsys, monkeypatch):
+    """--all-repos shows the whole machine-global log grouped per repo; ids
+    from different repos are never summed into one row (#137)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T10:00:00", "repo": "/somewhere/else", "target": "x",
+         "scar_ids": [1, 9], "count": 2},
+        {"ts": "2026-06-13T10:00:00", "repo": "/somewhere/else", "target": "x",
+         "violation_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--all-repos", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["all_repos"] is True
+    groups = {g["repo"]: g for g in data["repos"]}
+    assert groups[str(repo)]["total_firings"] == 1
+    assert groups[str(repo)]["per_scar"] == [{"id": 1, "count": 1, "violations": 0}]
+    other = groups["/somewhere/else"]
+    assert other["total_firings"] == 2
+    assert {"id": 1, "count": 1, "violations": 1} in other["per_scar"]
+    assert {"id": 9, "count": 1, "violations": 0} in other["per_scar"]
+
+
 # ---------------------------------------------------------------------------
 # scar reanchor (#111) — orphan recovery v1: propose new anchors for
 # orphaned/partial-rot scars. Propose-only by default, read-only. --apply
