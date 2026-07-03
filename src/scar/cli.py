@@ -24,7 +24,7 @@ from .match import (
     rank_matches_for_edit,
     rank_matches_for_paths,
 )
-from .model import parse_scar_text
+from .model import Scar, parse_scar_text
 from .evidence import _git, unreachable_evidence
 from .orphan import (
     GitError,
@@ -1427,6 +1427,130 @@ def _harvest_precision(repo: Path, args) -> int:
     return 0
 
 
+# --- harvest --write (#136: cold-start bridge) -----------------------------
+# Mined candidates are ~13% precision; the cap keeps a first run from burying
+# the reviewer in dozens of mostly-noise drafts.
+_WRITE_CAP = 20
+
+# Section -> scar type, mirroring the section titles rendered above: reverts
+# and deletions read as tried-and-failed (deadend); flapping values and
+# keep-out comments read as looks-wrong-but-intentional (fence).
+_WRITE_SCAR_TYPES = {"reverts": "deadend", "deleted_components": "deadend",
+                     "flapping": "fence", "comments": "fence"}
+
+
+def _write_slug(title: str) -> str:
+    import re as _re
+    s = _re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return s[:60].rstrip("-") or "signal"
+
+
+def _write_anchors(repo: Path, section: str, c: dict, tracked: set[str]) -> list[str]:
+    """Live tracked paths this candidate can anchor to — empty list means the
+    candidate would be an orphan at birth (dead anchors) and must be skipped.
+    Reverts carry no path themselves; pull the reverted commit's files."""
+    from .harvest import _git as _hgit
+    if section == "reverts":
+        files = [ln.strip() for ln in
+                 _hgit(repo, "show", "--name-only", "--format=", c["commit"]).splitlines()
+                 if ln.strip()]
+        return [f for f in files if f in tracked][:3]
+    from .harvest import _SECTION_TYPES, _candidate_path
+    path = _candidate_path(_SECTION_TYPES[section], c)
+    return [path] if path in tracked else []
+
+
+def _write_title(section: str, c: dict) -> str:
+    if section == "reverts":
+        return f"Reverted: {c['subject']}"
+    if section == "deleted_components":
+        return f"Deleted component: {c['component']}"
+    if section == "flapping":
+        return f"Flapping value {c['key']} in {c['file']}"
+    return "Keep-out comment in " + c["location"].split(":", 1)[0]
+
+
+def _write_evidence(section: str, c: dict) -> str:
+    if section == "reverts":
+        return f"commit: {c['commit']}"
+    if section == "deleted_components":
+        return f"commit: {c['death_commit']}"
+    if section == "flapping":
+        return f"note: harvest flapping signal {c['sequence']} in {c['file']}"
+    return f"note: harvest comment signal at {c['location']}"
+
+
+def _harvest_write(repo: Path, args) -> int:
+    """Render the top-N live-anchored harvest candidates as reviewable
+    candidate files in .scars/candidates/ (#136). Drafts only: status
+    candidate, low confidence, provenance in the body — the human promotes or
+    deletes. Never writes into .scars/ root; never overwrites; skips (and
+    reports) candidates whose paths are gone from the tree."""
+    from .harvest import _git as _hgit, harvest
+    n = args.write
+    if n < 1 or n > _WRITE_CAP:
+        print(f"harvest --write: N must be 1..{_WRITE_CAP} — mined candidates "
+              "run ~13% precision, more drafts than that buries the reviewer")
+        return 1
+    cand_dir = repo / ".scars" / "candidates"
+    if not cand_dir.is_dir():
+        print(f"no .scars/candidates/ in {repo} — run `scar init` there first")
+        return 1
+
+    result = harvest(repo)
+    tracked = set(_hgit(repo, "ls-files").splitlines())
+    flat = [(key, c) for key, cands in result.items() for c in cands]
+    flat.sort(key=lambda kc: kc[1]["score"], reverse=True)
+
+    today = time.strftime("%Y-%m-%d")
+    written: list[str] = []
+    skipped_dead: list[str] = []
+    skipped_existing: list[str] = []
+    taken = 0  # written + already-present: an existing draft still occupies
+    for section, c in flat:  # its top-N slot, else rerun would fall through
+        if taken == n:       # to lower-ranked candidates (not idempotent)
+            break
+        anchors = _write_anchors(repo, section, c, tracked)
+        if not anchors:
+            skipped_dead.append(c["id"])
+            continue
+        title = _write_title(section, c)
+        name = f"harvest-{_write_slug(title)}.md"
+        if (cand_dir / name).exists():
+            skipped_existing.append(name)
+            taken += 1
+            continue
+        body = (
+            f"Mined by `scar harvest` from git history — UNVERIFIED draft "
+            f"(~13% precision expected).\n"
+            f"Signal: {_HARVEST_FMT[section](c)}\n\n"
+            f"A human must review this: confirm the constraint is real, rewrite "
+            f"this body with\nthe actual why, then `scar promote {name}` — or "
+            f"delete the file if the signal\nis noise.")
+        scar = Scar(type=_WRITE_SCAR_TYPES[section], title=title, severity="low",
+                    confidence=0.3, created=today, authors=["scar-harvest"],
+                    path_anchors=anchors,
+                    evidence=[_write_evidence(section, c)],
+                    status="candidate", body=body)
+        (cand_dir / name).write_text(scar.to_text(), encoding="utf-8")
+        written.append(name)
+        taken += 1
+
+    print(f"harvest --write: {len(written)} candidate draft(s) -> "
+          f"{cand_dir.relative_to(repo) if cand_dir.is_relative_to(repo) else cand_dir}")
+    for name in written:
+        print(f"  {name}")
+    if skipped_dead:
+        print(f"  skipped {len(skipped_dead)} candidate(s) with no live tracked "
+              f"path (would be orphans at birth): {', '.join(skipped_dead)}")
+    if skipped_existing:
+        print(f"  skipped {len(skipped_existing)} — file(s) already exist: "
+              f"{', '.join(sorted(set(skipped_existing)))}")
+    if written:
+        print("  next: review each draft, then `scar promote` it — or delete it")
+    return 0
+
+
 def _cmd_harvest(args) -> int:
     from .harvest import GitError, harvest  # subprocess-heavy; import only when used
     repo = Path(args.repo).resolve()
@@ -1437,6 +1561,9 @@ def _cmd_harvest(args) -> int:
 
         if args.precision:
             return _harvest_precision(repo, args)
+
+        if args.write is not None:
+            return _harvest_write(repo, args)
 
         result = harvest(repo)
     except GitError as exc:
@@ -1623,6 +1750,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=None,
                    help="show the N highest-scoring candidates across all sections "
                         "(raw score, no cross-type normalization)")
+    p.add_argument("--write", type=int, default=None, metavar="N",
+                   help=f"write the top-N live-anchored candidates as reviewable "
+                        f"draft files in .scars/candidates/ (max {_WRITE_CAP}; "
+                        f"never overwrites, human promotes or deletes)")
     p.add_argument("--label", nargs=2, metavar=("ID", "LABEL"), default=None,
                    help="record a curation judgement: <id> keep|discard "
                         "(appends one line to .scars/harvest-labels.jsonl)")
