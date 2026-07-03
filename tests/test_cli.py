@@ -1145,6 +1145,120 @@ def test_harvest_label_writes_to_new_default_path_not_old(harvest_repo):
     assert not (harvest_repo / "experiments" / "harvest" / "labels.jsonl").exists()
 
 
+# --- harvest --write (#136: cold-start bridge) ---
+
+@pytest.fixture
+def harvest_write_repo(tmp_path):
+    """Synthetic history with LIVE-path signals (unlike harvest_repo, whose
+    signal paths all die): a surviving flapping config, a DO-NOT comment on a
+    tracked file, a revert whose file survives — plus an initialized .scars/."""
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(work.parent, "init", "-q", "-b", "main", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    cfg = work / "deploy.yaml"
+    cfg.write_text("replicas: 1\n")
+    (work / "keep.py").write_text("x = 1  # DO NOT remove: breaks prod boot\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "feat: initial config")
+    cfg.write_text("replicas: 3\n")
+    _git(work, "commit", "-qam", "feat: scale up")
+    cfg.write_text("replicas: 1\n")
+    _git(work, "commit", "-qam", "fix: revert replicas, instance broke")
+    init_scars(work)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "chore: scar init")
+    return work
+
+
+def test_harvest_write_creates_reviewable_candidate_files(harvest_write_repo, capsys):
+    """--write N renders the top-N live-anchored candidates as candidate files
+    in .scars/candidates/ — parseable, lint-clean, status candidate, with a
+    provenance body pointing the human at promote-or-delete (#136)."""
+    from scar.store import parse_scar_text
+    from scar.lint import lint_text
+    cand_dir = harvest_write_repo / ".scars" / "candidates"
+    before = set(cand_dir.glob("*.md"))
+    assert main(["harvest", str(harvest_write_repo), "--write", "2"]) == 0
+    out = capsys.readouterr().out
+    written = set(cand_dir.glob("*.md")) - before
+    assert len(written) == 2
+    for f in written:
+        text = f.read_text(encoding="utf-8")
+        scar = parse_scar_text(text)
+        assert scar.status == "candidate"
+        assert scar.type in ("deadend", "fence")
+        assert scar.path_anchors, f"{f.name}: no path anchor"
+        assert scar.evidence, f"{f.name}: no evidence"
+        assert "harvest" in scar.body.lower()
+        # The promote instruction must be runnable as written: promote matches
+        # against candidate FILENAMES, so a .scars/candidates/ path prefix
+        # makes the suggested command fail (verified live).
+        assert f"`scar promote {f.name}`" in scar.body
+        errors = [fi for fi in lint_text(text) if fi.level == "error"]
+        assert errors == [], f"{f.name}: lint errors {errors}"
+        assert f.name in out  # each written file is reported
+
+
+def test_harvest_write_anchors_only_tracked_paths(harvest_repo, capsys):
+    """Candidates whose paths are gone from the tree (harvest_repo's all die)
+    are skipped — a dead anchor would be an orphan at birth — and the skip is
+    reported, never silent (#136)."""
+    init_scars(harvest_repo)
+    cand_dir = harvest_repo / ".scars" / "candidates"
+    before = set(cand_dir.glob("*.md"))
+    assert main(["harvest", str(harvest_repo), "--write", "5"]) == 0
+    out = capsys.readouterr().out.lower()
+    written = set(cand_dir.glob("*.md")) - before
+    tracked = set(subprocess.run(
+        ["git", "ls-files"], cwd=harvest_repo, capture_output=True,
+        text=True, check=True).stdout.splitlines())
+    from scar.store import parse_scar_text
+    for f in written:
+        scar = parse_scar_text(f.read_text(encoding="utf-8"))
+        for anchor in scar.path_anchors:
+            assert anchor in tracked, f"{f.name}: dead anchor {anchor}"
+    assert "skipped" in out
+
+
+def test_harvest_write_is_idempotent(harvest_write_repo, capsys):
+    """A second --write run must not duplicate or overwrite existing candidate
+    files — same slugs are skipped and reported (#136)."""
+    cand_dir = harvest_write_repo / ".scars" / "candidates"
+    assert main(["harvest", str(harvest_write_repo), "--write", "2"]) == 0
+    first = {f.name: f.read_text(encoding="utf-8") for f in cand_dir.glob("*.md")}
+    capsys.readouterr()
+    assert main(["harvest", str(harvest_write_repo), "--write", "2"]) == 0
+    out = capsys.readouterr().out.lower()
+    second = {f.name: f.read_text(encoding="utf-8") for f in cand_dir.glob("*.md")}
+    assert second == first
+    assert "exist" in out
+
+
+def test_harvest_write_rejects_over_cap(harvest_write_repo, capsys):
+    """--write is hard-capped: mined candidates are ~13% precision, so dumping
+    dozens of drafts buries the reviewer (#136)."""
+    assert main(["harvest", str(harvest_write_repo), "--write", "25"]) == 1
+    out = capsys.readouterr().out
+    assert "20" in out  # the cap is named
+
+
+def test_harvest_write_requires_scars_dir(tmp_path, capsys):
+    """--write needs .scars/candidates/ to exist — point the user at scar init
+    instead of scattering files (#136)."""
+    work = tmp_path / "bare"
+    work.mkdir()
+    _git(work.parent, "init", "-q", "-b", "main", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "a.py").write_text("x = 1  # DO NOT remove\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "feat: a")
+    assert main(["harvest", str(work), "--write", "1"]) == 1
+    assert "scar init" in capsys.readouterr().out
+
+
 def test_harvest_precision_reads_fall_back_to_old_path_when_new_absent(harvest_repo, capsys):
     # An existing local label set at the pre-#106 location must not be
     # silently orphaned by the path move — reads fall back to it.
