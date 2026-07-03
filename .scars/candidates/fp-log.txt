@@ -7,3 +7,4 @@
 2026-06-29 — FP: 'revert' was #54 harvest revert-signal discussion; corrections were process steering (wait for investigation, repeat question); no approach tried-and-abandoned.
 2026-07-01 — false trigger: signals were process corrections (docs→vault, obsidian skill) + stale-pyc phantom test red + PR-gate Refs→Closes switch; no code approach abandoned (all work shipped: #98/#100/#86); learnings captured in agent memory, not scar-worthy
 2026-07-01: no abandoned approach — signals came from tool slips (sd regex mangling plugin.json, fixed via direct edits) and multi-workstream churn; the one real discovery (git -M swallows content-move fixtures) is already encoded in shipped reanchor tests
+2026-07-03 draft-check: reset_hard signals predate session; #137 stats fix was straight TDD, nothing abandoned
