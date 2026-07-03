@@ -49,6 +49,47 @@ def test_init_creates_layout_and_reports(repo, capsys):
     assert ".scars" in capsys.readouterr().out
 
 
+# --- init guided first-run (#136 item 2) ---
+
+def test_init_prints_harvest_onramp_when_history_exists(repo, capsys):
+    """A repo with commits has minable history — init must point the user at
+    harvest and hook install so first-run value isn't zero (#136). The
+    suggested commands must be runnable as printed."""
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "a.py").write_text("x = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "feat: a")
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    assert "scar harvest --top-k 10" in out
+    assert "scar harvest --write 5" in out
+    assert "scar hook install" in out
+    assert "scar hook install --git" in out
+
+
+def test_init_output_unchanged_in_empty_git_repo(repo, capsys):
+    """Zero commits = nothing to harvest — the on-ramp would suggest commands
+    that come back empty. Output stays exactly the two legacy lines (#136)."""
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    assert "harvest" not in out
+    assert "hook" not in out
+    assert "initialized" in out
+
+
+def test_init_output_unchanged_outside_git(tmp_path, monkeypatch, capsys):
+    """No git at all — same legacy output, and init must not crash on the
+    history probe."""
+    work = tmp_path / "plain"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    assert "harvest" not in out
+    assert "initialized" in out
+
+
 def test_lint_clean_repo_exits_zero(repo, capsys):
     init_scars(repo)
     assert main(["lint"]) == 0
