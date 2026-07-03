@@ -88,6 +88,21 @@ def test_missing_sha_flagged(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# TEST 2b: an inline comment after the SHA must not void the receipt (#144) —
+# the missing warning has to survive documentation-style evidence lines
+# (the template itself ships them with comments).
+# ---------------------------------------------------------------------------
+
+def test_missing_sha_flagged_despite_inline_comment(tmp_path):
+    _init_git(tmp_path)
+    _commit(tmp_path, "a.py")
+    store = _store_with_scar(tmp_path, _scar(
+        id=1, evidence=["commit: deadbeef  # receipt for the failed approach"]))
+    findings = unreachable_evidence(store, tmp_path)
+    assert findings == [UnreachableEvidence(scar_id=1, sha="deadbeef", reason="missing")]
+
+
+# ---------------------------------------------------------------------------
 # TEST 3: a SHA that exists but is NOT an ancestor of HEAD → "off-history"
 # ---------------------------------------------------------------------------
 

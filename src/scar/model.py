@@ -121,7 +121,13 @@ def parse_scar_text(text: str) -> Scar:
     authors = [a.strip().strip('"').strip("'")
                for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
 
-    evidence = [f"{m1.group(1)}: {m1.group(2).strip().strip('\"')}" for m1 in re.finditer(
+    # Evidence values get the same inline-comment strip as scalar fields (#69,
+    # #144): the template documents evidence lines WITH trailing comments, and
+    # an unstripped comment silently voids the receipt downstream (a commit SHA
+    # with a comment fails _commit_shas' regex, hiding it from the
+    # unreachable-evidence check). Quoted values keep their '#'.
+    evidence = [f"{m1.group(1)}: {_strip_inline_comment(m1.group(2)).strip().strip('\"')}"
+                for m1 in re.finditer(
         r"^\s*-\s*(commit|pr|issue|incident|note|url):\s*(.+)\s*$", front, re.MULTILINE)]
 
     return Scar(

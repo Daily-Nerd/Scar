@@ -143,6 +143,39 @@ Body.
     assert s2.evidence == s.evidence
 
 
+def test_evidence_inline_comment_stripped(  # noqa: D103
+):
+    """An inline comment after an evidence value must not become part of the
+    value (#144): `- commit: e665a43  # why` silently voided the receipt —
+    _commit_shas' SHA regex failed and the unreachable check skipped the scar.
+    The template itself ships evidence lines with inline comments, so this is
+    the documented style, not an edge case. Same #69 semantics as scalar
+    fields: unquoted values strip the comment, quoted values keep their '#'."""
+    text = """\
+---
+type: landmine
+title: Evidence comment footgun
+severity: medium
+confidence: 0.7
+anchors:
+  - path: src/scar/
+evidence:
+  - commit: e665a43  # why this sha matters
+  - pr: 123                # at least one receipt: pr, issue, url, commit
+  - note: "quoted # stays data"
+status: active
+---
+
+Body.
+"""
+    s = parse_scar_text(text)
+    assert s.evidence == [
+        "commit: e665a43",
+        "pr: 123",
+        "note: quoted # stays data",
+    ]
+
+
 def test_issue_and_url_evidence_parse_and_roundtrip():
     text = """\
 ---
