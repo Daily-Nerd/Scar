@@ -265,6 +265,13 @@ def _violations_for_target(firing: list, root: Path, rel_path: str,
     for source, scar in firing:
         if not scar.violation:
             continue
+        rel_source = source.relative_to(root)
+        # A scar's own body quotes the forbidden construct by design — never
+        # count edits to the scar file itself as a violation (#148). Exclusion
+        # is per-file only: .scars/-anchored violations (e.g. scar #5) must
+        # still fire on OTHER scar files.
+        if str(rel_source) == rel_path:
+            continue
         # Candidacy: path-proximity anchors only (empty content -> content
         # anchors can never contribute, mirroring the injection anchor gate).
         strength, _ = _anchor_signal(scar, rel_path, "", root)
@@ -273,7 +280,7 @@ def _violations_for_target(firing: list, root: Path, rel_path: str,
         excerpt = _violation_excerpt(scar.violation, new_content)
         if excerpt is None:
             continue
-        out.append(Violation(scar=scar, source=source.relative_to(root),
+        out.append(Violation(scar=scar, source=rel_source,
                              path=rel_path, excerpt=excerpt))
     return out
 
