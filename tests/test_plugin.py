@@ -41,6 +41,16 @@ def test_plugin_skill_mirror_is_byte_identical_to_canonical():
     assert mir_tmpl == can_tmpl
 
 
+def test_skill_teaches_violation_field():
+    # #151: agents author scars by following SKILL.md's instructions; the
+    # violation: tripwire must be taught there, not only hinted at in a
+    # template comment, or scars ship unarmed and the fired→violated
+    # metric loses coverage.
+    skill = (ROOT / "src" / "scar" / "skills" / "scar-authoring" / "SKILL.md").read_text(encoding="utf-8")
+    assert "violation:" in skill
+    assert "check --diff" in skill  # verify-both-cases instruction
+
+
 def test_plugin_hooks_invoke_resolver_wrapper():
     """#113: hooks must go through the plugin-root wrapper, never a bare
     `scar` — a bare command silently no-ops forever when the plugin
