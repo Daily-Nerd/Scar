@@ -372,3 +372,64 @@ def test_violation_regex_matches_across_line_boundaries(tmp_path):
     hits = find_violations(store, "payments/test.py", "foo\nbar\n")
     assert len(hits) == 1
     assert hits[0].excerpt == "foo"
+
+
+def _write_scars_anchored_scar(tmp_path, scar_id, slug):
+    """One scar path-anchored to .scars/ itself, carrying SLEEP_VIOLATION.
+    Its body quotes the forbidden construct, as any well-written scar must."""
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    init_scars(tmp_path)
+    lines = [
+        "---",
+        f"id: {scar_id}",
+        "type: landmine",
+        f"title: Sleep cap {scar_id}",
+        "severity: high",
+        "confidence: 0.9",
+        "created: 2026-07-03",
+        "authors: [mara]",
+        "anchors:",
+        "  - path: .scars/",
+        f'violation: "{SLEEP_VIOLATION}"',
+        "evidence:",
+        "  - issue: 148",
+        "status: active",
+        "---",
+        "",
+        "Never write time.sleep(3) in payments code.",
+        "",
+    ]
+    rel = f".scars/{slug}"
+    (tmp_path / rel).write_text("\n".join(lines))
+    return ScarStore.discover(tmp_path), rel
+
+
+def test_violation_never_fires_on_scars_own_file(tmp_path):
+    # Editing a scar's own file must not trip that scar's violation regex —
+    # the body quotes the forbidden construct by design (issue #148).
+    store, rel = _write_scars_anchored_scar(tmp_path, 21, "0021-own.landmine.md")
+    hits = find_violations(store, rel, "avoid time.sleep(3) here")
+    assert hits == []
+
+
+def test_violation_still_fires_on_other_scar_file(tmp_path):
+    # Self-exclusion only: a .scars/-anchored violation (scar #5's design)
+    # must still fire when a DIFFERENT scar file gains offending content.
+    store, _ = _write_scars_anchored_scar(tmp_path, 21, "0021-own.landmine.md")
+    hits = find_violations(store, ".scars/0022-other.landmine.md",
+                           "evidence quoting time.sleep(3)")
+    assert len(hits) == 1
+    assert hits[0].scar.id == 21
+
+
+def test_diff_violation_never_fires_on_scars_own_file(tmp_path):
+    store, rel = _write_scars_anchored_scar(tmp_path, 21, "0021-own.landmine.md")
+    diff = f"""\
+diff --git a/{rel} b/{rel}
+--- a/{rel}
++++ b/{rel}
+@@ -0,0 +1 @@
++avoid time.sleep(3) here
+"""
+    hits = find_violations_for_diff(store, diff)
+    assert hits == []
