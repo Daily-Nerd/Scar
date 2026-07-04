@@ -68,21 +68,32 @@ def _cmd_init(args) -> int:
     from .store import EXAMPLE_SEED, EXAMPLE_SEED_NAME
     fresh = not (Path.cwd() / ".scars").is_dir()
     scars = init_scars(Path.cwd())
-    print(f"initialized {scars} (README.md, template.md, candidates/)")
-    print("convention: new scars -> candidates/, humans promote via `scar promote`")
     # Example seed (#136 item 3): FRESH init only — the user deleting it is a
     # decision, not damage, so re-running init never resurrects it.
+    seeded = False
     if fresh and not getattr(args, "no_seed", False):
         example = scars / "candidates" / EXAMPLE_SEED_NAME
         example.write_text(EXAMPLE_SEED, encoding="utf-8")
-        print(f"seeded a worked example: candidates/{EXAMPLE_SEED_NAME} "
-              "(read once, delete anytime; --no-seed skips)")
-    if _has_git_history(Path.cwd()):
-        print("next steps (this repo has minable history):")
-        print("  preview candidates:  scar harvest --top-k 10")
-        print("  write top drafts:    scar harvest --write 5  (-> .scars/candidates/, review + promote)")
-        print("  wire your agent:     scar hook install        (Claude Code)")
-        print("                       scar hook install --git  (any agent, git-native)")
+        seeded = True
+    has_history = _has_git_history(Path.cwd())
+    data = {"scars": str(scars), "seeded": seeded,
+            "example": EXAMPLE_SEED_NAME, "has_history": has_history}
+
+    def plain():
+        print(f"initialized {scars} (README.md, template.md, candidates/)")
+        print("convention: new scars -> candidates/, humans promote via `scar promote`")
+        if seeded:
+            print(f"seeded a worked example: candidates/{EXAMPLE_SEED_NAME} "
+                  "(read once, delete anytime; --no-seed skips)")
+        if has_history:
+            print("next steps (this repo has minable history):")
+            print("  preview candidates:  scar harvest --top-k 10")
+            print("  write top drafts:    scar harvest --write 5  (-> .scars/candidates/, review + promote)")
+            print("  wire your agent:     scar hook install        (Claude Code)")
+            print("                       scar hook install --git  (any agent, git-native)")
+
+    output.render(data=data, json_flag=False,
+                  tty=lambda: _init_rich(data), plain=plain)
     return 0
 
 
@@ -138,6 +149,73 @@ _TYPE_STYLE = {"deadend": "red", "fence": "yellow", "landmine": "magenta"}
 
 def _type_label(t: str) -> str:
     return f"[{_TYPE_STYLE.get(t, 'white')}]{t}[/]"
+
+
+def _init_rich(data: dict) -> None:
+    from rich.panel import Panel
+    lines = [f"initialized [bold]{data['scars']}[/] (README.md, template.md, candidates/)",
+             "convention: new scars -> [bold]candidates/[/], humans promote via `scar promote`"]
+    if data["seeded"]:
+        lines.append(f"seeded a worked example: [bold]candidates/{data['example']}[/] "
+                     "(read once, delete anytime; --no-seed skips)")
+    if data["has_history"]:
+        lines += ["", "[bold]next steps[/] (this repo has minable history):",
+                  "  preview candidates:  [cyan]scar harvest --top-k 10[/]",
+                  "  write top drafts:    [cyan]scar harvest --write 5[/]  "
+                  "(-> .scars/candidates/, review + promote)",
+                  "  wire your agent:     [cyan]scar hook install[/]        (Claude Code)",
+                  "                       [cyan]scar hook install --git[/]  (any agent, git-native)"]
+    output.console.print(Panel("\n".join(lines), title="scar init", border_style="green"))
+
+
+def _promote_rich(data: dict) -> None:
+    from rich.panel import Panel
+    lines = [f"[green]promoted[/] -> [bold]{data['promoted']}[/]"]
+    if data["reviewer_from_git"]:
+        lines.append(f"reviewer: {data['reviewer']} [dim](from git config)[/]")
+    if data["born_orphan"]:
+        lines.append("[yellow]advisory:[/] this scar's anchors resolve to nothing in the "
+                     "current tree (born orphan-detected) — confirm the anchors are right")
+    output.console.print(Panel("\n".join(lines), title="scar promote", border_style="green"))
+
+
+def _harvest_rich(repo_name: str, total: int, result: dict) -> None:
+    # Text (not markup) for candidate lines — they carry literal [brackets]
+    # that rich markup would eat (same trap the recall lines hit in daimon).
+    from rich.panel import Panel
+    from rich.text import Text
+    console = output.console
+    console.print(Panel(f"{total} raw candidate(s) — curation required, "
+                        "expect ~13% precision",
+                        title=f"scar harvest — {repo_name}", border_style="cyan"))
+    for key, title, _fmt in _HARVEST_SECTIONS:
+        console.print(f"[bold]{title}[/] ({len(result[key])})")
+        for c in result[key]:
+            console.print(Text(_harvest_line(key, c)))
+        console.print("")
+
+
+def _harvest_top_rich(repo_name: str, total: int, top) -> None:
+    from rich.panel import Panel
+    from rich.text import Text
+    console = output.console
+    console.print(Panel(f"top {len(top)} of {total} raw, cross-section by raw score — "
+                        "curation required, expect ~13% precision",
+                        title=f"scar harvest — {repo_name}", border_style="cyan"))
+    for key, c in top:
+        console.print(Text(_harvest_line(key, c)))
+
+
+def _agent_doctor_rich(lines) -> None:
+    from rich.panel import Panel
+    from rich.text import Text
+    body = Text()
+    for i, line in enumerate(lines):
+        if i:
+            body.append("\n")
+        bad = "missing" in line or "not found" in line or "no-op" in line
+        body.append(line, style="yellow" if bad else "")
+    output.console.print(Panel(body, title="scar agent doctor", border_style="cyan"))
 
 
 def _status_rich(data: dict) -> None:
@@ -526,18 +604,26 @@ def _cmd_promote(args) -> int:
     except ValueError as exc:
         print(str(exc))
         return 1
-    print(f"promoted -> {new_path.relative_to(store.root)}")
-    if from_git:
-        print(f"  reviewer: {reviewer} (from git config)")
-
     # Non-blocking advisory: a freshly promoted scar whose anchors already
     # resolve to nothing is born orphan-detected. Promote still succeeds — the
     # reviewer may anchor to code that does not exist yet on purpose.
     promoted = parse_scar_text(new_path.read_text(encoding="utf-8"))
     ctx = _repo_context(store)
-    if ctx is not None and anchors_all_dead(promoted, ctx):
-        print("  advisory: this scar's anchors resolve to nothing in the current "
-              "tree (born orphan-detected) — confirm the anchors are right")
+    born_orphan = ctx is not None and anchors_all_dead(promoted, ctx)
+    rel = new_path.relative_to(store.root)
+    data = {"promoted": str(rel), "reviewer": reviewer or None,
+            "reviewer_from_git": from_git, "born_orphan": born_orphan}
+
+    def plain():
+        print(f"promoted -> {rel}")
+        if from_git:
+            print(f"  reviewer: {reviewer} (from git config)")
+        if born_orphan:
+            print("  advisory: this scar's anchors resolve to nothing in the current "
+                  "tree (born orphan-detected) — confirm the anchors are right")
+
+    output.render(data=data, json_flag=False,
+                  tty=lambda: _promote_rich(data), plain=plain)
     return 0
 
 
@@ -1608,28 +1694,46 @@ def _cmd_harvest(args) -> int:
         flat = [(key, c) for key, cands in result.items() for c in cands]
         flat.sort(key=lambda kc: kc[1]["score"], reverse=True)
         top = flat[:args.top_k]
-        print(f"# Harvest top {len(top)} — {repo.name} "
-              f"(of {total} raw, cross-section by raw score; "
-              "curation required, expect ~13% precision)\n")
-        for key, c in top:
-            print(_harvest_line(key, c))
+
+        def plain_top():
+            print(f"# Harvest top {len(top)} — {repo.name} "
+                  f"(of {total} raw, cross-section by raw score; "
+                  "curation required, expect ~13% precision)\n")
+            for key, c in top:
+                print(_harvest_line(key, c))
+
+        output.render(data={"top": [{"section": k, **c} for k, c in top]},
+                      json_flag=False,
+                      tty=lambda: _harvest_top_rich(repo.name, total, top),
+                      plain=plain_top)
         return 0
 
-    print(f"# Harvest candidates — {repo.name} "
-          f"({total} raw; curation required, expect ~13% precision)\n")
-    for key, title, _fmt in _HARVEST_SECTIONS:
-        print(f"## {title} ({len(result[key])})")
-        for c in result[key]:
-            print(_harvest_line(key, c))
-        print()
+    def plain_all():
+        print(f"# Harvest candidates — {repo.name} "
+              f"({total} raw; curation required, expect ~13% precision)\n")
+        for key, title, _fmt in _HARVEST_SECTIONS:
+            print(f"## {title} ({len(result[key])})")
+            for c in result[key]:
+                print(_harvest_line(key, c))
+            print()
+
+    output.render(data=result, json_flag=False,
+                  tty=lambda: _harvest_rich(repo.name, total, result),
+                  plain=plain_all)
     return 0
 
 
 def _cmd_agent(args) -> int:
     from .agent import config, doctor, skill
     if args.agent_command == "doctor":
-        for line in doctor(Path.cwd()):
-            print(line)
+        lines = doctor(Path.cwd())
+
+        def plain():
+            for line in lines:
+                print(line)
+
+        output.render(data={"doctor": lines}, json_flag=False,
+                      tty=lambda: _agent_doctor_rich(lines), plain=plain)
         return 0
     if args.agent_command == "skill":
         print(skill())
