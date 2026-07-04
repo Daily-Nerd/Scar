@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/Daily-Nerd/Scar/compare/v0.15.1...v0.16.0) (2026-07-04)
+
+
+### Features
+
+* **cli:** rich rendering for promote, harvest, agent doctor, and init ([#155](https://github.com/Daily-Nerd/Scar/issues/155)) ([02abf94](https://github.com/Daily-Nerd/Scar/commit/02abf94e3a01d0cc722dbf3b3039b27f033f93ad)), closes [#154](https://github.com/Daily-Nerd/Scar/issues/154)
+
+
+### Documentation
+
+* **skill:** teach the violation: tripwire in scar-authoring SKILL.md ([#152](https://github.com/Daily-Nerd/Scar/issues/152)) ([678721a](https://github.com/Daily-Nerd/Scar/commit/678721a5332ccea268ba5eabec0b37c16cae0d8d)), closes [#151](https://github.com/Daily-Nerd/Scar/issues/151)
+
 ## [0.15.1](https://github.com/Daily-Nerd/Scar/compare/v0.15.0...v0.15.1) (2026-07-04)
 
 
