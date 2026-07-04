@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/Daily-Nerd/Scar/compare/v0.16.0...v0.16.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **orphan:** scan full content for liveness; hint violation: for reintroduction guards ([#157](https://github.com/Daily-Nerd/Scar/issues/157)) ([757a1d1](https://github.com/Daily-Nerd/Scar/commit/757a1d1374922a7a83ec8546da88ecafd97470be))
+
 ## [0.16.0](https://github.com/Daily-Nerd/Scar/compare/v0.15.1...v0.16.0) (2026-07-04)
 
 
