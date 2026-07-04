@@ -86,8 +86,33 @@ self-match).
 - Injection is capped at ~3 scars / ~700 chars each — write tight: 5–15 lines,
   evidence cited inline.
 
+## Arming a Violation Tripwire (optional, high value)
+
+`violation: "<regex>"` turns a scar from advisory into measurable: after an
+edit to anchored code, the regex runs against the added lines — a match means
+the forbidden thing was done anyway, and the violation is logged (this feeds
+the fired→violated compliance metric).
+
+- **Arm only machine-checkable scars.** If the forbidden act has a concrete
+  code shape (`time\.sleep\(`, `except \(KeyError`, a banned API call), write
+  it. Prose-level deadends ("don't retry this architecture") stay
+  advisory-only — a tripwire that cannot be expressed as a regex honestly
+  should not exist.
+- **The regex is RAW.** Surrounding quotes are stripped; nothing else
+  un-escapes. Write it exactly as it must execute — `\b` stays `\b`, `\(`
+  stays `\(`. Doubling backslashes "for YAML" is the over-escape trap that
+  kills pattern anchors, and it kills violation regexes the same way.
+- **Prove both cases.** Before finishing, run a synthetic
+  `scar check --diff` twice: once with a diff that MUST fire the violation,
+  once with an innocent diff that must NOT. A tripwire verified only on the
+  firing case is untested on the case it will see most.
+- The scar's own file is excluded automatically — a scar quoting the
+  forbidden construct in its body cannot violate itself. Keep the pattern
+  tight anyway: it runs against every anchored edit.
+
 ## Verify Before Finishing
 
 - `scar lint` must pass.
 - At least one `evidence` receipt (commit / pr / incident / note) — without it
   the scar is challengeable on sight.
+- If you armed a `violation:` regex, both `check --diff` cases above proved out.
