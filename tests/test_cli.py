@@ -2632,3 +2632,46 @@ def test_agent_doctor_tty_renders_rich(repo, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "scar agent doctor" in out  # rich-only framing
     assert "AGENTS.md" in out
+
+
+# ---------------------------------------------------------------------------
+# #156 part 2: a zero-match pattern anchor stays ROT (never silently "armed"),
+# and the report steers reintroduction guards toward violation:.
+# ---------------------------------------------------------------------------
+
+REINTRO_SCAR = """\
+---
+id: 8
+type: deadend
+title: never reintroduce the flux capacitor
+severity: medium
+confidence: 0.9
+created: 2026-07-04
+authors: [t]
+anchors:
+  - path: src/live/
+  - pattern: "flux_capacitor_v2"
+evidence:
+  - issue: 156
+status: active
+---
+Abandoned approach; the pattern guards against reintroduction.
+"""
+
+
+def test_lint_dead_pattern_stays_rot_and_hints_violation(tmp_path, monkeypatch, capsys):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    init_scars(tmp_path)
+    (tmp_path / "src" / "live").mkdir(parents=True)
+    (tmp_path / "src" / "live" / "mod.py").write_text("x = 1\n")
+    (tmp_path / ".scars" / "0008-reintro.deadend.md").write_text(REINTRO_SCAR)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "partial rot" in out or "partial-rot" in out  # still rot, never "armed"
+    assert "flux_capacitor_v2" in out                    # the dead pattern is named
+    assert "violation:" in out                           # migration hint present

@@ -23,8 +23,11 @@ from .store import ScarStore
 
 # Caller constants — used by the CLI batch that builds RepoContext from disk.
 # The detector itself is content-agnostic; callers honour these when reading files.
+# Files under the size cap load in FULL (#156): the old 8KB read-head made any
+# pattern whose only match sat past byte 8192 report dead — false partial-rot.
+# Matching itself still runs through the shared primitive's MAX_ANCHOR_SCAN
+# (64 KiB) bound, which keeps the ReDoS surface capped (see landmine #11).
 MAX_CONTENT_BYTES = 1024 * 1024      # 1 MB — skip oversized / binary files
-READ_HEAD_BYTES = 8 * 1024           # first 8 KB for content matching
 
 
 class GitError(RuntimeError):
@@ -88,8 +91,8 @@ def build_repo_context(repo: Path) -> RepoContext:
     """Build a RepoContext from a real repo: `git ls-files` for tracked paths,
     and a decoded text excerpt of each (skipping binary / oversize files).
 
-    Files larger than MAX_CONTENT_BYTES are skipped; the rest are read up to
-    READ_HEAD_BYTES. Undecodable (binary) files are tracked but their content
+    Files larger than MAX_CONTENT_BYTES are skipped; the rest are read in
+    full (#156). Undecodable (binary) files are tracked but their content
     is not loaded, so only their PATH can satisfy a pattern anchor."""
     repo = Path(repo)
     proc = subprocess.run(["git", "-C", str(repo), "ls-files"],
@@ -111,7 +114,7 @@ def build_repo_context(repo: Path) -> RepoContext:
         try:
             if fp.stat().st_size > MAX_CONTENT_BYTES:
                 continue
-            raw = fp.read_bytes()[:READ_HEAD_BYTES]
+            raw = fp.read_bytes()
             contents[rel] = raw.decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue  # missing, binary, or unreadable — path stays, content skipped

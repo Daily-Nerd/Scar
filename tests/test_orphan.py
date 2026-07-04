@@ -589,3 +589,39 @@ def test_detect_partial_rot_reports_rename_target(tmp_path):
     assert len(rot) == 1
     assert rot[0].renamed == {"src/old.py": "src/new.py"}
     assert detect_orphans(store, ctx, repo=tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# #156 (daimon#72): liveness scan-head truncation — a pattern whose only
+# match sits past the old 8KB READ_HEAD_BYTES boundary misreported as dead.
+# ---------------------------------------------------------------------------
+
+
+def test_build_repo_context_reads_beyond_8kb(tmp_path):
+    from scar.orphan import build_repo_context
+    deep = "x = 0\n" * 1500 + "GROUNDING_MARKER = 1\n"  # marker past byte 8192
+    _git_repo(tmp_path, {"deep.py": deep})
+    ctx = build_repo_context(tmp_path)
+    assert "GROUNDING_MARKER" in ctx.file_contents["deep.py"]
+
+
+def test_pattern_anchor_live_beyond_old_head(tmp_path):
+    from scar.orphan import _pattern_anchor_live, build_repo_context
+    deep = "x = 0\n" * 1500 + "GROUNDING_MARKER = 1\n"
+    _git_repo(tmp_path, {"deep.py": deep})
+    ctx = build_repo_context(tmp_path)
+    assert _pattern_anchor_live("GROUNDING_MARKER", ctx)
+
+
+def test_pattern_liveness_bound_is_max_anchor_scan(tmp_path):
+    # The honest residual (#156): content loads in full, but matching runs
+    # through the shared primitive's MAX_ANCHOR_SCAN (64 KiB) cap — the ReDoS
+    # bound (landmine #11). A match past that horizon stays dead ON PURPOSE;
+    # do not "fix" this without replacing the bound.
+    from scar.match import MAX_ANCHOR_SCAN
+    from scar.orphan import _pattern_anchor_live, build_repo_context
+    deep = "x = 0\n" * (MAX_ANCHOR_SCAN // 6 + 200) + "BEYOND_HORIZON = 1\n"
+    _git_repo(tmp_path, {"vast.py": deep})
+    ctx = build_repo_context(tmp_path)
+    assert "BEYOND_HORIZON" in ctx.file_contents["vast.py"]      # loaded...
+    assert not _pattern_anchor_live("BEYOND_HORIZON", ctx)       # ...but capped

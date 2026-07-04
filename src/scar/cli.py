@@ -117,18 +117,32 @@ def _dead_anchor_summary(finding) -> str:
     return "; ".join(dead)
 
 
+def _violation_migration_hint(finding) -> str:
+    """Appended when a finding's dead anchors include a pattern (#156): a
+    zero-match pattern is ALWAYS reported as rot — never silently 'armed' —
+    but a pattern meant to guard against REINTRODUCTION (healthy when absent)
+    has a proper home in the violation: field, where re-adding the forbidden
+    shape is logged instead of the anchor reading dead."""
+    if not finding.dead_pattern_anchors:
+        return ""
+    return (" — hint: a pattern that guards against reintroduction (healthy "
+            "when absent) belongs in violation:, not anchors")
+
+
 def _orphan_reason(finding) -> str:
     """Human description of why a finding is an orphan — distinguishes a scar
     with NO anchors (protects nothing) from one whose every anchor went dead."""
     if not finding.dead_path_anchors and not finding.dead_pattern_anchors:
         return "no anchors — scar protects nothing"
-    return "all anchors dead (" + _dead_anchor_summary(finding) + ")"
+    return ("all anchors dead (" + _dead_anchor_summary(finding) + ")"
+            + _violation_migration_hint(finding))
 
 
 def _partial_rot_reason(finding) -> str:
     """Human description of partial rot — which specific anchors went dead while
     the scar keeps firing on its survivors (#35)."""
-    return "partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
+    return ("partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
+            + _violation_migration_hint(finding))
 
 
 def _symbol_drift_reason(finding) -> str:
