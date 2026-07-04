@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/Daily-Nerd/Scar/compare/v0.15.0...v0.15.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **match:** never count a scar's own file as a violation target ([#149](https://github.com/Daily-Nerd/Scar/issues/149)) ([f9c3b72](https://github.com/Daily-Nerd/Scar/commit/f9c3b728fbef8596e486980453cf92274eee545c))
+
 ## [0.15.0](https://github.com/Daily-Nerd/Scar/compare/v0.14.0...v0.15.0) (2026-07-03)
 
 
