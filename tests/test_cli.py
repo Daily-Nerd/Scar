@@ -2587,3 +2587,48 @@ def test_gc_scars_dir_never_touched(repo, capsys, monkeypatch):
     assert main(["gc"]) == 0
     after = _hash_dir(repo / ".scars")
     assert before == after
+
+
+# ---------------------------------------------------------------------------
+# #154: rich tty branches for promote / harvest / agent doctor / init.
+# Plain non-tty byte-identity is locked by the tests above; these assert the
+# rich renderer runs and carries rich-only framing (panel titles) + content.
+# ---------------------------------------------------------------------------
+
+
+def test_init_tty_renders_rich_panel(repo, capsys, monkeypatch):
+    _force_tty(monkeypatch)
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    assert "scar init" in out          # panel title — absent from plain output
+    assert "candidates" in out
+
+
+def test_promote_tty_renders_rich_result(repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
+    _force_tty(monkeypatch)
+    assert main(["promote", "x.md"]) == 0
+    out = capsys.readouterr().out
+    assert "scar promote" in out       # rich-only framing
+    assert "promoted" in out
+
+
+def test_harvest_tty_renders_rich_header(repo, capsys, monkeypatch):
+    (repo / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T",
+                    "commit", "-qm", "init"], cwd=repo, check=True)
+    _force_tty(monkeypatch)
+    assert main(["harvest"]) == 0
+    out = capsys.readouterr().out
+    assert "scar harvest" in out       # rich-only framing
+    assert "curation required" in out
+
+
+def test_agent_doctor_tty_renders_rich(repo, capsys, monkeypatch):
+    _force_tty(monkeypatch)
+    assert main(["agent", "doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "scar agent doctor" in out  # rich-only framing
+    assert "AGENTS.md" in out
