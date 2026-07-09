@@ -42,6 +42,10 @@ def _is_redos_prone(pattern: str) -> bool:
 _UNSUPPORTED_ANCHOR = re.compile(
     r"^\s*-\s*(touch|breaks):", re.MULTILINE)
 
+# Markdown link syntax or a bare URL in a title is machine leakage from a
+# harvester, never something a human reviewer wrote as prose (#159).
+_MARKDOWN_IN_TITLE = re.compile(r"\[[^\]]*\]\([^)]*\)|https?://")
+
 
 @dataclass
 class Finding:
@@ -64,6 +68,10 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding("error", f"unknown type '{scar.type}' (expected one of {', '.join(TYPES)})"))
     if not scar.title:
         findings.append(Finding("error", "missing title"))
+    elif _MARKDOWN_IN_TITLE.search(scar.title):
+        findings.append(Finding(
+            "warning", "title carries a markdown link or bare URL — harvester "
+            "leakage, not prose; sanitize the title (and slug) before writing"))
     if scar.severity not in SEVERITIES:
         findings.append(Finding("error", f"invalid severity '{scar.severity}'"))
     if scar.status not in STATUSES:
