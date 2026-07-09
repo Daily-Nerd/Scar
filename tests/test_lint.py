@@ -53,6 +53,24 @@ def test_no_evidence_is_warning_not_error():
     assert not any(f.level == "error" for f in findings)
 
 
+def test_markdown_link_in_title_is_warning():
+    # Candidates are committable, reviewer-facing files; markdown link syntax
+    # in a title is harvester leakage, not prose (#159 — a downstream
+    # harvester shipped `title: "**PR [#172](https://...)** ..."` verbatim).
+    bad = GOOD.replace(
+        "title: The 7s sleep is intentional",
+        'title: "**PR [#172](https://github.com/o/r/pull/172)** broke boot"')
+    findings = lint_text(bad)
+    assert any(f.level == "warning" and "title" in f.message for f in findings)
+
+
+def test_bare_url_in_title_is_warning():
+    bad = GOOD.replace("title: The 7s sleep is intentional",
+                       "title: see https://example.com/why before touching")
+    findings = lint_text(bad)
+    assert any(f.level == "warning" and "title" in f.message for f in findings)
+
+
 def test_invalid_severity_is_error():
     findings = lint_text(GOOD.replace("severity: high", "severity: extreme"))
     assert any(f.level == "error" and "severity" in f.message for f in findings)

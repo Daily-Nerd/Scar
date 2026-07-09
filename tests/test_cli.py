@@ -1338,6 +1338,32 @@ def test_harvest_write_requires_scars_dir(tmp_path, capsys):
     assert "scar init" in capsys.readouterr().out
 
 
+def test_write_title_and_slug_sanitize_markdown_and_urls():
+    """Git text (revert subjects, squash-merge subjects) can carry markdown
+    links, emphasis, and bare URLs; leaked into a candidate they make the title
+    unreadable and the URL eats the whole 60-char slug budget — seen live as
+    `pr-172-https-github-com-daily-nerd-daimon-pull-172-issue-171.md` (#159)."""
+    from scar.cli import _write_slug, _write_title
+    c = {"subject": "**see [#172](https://github.com/Daily-Nerd/daimon/pull/172)**"
+                    " and https://example.com/long/path"}
+    title = _write_title("reverts", c)
+    assert title == "Reverted: see #172 and"
+    assert _write_slug(title) == "reverted-see-172-and"
+
+
+def test_write_slug_truncates_at_word_boundary():
+    """The 60-char slug cut must drop a severed trailing fragment, not keep it
+    — unless the slug is a single token with no boundary to cut at (#159)."""
+    from scar.cli import _write_slug
+    slug = _write_slug("Reverted: introduce comprehensive configuration "
+                       "management subsystem overhaul")
+    full = ("reverted-introduce-comprehensive-configuration-management-"
+            "subsystem-overhaul")
+    assert len(slug) <= 60
+    assert full.startswith(slug) and full[len(slug)] == "-"
+    assert _write_slug("x" * 80) == "x" * 60  # no boundary — keep the raw cut
+
+
 def test_harvest_precision_reads_fall_back_to_old_path_when_new_absent(harvest_repo, capsys):
     # An existing local label set at the pre-#106 location must not be
     # silently orphaned by the path move — reads fall back to it.
