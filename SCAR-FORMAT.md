@@ -61,6 +61,9 @@ so existing scars are unaffected. It will not become required in v0.x.
 
 Body: prose after the frontmatter, 5–15 lines. What happened, why, what a
 future editor must do instead — written for a reader with zero context.
+Qualification test before writing at all: *"Would this mistake plausibly
+recur in a different context?"* (arXiv:2607.13091). A one-off does not
+qualify, however painful it was.
 
 ## 3. Type semantics
 

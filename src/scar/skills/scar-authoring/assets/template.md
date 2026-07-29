@@ -1,5 +1,7 @@
 ---
 # COPY THIS FILE — do not edit the template itself.
+# First test: "Would this mistake plausibly recur in a different context?"
+# If not, it is not a scar (arXiv:2607.13091).
 # New scars: write to .scars/candidates/<slug>.md with status: candidate.
 # A human reviewer promotes to .scars/NNNN-<slug>.<type>.md with status: active.
 id: 0                      # assigned at promotion (next free NNNN)

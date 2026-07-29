@@ -23,6 +23,11 @@ touch anchored code. Your job here is to write a good one.
 
 ## When to Use
 
+First test, before anything else: *"Would this mistake plausibly recur in a
+different context?"* If yes, it qualifies; if it could only ever happen once,
+it does not (heuristic from arXiv:2607.13091, a production field report on
+accumulated behavioral rules). Then pick the type:
+
 - You **abandoned an approach** after trying it → `deadend`
 - You **kept code that looks wrong on purpose** → `fence`
 - You **found that changing A breaks B non-obviously** → `landmine`
@@ -56,7 +61,10 @@ its own `.scars/` body — the protection is dead but the gauge reads green.
    edit the template itself.
 2. Write to `.scars/candidates/<slug>.md` with `status: candidate`.
 3. **Never** write into `.scars/*.md` directly. A human promotes via
-   `scar promote`.
+   `scar promote`. (The literature agrees this gate is load-bearing:
+   arXiv:2607.13091 warns that "a noisy review culture can poison the rule
+   set faster than the validation step can catch" — bad scars amplify, so
+   promotion stays human.)
 4. If an MCP server is wired, prefer the `scar_draft` tool — it enforces the
    path and runs lint before writing.
 
