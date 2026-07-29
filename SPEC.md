@@ -63,7 +63,7 @@ become stateless/re-derivable. Postgres-backed sessions are intentional.
 
 - **`deadend`** — protects against *re-attempting an approach*. Primary anchor is often a `pattern` (the approach reappearing anywhere), not a location.
 - **`fence`** — protects *existing code from being changed*. Primary anchors are path + symbol + fingerprint of the protected region.
-- **`landmine`** — encodes *non-obvious coupling*: anchors on the trigger site, body names the blast radius. May have two anchor sets (`touch:` / `breaks:`).
+- **`landmine`** — encodes *non-obvious coupling*: anchors on the trigger site, body names the blast radius (as prose and, ideally, a second `- path:` anchor on the coupled site).
 
 ## 2. Anchoring model
 
@@ -75,12 +75,12 @@ Three anchor classes, used in combination:
 2. **Symbol anchors** — function/class/method names resolved via tree-sitter. Survive moves within and across files in the same repo. Primary anchor class for fences.
 3. **Pattern anchors** — regex/AST patterns over *new* code (diff-scoped, not whole-repo). The only anchor class that can catch a dead end being re-attempted in a brand-new file. Powers `deadend` enforcement.
 
-Plus a **content fingerprint** (normalized-token hash of the protected region) used not for matching but for *drift detection*: when the fingerprint no longer matches anything near the anchors, the scar transitions to `orphaned`, which surfaces in `scar status` and CI as "this knowledge has come loose — re-anchor or archive." Orphaned ≠ deleted, ever.
+Plus a **content fingerprint** (normalized-token hash of the protected region) used not for matching but for *drift detection*: fingerprint drift is an advisory warning surfaced by `scar orphan` and `scar lint`. The `orphaned` transition itself is driven by the location anchors — a scar orphans when all of its path/pattern anchors go dead — and surfaces in `scar status` and CI as "this knowledge has come loose — re-anchor or archive." Orphaned ≠ deleted, ever.
 
 ## 3. CLI surface (v0)
 
 ```
-scar init                 # create .scars/, install git hooks, detect agent runtimes
+scar init                 # create .scars/ with a seeded example candidate; installs nothing (hooks are explicit: scar hook install)
 scar check <path|diff>    # scars relevant to a path or staged diff; exit code for CI
 scar why <path>           # human-readable history of pain for a file/dir
 scar challenge <id>       # open a challenge: contest staleness with evidence
@@ -111,7 +111,7 @@ Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X a
 
 ### 4.2 MCP server
 
-`scar mcp` exposes: `scar_query(paths|content|diff)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Works for any MCP-capable agent — Codex, Cursor, Windsurf, opencode, custom.
+`scar mcp` exposes: `scar_query(paths|content|diff)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Intended for any MCP-capable agent — Codex, Cursor, Windsurf, opencode, custom. **Status: experimental — the stdio transport currently uses the wrong framing and MCP clients cannot complete a handshake ([#162](https://github.com/Daily-Nerd/Scar/issues/162)).**
 
 ### 4.3 Ranking and the fatigue budget
 
