@@ -7,7 +7,7 @@ Live observations during the trial window (opened 2026-06-09). Tally lives here;
 | Metric | Count | Bar |
 |--------|-------|-----|
 | Drafter firings (real) | 4 | — |
-| Drafter-produced candidates kept after review | 3 (daimon 0002, daimon 0003, fabcap 0002) | ≥5 |
+| Drafter-produced candidates kept after review | 3 (daimon 0002, daimon 0003, scar-repo 0002 — logs say `fabcap`, this repo's local dir name) | ≥5 |
 | Self-logged false triggers | 2 (fp-log: error-counting noise) | <15% of firings — currently 2/4, watch |
 | Organic scars (authored outside the drafter flow) | 2 (daimon 0001 user-written, daimon 0004 agent-written) | not gate currency, but the adoption signal |
 

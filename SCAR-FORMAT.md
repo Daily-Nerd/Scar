@@ -39,10 +39,10 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `title` | yes | one line | searchable, states the constraint |
 | `id` | active scars | integer, unique per repo | assigned at promotion |
 | `severity` | yes | `low` \| `medium` \| `high` \| `critical` | ranking input |
-| `confidence` | yes | float 0..1 | decays; raised by surviving challenges |
+| `confidence` | yes | float 0..1 | static authored ranking weight; dynamic decay deferred (SPEC §5, issue #95) |
 | `created` | yes | ISO date | |
 | `authors` | yes | inline list | agents as `"claude-code"` etc.; reviewer appended at promotion |
-| `anchors` | yes, ≥1 | list of `- path:` and/or `- pattern:` | §4 |
+| `anchors` | yes, ≥1 | list of `- path:`, `- pattern:`, and/or `- symbol:` | §4 |
 | `evidence` | recommended | list of `- commit:`/`- pr:`/`- issue:`/`- incident:`/`- note:`/`- url:` | absent ⇒ challengeable on sight; `issue:`/`url:` are durable forms that survive squash-merge |
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
 | `expires.review_after` | recommended | ISO date | forces periodic freshness contact |
@@ -79,6 +79,10 @@ future editor must do instead — written for a reader with zero context.
 - `pattern:` — case-insensitive regex, quoted. Tested against (a) the
   repo-relative path of an edited file and (b) the *new content* being
   written. A content hit is the strongest signal a consumer can receive.
+- `symbol:` — function/class/method name resolved via tree-sitter; survives
+  file moves. Resolution requires the optional extra
+  (`scar-cli[symbols]`); without it the anchor silently does not resolve
+  and `scar lint` warns.
 
 Conforming consumers rank by `anchor_strength × severity × confidence` and
 cap injection at **3 scars / ~700 chars body each** — the fatigue budget is a

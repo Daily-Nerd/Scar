@@ -41,7 +41,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
   - `scar check <path>... [--diff FILE] --exit-code` — CLI gate for humans and CI (non-zero exit when a scar fires)
   - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file. Path-only matches render as one-line hints; the full scar body is injected only when the edit content or a symbol actually trips the scar's pattern — and a body already shown for the same file in the last 4 hours collapses to a one-liner.
   - A scar can also declare an optional `violation:` regex — a post-edit compliance tripwire (Claude Code `PostToolUse`) that flags when the code an agent *just wrote* actually does the forbidden thing, and `scar check --diff --exit-code` gates on the same pattern in CI.
-  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars
+  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars. **Experimental: the stdio transport is currently incompatible with MCP clients ([#162](https://github.com/Daily-Nerd/Scar/issues/162)) — use the CLI or the Claude Code hook until it lands.**
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
 - Scars are **advisory, never blocking, by default** — and stale knowledge has a lifecycle: `scar challenge <id> --reason` disputes a scar (it still fires, marked as disputed), `scar archive <id> --reason` retires it (never fires again; `scar why` keeps the history), and `scar lint`/`scar status` surface any scar whose `review_after` date has passed. Nothing expires automatically — archiving is a human decision, same governance as promotion.
 
@@ -49,6 +49,14 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 
 ```bash
 uv tool install scar-cli   # or: pipx install scar-cli
+```
+
+Symbol anchors (function/class names that survive file moves) need the
+tree-sitter extra; without it they silently don't resolve and only `scar lint`
+warns:
+
+```bash
+uv tool install "scar-cli[symbols]"
 ```
 
 The parser and agent hook hot-path are stdlib-only; the human-facing CLI adds
@@ -98,7 +106,10 @@ explicit — you run them, nothing is installed as a side effect.
 Non-Claude agents: `scar agent skill` prints the authoring skill for any runtime;
 MCP agents get the digest via the `scar_draft` tool description.
 
-Wiring MCP-capable agents:
+Wiring MCP-capable agents — **experimental, currently broken** ([#162](https://github.com/Daily-Nerd/Scar/issues/162)):
+the stdio transport doesn't yet speak the MCP framing, so these configs
+connect to a server that never responds. Tracked; until then use `scar agent
+skill` to load the authoring contract into any runtime manually.
 
 ```bash
 scar agent doctor
@@ -111,8 +122,9 @@ The MCP server runs as:
 scar mcp
 ```
 
-It exposes `scar_query`, `scar_why`, and `scar_draft`. Drafting writes only to
-`.scars/candidates/`; active enforcement still requires human promotion.
+It is designed to expose `scar_query`, `scar_why`, and `scar_draft`. Drafting
+writes only to `.scars/candidates/`; active enforcement still requires human
+promotion.
 
 ## Authoring from any agent
 
@@ -183,7 +195,7 @@ release-please, so pin a tag for reproducible CI.
 
 - **Candidates vs active:** agents and `scar harvest` only ever write to `.scars/candidates/`. A human promotes (`scar promote`) — nothing enters active enforcement without review.
 - **Expiry conditions:** every scar can declare when it stops being true ("valid until sessions are re-derivable"). Stale knowledge is a bug, not a feature.
-- **Validated in use:** in a 14-day agent auto-authorship trial, agents drafted 13 keepable scars across 3 repos with 0% false positives — including one that caught a real parser bug in this repo and fired on the exact edit that fixed it.
+- **Validated in use, honestly:** a 14-day agent auto-authorship trial ([protocol + findings](experiments/auto-authorship/)) kept 3 of the drafter's candidates after human review — including one that caught a real parser bug in this repo and fired on the exact edit that fixed it. The trigger heuristic also fired falsely on 2 of its 4 firings, which is why it was retuned to revert-language-only. Candidates that reached review were kept at a high rate; the trigger needed work. Both numbers are in the findings file.
 
 ## Read more
 
@@ -194,7 +206,7 @@ release-please, so pin a tag for reproducible CI.
 
 ## Status & expectations
 
-**Working software, shared as-is.** CLI v0 is shipped: 15 subcommands, 220 tests, stdlib-only parser/hot-path, CI-enforced. It runs daily across the author's repos (where it has already caught real bugs — see `.scars/` in this very repo for live examples).
+**Working software, shared as-is.** CLI v0 is shipped: 19 subcommands, 528 tests, stdlib-only parser/hot-path, CI-enforced. It runs daily across the author's repos (where it has already caught real bugs — see `.scars/` in this very repo for live examples).
 
 This is personal infrastructure published as a gift to the OSS community, not a product. Issues and PRs are welcome and read with interest, but there is no support SLA and no roadmap promise. If it's useful to you, that's the whole point.
 

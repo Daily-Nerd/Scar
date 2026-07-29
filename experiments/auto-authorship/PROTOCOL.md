@@ -23,7 +23,7 @@ Design properties: candidates never become active without human review; the draf
 
 ## Measurement
 
-- Candidates: `.scars/candidates/*.md` across instrumented repos (homelab-apps, daimon, fabcap, TripWire, Heimdall — any repo with `.scars/`).
+- Candidates: `.scars/candidates/*.md` across instrumented repos (homelab-apps, daimon, scar itself (local dir name `fabcap`), TripWire, Heimdall — any repo with `.scars/`).
 - Firings: drafter appends one line per trigger to `~/.claude/scar-state/drafter-log.jsonl` (timestamp, repo, signals, session).
 - Review session at trial end: owner marks each candidate keep/discard; fp-log counted.
 
