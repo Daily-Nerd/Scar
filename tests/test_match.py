@@ -156,12 +156,12 @@ def test_match_to_dict_carries_every_scar_field(tmp_path):
     from scar.model import Scar
     store = make_repo(tmp_path)
     d = rank_matches_for_edit(store, tmp_path / "payments" / "x.py", "")[0].to_dict()
-    renamed = {"path_anchors", "pattern_anchors", "symbol_anchors"}  # carried under anchors.*
+    renamed = {"path_anchors", "pattern_anchors", "symbol_anchors", "command_anchors"}  # carried under anchors.*
     for f in fields(Scar):
         if f.name in renamed:
             continue
         assert f.name in d, f"Scar.{f.name} missing from ScarMatch.to_dict()"
-    assert d["anchors"] == {"paths": ["payments/"], "patterns": [], "symbols": []}
+    assert d["anchors"] == {"paths": ["payments/"], "patterns": [], "symbols": [], "commands": []}
 
 
 def test_diff_ranking_parses_store_once(tmp_path, monkeypatch):
@@ -433,3 +433,53 @@ diff --git a/{rel} b/{rel}
 """
     hits = find_violations_for_diff(store, diff)
     assert hits == []
+
+
+# --- command anchors (#175) ---
+
+COMMAND_SCAR = """\
+---
+id: 7
+type: deadend
+title: Bare uv sync strips extras
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync(?!.* --all-extras)"
+evidence:
+  - issue: 175
+status: active
+---
+
+Always run uv sync --all-extras.
+"""
+
+
+def _command_repo(tmp_path):
+    store = make_repo(tmp_path)
+    (tmp_path / ".scars" / "0007-uv-sync.deadend.md").write_text(COMMAND_SCAR)
+    return store
+
+
+def test_rank_matches_for_command_fires_on_matching_command(tmp_path):
+    from scar.match import rank_matches_for_command
+    store = _command_repo(tmp_path)
+    hits = rank_matches_for_command(store, "uv sync")
+    assert [m.scar.id for m in hits] == [7]
+    assert hits[0].matched_by == ("command",)
+    assert has_content_signal(hits[0])   # command hit renders full body
+
+
+def test_rank_matches_for_command_silent_on_innocent_command(tmp_path):
+    from scar.match import rank_matches_for_command
+    store = _command_repo(tmp_path)
+    assert rank_matches_for_command(store, "uv sync --all-extras") == []
+    assert rank_matches_for_command(store, "git status") == []
+
+
+def test_edit_matching_never_fires_command_anchors(tmp_path):
+    store = _command_repo(tmp_path)
+    hits = rank_matches_for_edit(store, tmp_path / "uv sync", "uv sync")
+    assert all(m.scar.id != 7 for m in hits)

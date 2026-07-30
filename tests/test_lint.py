@@ -209,3 +209,45 @@ def test_absent_violation_silent():
     # When violation is not specified, no violation-related messages.
     findings = lint_text(GOOD)
     assert not any("violation" in f.message for f in findings)
+
+
+# --- command anchors (#175) ---
+
+def _command_scar(regex: str) -> str:
+    return f"""---
+type: deadend
+title: command trap
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "{regex}"
+evidence:
+  - issue: 175
+status: active
+---
+
+body
+"""
+
+
+def test_command_only_scar_counts_as_anchored():
+    findings = lint_text(_command_scar("uv sync"))
+    assert not any("no anchors" in f.message for f in findings)
+
+
+def test_invalid_command_regex_is_an_error():
+    findings = lint_text(_command_scar("uv sync ("))
+    assert any(f.level == "error" and "command" in f.message for f in findings)
+
+
+def test_empty_matching_command_regex_is_an_error():
+    findings = lint_text(_command_scar(".*"))
+    assert any(f.level == "error" and "empty" in f.message for f in findings)
+
+
+def test_redos_command_regex_is_an_error():
+    findings = lint_text(_command_scar("(a+)+b"))
+    assert any(f.level == "error" and "command" in f.message
+               and "backtracking" in f.message for f in findings)

@@ -23,6 +23,7 @@ scar skill install    # authoring skill into ~/.claude/skills/
 How the hook behaves:
 
 - `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit`: resolves the target path, runs `scar inject --path <target> --top-k 3`, and emits ranked scars as `additionalContext`. Advisory — never blocks the tool call.
+- `PreToolUse` on `Bash`: fires command-anchored scars against the shell command about to execute (`scar inject --command "<cmd>"` is the same surface for other runtimes) — the injection path for run-a-command mistakes that edit anchors cannot cover.
 - `PostToolUse`: runs any armed `violation:` regex against the edit just made and logs fired→violated events.
 - Everything is installed only by explicit command; `scar hook uninstall` removes it cleanly.
 

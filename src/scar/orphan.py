@@ -171,6 +171,12 @@ def anchors_all_dead(scar: Scar, ctx: RepoContext,
     *self_path* (repo-relative path of the scar's own .scars/ file) is excluded
     from pattern-content liveness so a scar can't self-reference itself alive (#35).
     """
+    # Command anchors are exempt from content liveness (#175): a command regex
+    # has no file to rot against, so it holds the scar alive unconditionally —
+    # review_after is the freshness mechanism for command-only scars.
+    if scar.command_anchors:
+        return False
+
     # A scar with NO anchors at all is treated as dead (nothing to hold it alive).
     if not scar.path_anchors and not scar.pattern_anchors:
         return True

@@ -99,10 +99,11 @@ def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
     assert main(["hook", "status"]) == 0
     out = capsys.readouterr().out
     assert "precheck" in out
+    assert "precheck-command" in out
     assert "session-notice" in out
     assert "stop-drafter" in out
     assert "posttool" in out
-    assert out.count("not installed") == 4
+    assert out.count("not installed") == 5
 
 
 def test_skill_install_dry_run_reports_target_without_writing(tmp_path, monkeypatch):
@@ -136,3 +137,10 @@ def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch
     assert main(["skill", "install"]) == 0
     assert not stale.exists()
     assert (dest / "SKILL.md").exists()
+
+
+def test_hook_specs_include_bash_command_precheck():
+    from scar.installer import HOOKS
+    spec = next(s for s in HOOKS if s["kind"] == "precheck-command")
+    assert spec["event"] == "PreToolUse"
+    assert spec["matcher"] == "Bash"

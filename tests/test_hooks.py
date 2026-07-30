@@ -543,3 +543,76 @@ def test_mixed_full_and_demoted_showing_logs_strict_subset(repo, monkeypatch, ca
     assert rec["scar_ids"] == [1, 2]
     assert rec["demoted_ids"] == [2]
     assert set(rec["demoted_ids"]) < set(rec["scar_ids"])
+
+
+# --- precheck-command (PreToolUse Bash, #175) ---
+
+COMMAND_SCAR = """\
+---
+id: 2
+type: deadend
+title: Bare uv sync strips extras
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync(?!.* --all-extras)"
+evidence:
+  - issue: 175
+status: active
+---
+
+Always run uv sync --all-extras.
+"""
+
+
+@pytest.fixture
+def command_repo(repo):
+    (repo / ".scars" / "0002-uv-sync.deadend.md").write_text(COMMAND_SCAR)
+    return repo
+
+
+def test_precheck_command_injects_on_matching_command(command_repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"},
+                       "cwd": str(command_repo)})
+    assert main(["hook", "precheck-command"]) == 0
+    out = out_json(capsys)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "uv sync" in ctx and "extras" in ctx
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+
+
+def test_precheck_command_silent_on_innocent_command(command_repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"command": "uv sync --all-extras"},
+                       "cwd": str(command_repo)})
+    assert main(["hook", "precheck-command"]) == 0
+    assert out_json(capsys) is None
+
+
+def test_precheck_command_logs_firing(command_repo, monkeypatch, capsys, tmp_path):
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"},
+                       "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    log = (command_repo / "state" / "firing-log.jsonl").read_text()
+    rec = json.loads(log.strip().splitlines()[-1])
+    assert rec["scar_ids"] == [2]
+    assert rec["target"] == "uv sync"
+
+
+def test_precheck_command_silent_outside_scar_repo(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(tmp_path)})
+    assert main(["hook", "precheck-command"]) == 0
+    assert out_json(capsys) is None
+
+
+def test_precheck_command_collapses_repeat_within_cooldown(command_repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    capsys.readouterr()
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    out = out_json(capsys)
+    # second showing within 4h demotes to a one-liner, never a full body
+    assert out is None or "already shown" in str(out)

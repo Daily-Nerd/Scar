@@ -35,11 +35,12 @@ Naming is `{seq}-{slug}.{type}.md`, so a plain file listing already tells you th
 
 ## Anchors
 
-Line numbers are dead on arrival; file paths die on renames. SCAR uses three anchor classes in combination, designed to degrade loudly, never silently:
+Line numbers are dead on arrival; file paths die on renames. SCAR uses four anchor classes in combination, designed to degrade loudly, never silently:
 
 1. **Path anchors** — file or directory globs. Cheap, survive content change, die on rename (mitigated by git rename tracking during re-anchor).
 2. **Symbol anchors** — function/class names resolved via tree-sitter. Survive moves within and across files. Primary class for fences. Measured survival across refactors: 94.6% / 92.5% on the shipped API.
 3. **Pattern anchors** — regexes over *new* code (diff-scoped, not whole-repo). The only class that catches a dead end being re-attempted in a brand-new file.
+4. **Command anchors** — regexes over a *shell command about to execute* (`- command: "uv sync(?!.* --all-extras)"`). The only class with a firing surface for run-a-command mistakes, where there is no edit to anchor to. Never matched against paths or file content, so they cannot self-match; freshness comes from `review_after`, not content liveness.
 
 A **content fingerprint** of the protected region powers drift detection: fingerprint drift is an advisory warning, and a scar whose location anchors all go dead becomes `orphaned` — loud in `scar status` and CI, never silently dropped.
 

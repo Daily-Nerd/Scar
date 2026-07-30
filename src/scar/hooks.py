@@ -237,6 +237,46 @@ def precheck() -> int:
     return 0
 
 
+def precheck_command() -> int:
+    """PreToolUse on Bash (#175): fire command-anchored scars on the shell
+    command about to execute — the surface edit anchors structurally cannot
+    cover. Store discovery is cwd-based (a command has no file_path). Same
+    fail-open contract and 4h collapse as precheck; the firing-log target is
+    the command string itself."""
+    payload = _read_payload()
+    if payload is None:
+        return 0
+    command = str(payload.get("tool_input", {}).get("command", ""))
+    if not command:
+        return 0
+    try:
+        store = ScarStore.discover(Path(payload.get("cwd") or os.getcwd()))
+        if store is None:
+            return 0
+        from .match import rank_matches_for_command
+        matches = rank_matches_for_command(store, command)
+        if not matches:
+            return 0
+        recent = _recently_fired(str(store.root), command)
+        full, demoted = [], []
+        for m in matches:
+            if m.scar.id is not None and m.scar.id in recent:
+                demoted.append((m.scar, "already shown in the last 4h"))
+            else:
+                full.append(m.scar)
+        context = injection_context(full, store.broken(), store.scars_dir,
+                                    demoted=demoted)
+        if context:
+            _emit("PreToolUse", context)
+        _log_firing(store, command, [m.scar for m in matches],
+                    demoted_ids=[s.id for s, _ in demoted])
+    except Exception:
+        # Contract (module docstring): a hook must NEVER fail or delay the
+        # user's command. Fail OPEN on any unexpected error.
+        return 0
+    return 0
+
+
 def session_notice() -> int:
     payload = _read_payload()
     if payload is None:
@@ -349,5 +389,6 @@ def stop_drafter() -> int:
     return 0
 
 
-HANDLERS = {"precheck": precheck, "posttool": posttool,
-            "session-notice": session_notice, "stop-drafter": stop_drafter}
+HANDLERS = {"precheck": precheck, "precheck-command": precheck_command,
+            "posttool": posttool, "session-notice": session_notice,
+            "stop-drafter": stop_drafter}

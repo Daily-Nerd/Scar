@@ -42,7 +42,7 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `confidence` | yes | float 0..1 | static authored ranking weight; dynamic decay deferred (SPEC §5, issue #95) |
 | `created` | yes | ISO date | |
 | `authors` | yes | inline list | agents as `"claude-code"` etc.; reviewer appended at promotion |
-| `anchors` | yes, ≥1 | list of `- path:`, `- pattern:`, and/or `- symbol:` | §4 |
+| `anchors` | yes, ≥1 | list of `- path:`, `- pattern:`, `- symbol:`, and/or `- command:` | §4 |
 | `evidence` | recommended | list of `- commit:`/`- pr:`/`- issue:`/`- incident:`/`- note:`/`- url:` | absent ⇒ challengeable on sight; `issue:`/`url:` are durable forms that survive squash-merge |
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
 | `expires.review_after` | recommended | ISO date | forces periodic freshness contact |
@@ -86,6 +86,14 @@ qualify, however painful it was.
   file moves. Resolution requires the optional extra
   (`scar-cli[symbols]`); without it the anchor silently does not resolve
   and `scar lint` warns.
+- `command:` — case-insensitive regex, quoted, tested against a **shell
+  command about to execute** (issue #175) — never against paths or file
+  content, so it cannot self-match. Raw-regex contract like `violation:`:
+  quotes stripped, nothing un-escaped. A hit is act-proof (full-body tier).
+  Exempt from content liveness (a command regex has no file to rot
+  against); `expires.review_after` is its freshness mechanism. `scar lint`
+  errors when the regex is invalid, matches the empty string, or is
+  ReDoS-prone.
 
 Conforming consumers rank by `anchor_strength × severity × confidence` and
 cap injection at **3 scars / ~700 chars body each** — the fatigue budget is a

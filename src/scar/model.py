@@ -41,6 +41,7 @@ class Scar:
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
     symbol_anchors: list[str] = field(default_factory=list)
+    command_anchors: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     expires_condition: str = ""
     review_after: str = ""
@@ -62,6 +63,7 @@ class Scar:
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f'  - pattern: "{p}"' for p in self.pattern_anchors]
         lines += [f"  - symbol: {s}" for s in self.symbol_anchors]
+        lines += [f'  - command: "{c}"' for c in self.command_anchors]
         if self.evidence:
             lines.append("evidence:")
             lines += [f"  - {e}" for e in self.evidence]
@@ -144,6 +146,11 @@ def parse_scar_text(text: str) -> Scar:
                          for p in re.findall(r"^\s*-\s*pattern:\s*(.+?)\s*$", front, re.MULTILINE)],
         symbol_anchors=[_strip_inline_comment(s).strip('"').strip("'")
                         for s in re.findall(r"^\s*-\s*symbol:\s*(.+?)\s*$", front, re.MULTILINE)],
+        # Raw-regex contract, same as pattern/violation: quotes stripped,
+        # nothing un-escaped. Single quotes stripped too so the silently-dead
+        # single-quoted trap (daimon 0021) cannot recur for command anchors.
+        command_anchors=[c.strip().strip('"').strip("'")
+                         for c in re.findall(r"^\s*-\s*command:\s*(.+?)\s*$", front, re.MULTILINE)],
         evidence=evidence,
         expires_condition=_field(front, "condition").strip('"'),
         review_after=_field(front, "review_after"),

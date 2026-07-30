@@ -2701,3 +2701,42 @@ def test_lint_dead_pattern_stays_rot_and_hints_violation(tmp_path, monkeypatch, 
     assert "partial rot" in out or "partial-rot" in out  # still rot, never "armed"
     assert "flux_capacitor_v2" in out                    # the dead pattern is named
     assert "violation:" in out                           # migration hint present
+
+
+# --- inject --command (#175) ---
+
+COMMAND_SCAR_175 = """\
+---
+id: 3
+type: deadend
+title: Bare uv sync strips extras
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync(?!.* --all-extras)"
+evidence:
+  - issue: 175
+status: active
+---
+
+Always run uv sync --all-extras.
+"""
+
+
+def test_inject_command_emits_context_for_matching_command(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0003-uv-sync.deadend.md").write_text(COMMAND_SCAR_175)
+    monkeypatch.chdir(tmp_path)
+    assert main(["inject", "--command", "uv sync"]) == 0
+    out = capsys.readouterr().out
+    assert "extras" in out
+
+
+def test_inject_command_silent_on_innocent_command(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0003-uv-sync.deadend.md").write_text(COMMAND_SCAR_175)
+    monkeypatch.chdir(tmp_path)
+    assert main(["inject", "--command", "uv sync --all-extras"]) == 0
+    assert capsys.readouterr().out.strip() == ""
