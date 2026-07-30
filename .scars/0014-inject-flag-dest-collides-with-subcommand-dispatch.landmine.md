@@ -1,20 +1,20 @@
 ---
-id: 0
+id: 14
 type: landmine
 title: An argparse flag whose dest is "command" silently overwrites the subcommand dispatch key
 severity: medium
 confidence: 0.9
 created: 2026-07-30
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/cli.py
 evidence:
   - issue: 175
-  - note: "adding `inject --command` with default dest crashed EVERY inject test with KeyError at the dispatch table — argparse lets a flag's dest shadow the subparser dest with no warning"
+  - note: adding `inject --command` with default dest crashed EVERY inject test with KeyError at the dispatch table — argparse lets a flag's dest shadow the subparser dest with no warning
 expires:
   condition: "CLI dispatch stops keying on args.command (e.g. set_defaults(func=...) pattern)"
   review_after: 2027-01-30
-status: candidate
+status: active
 ---
 
 `main()` dispatches subcommands via a dict keyed on `args.command` (the
