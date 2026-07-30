@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.16.2](https://github.com/Daily-Nerd/Scar/compare/v0.16.1...v0.16.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **harvest:** sanitize candidate titles and slugs, warn on leakage ([#159](https://github.com/Daily-Nerd/Scar/issues/159)) ([#160](https://github.com/Daily-Nerd/Scar/issues/160)) ([15a7714](https://github.com/Daily-Nerd/Scar/commit/15a771435122ff63761ac3788a86c5dcb9dda41f))
+* **mcp:** newline-delimited JSON stdio framing per MCP spec ([#167](https://github.com/Daily-Nerd/Scar/issues/167)) ([e56544a](https://github.com/Daily-Nerd/Scar/commit/e56544affecc9c8888b30d58619a431784b87191)), closes [#162](https://github.com/Daily-Nerd/Scar/issues/162)
+
+
+### Documentation
+
+* drop the MCP experimental marking — [#162](https://github.com/Daily-Nerd/Scar/issues/162) transport fix shipped ([#169](https://github.com/Daily-Nerd/Scar/issues/169)) ([c6d33d6](https://github.com/Daily-Nerd/Scar/commit/c6d33d6aa9f1e5a4af4b19c61f72f677c0505e5f)), closes [#168](https://github.com/Daily-Nerd/Scar/issues/168)
+* **skill:** adopt the recurrence heuristic as the scar qualification one-liner ([#166](https://github.com/Daily-Nerd/Scar/issues/166)) ([06607c2](https://github.com/Daily-Nerd/Scar/commit/06607c26a87f318296fb851588e82468d7a4294a)), closes [#165](https://github.com/Daily-Nerd/Scar/issues/165)
+* truth-sync README/SPEC/SCAR-FORMAT/ROADMAP/AGENTS with shipped behavior ([#164](https://github.com/Daily-Nerd/Scar/issues/164)) ([03e9986](https://github.com/Daily-Nerd/Scar/commit/03e9986ea1fb2d1c8937e492e2cec18e20f90ceb)), closes [#163](https://github.com/Daily-Nerd/Scar/issues/163)
+
 ## [0.16.1](https://github.com/Daily-Nerd/Scar/compare/v0.16.0...v0.16.1) (2026-07-04)
 
 
