@@ -41,7 +41,7 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
   - `scar check <path>... [--diff FILE] --exit-code` — CLI gate for humans and CI (non-zero exit when a scar fires)
   - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file. Path-only matches render as one-line hints; the full scar body is injected only when the edit content or a symbol actually trips the scar's pattern — and a body already shown for the same file in the last 4 hours collapses to a one-liner.
   - A scar can also declare an optional `violation:` regex — a post-edit compliance tripwire (Claude Code `PostToolUse`) that flags when the code an agent *just wrote* actually does the forbidden thing, and `scar check --diff --exit-code` gates on the same pattern in CI.
-  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars. **Experimental: the stdio transport is currently incompatible with MCP clients ([#162](https://github.com/Daily-Nerd/Scar/issues/162)) — use the CLI or the Claude Code hook until it lands.**
+  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars.
 - `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
 - Scars are **advisory, never blocking, by default** — and stale knowledge has a lifecycle: `scar challenge <id> --reason` disputes a scar (it still fires, marked as disputed), `scar archive <id> --reason` retires it (never fires again; `scar why` keeps the history), and `scar lint`/`scar status` surface any scar whose `review_after` date has passed. Nothing expires automatically — archiving is a human decision, same governance as promotion.
 
@@ -106,10 +106,8 @@ explicit — you run them, nothing is installed as a side effect.
 Non-Claude agents: `scar agent skill` prints the authoring skill for any runtime;
 MCP agents get the digest via the `scar_draft` tool description.
 
-Wiring MCP-capable agents — **experimental, currently broken** ([#162](https://github.com/Daily-Nerd/Scar/issues/162)):
-the stdio transport doesn't yet speak the MCP framing, so these configs
-connect to a server that never responds. Tracked; until then use `scar agent
-skill` to load the authoring contract into any runtime manually.
+Wiring MCP-capable agents — the stdio server speaks newline-delimited JSON
+per the MCP spec (fixed in [#162](https://github.com/Daily-Nerd/Scar/issues/162)):
 
 ```bash
 scar agent doctor
