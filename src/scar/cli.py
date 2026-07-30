@@ -710,6 +710,14 @@ def _cmd_check(args) -> int:
     return 0
 
 
+def _cmd_challenge(args) -> int:
+    return _cmd_transition(args, "challenged")
+
+
+def _cmd_archive(args) -> int:
+    return _cmd_transition(args, "archived")
+
+
 def _cmd_transition(args, new_status: str) -> int:
     store = _require_store()
     if store is None:
@@ -1842,6 +1850,18 @@ def _cmd_agent(args) -> int:
     return 0
 
 
+def _cmd_mcp(args) -> int:
+    from .mcp import serve
+    return serve()
+
+
+def _cmd_hook(args) -> int:
+    if args.kind in ("install", "uninstall", "status"):
+        return _cmd_hook_lifecycle(args)
+    from .hooks import HANDLERS  # hot path: imports nothing beyond library
+    return HANDLERS[args.kind]()
+
+
 def _cmd_hook_lifecycle(args) -> int:
     if getattr(args, "git", False):
         from .installer import git_hook_install, git_hook_status, git_hook_uninstall
@@ -1885,8 +1905,13 @@ def build_parser() -> argparse.ArgumentParser:
     one place instead of repeating it per command.
     """
 
-    def _add(subparsers, name, **kw):
-        return subparsers.add_parser(name, formatter_class=RichHelpFormatter, **kw)
+    def _add(subparsers, name, func, **kw):
+        # set_defaults(func=...) is the dispatch mechanism (#180): keying on
+        # args.command let any flag whose dest resolved to "command" shadow
+        # the subcommand name and KeyError the dispatch (scar 0014).
+        p = subparsers.add_parser(name, formatter_class=RichHelpFormatter, **kw)
+        p.set_defaults(func=func)
+        return p
 
     parser = argparse.ArgumentParser(prog="scar",
                                      description="version control for negative knowledge",
@@ -1896,23 +1921,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"scar {_scar_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = _add(sub, "init", help="create .scars/ layout in the current repo")
+    p = _add(sub, "init", _cmd_init, help="create .scars/ layout in the current repo")
     p.add_argument("--no-seed", action="store_true",
                    help="skip the worked-example candidate seeded on fresh init")
-    p = _add(sub, "lint", help="validate every scar and candidate")
+    p = _add(sub, "lint", _cmd_lint, help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    p = _add(sub, "status", help="counts, titles, broken-file warnings")
+    p = _add(sub, "status", _cmd_status, help="counts, titles, broken-file warnings")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = _add(sub, "promote", help="review a candidate into an active scar")
+    p = _add(sub, "promote", _cmd_promote, help="review a candidate into an active scar")
     p.add_argument("candidate", help="candidate filename (or unique substring)")
     p.add_argument("--reviewer", default="",
                    help="human reviewer to add to authors "
                         "(default: git config user.name)")
 
-    p = _add(sub, "check", help="scars anchored to a path (CI gate with --exit-code)")
+    p = _add(sub, "check", _cmd_check, help="scars anchored to a path (CI gate with --exit-code)")
     p.add_argument("path", nargs="*", default=[], help="path(s) to check")
     p.add_argument("--content", default="", help="new code to test pattern anchors against")
     p.add_argument("--diff", help="unified diff text, or path to a diff file — gates on "
@@ -1923,17 +1948,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exit 1 if any scar fires on the checked path(s)/diff, or any "
                         "violation tripped (CI gate); default is always 0 (back-compat)")
 
-    p = _add(sub, "why", help="history of pain for a path (any status)")
+    p = _add(sub, "why", _cmd_why, help="history of pain for a path (any status)")
     p.add_argument("path")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = _add(sub, "stats", help="firing counts from the precheck hook's firing log")
+    p = _add(sub, "stats", _cmd_stats, help="firing counts from the precheck hook's firing log")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p.add_argument("--all-repos", action="store_true",
                    help="show the whole machine-global log grouped per repo "
                         "(default: only the current repo's records)")
 
-    p = _add(sub, "gc", help="clean machine state (markers, firing log); "
+    p = _add(sub, "gc", _cmd_gc, help="clean machine state (markers, firing log); "
                              "report .scars/ hygiene (never touches .scars/)")
     p.add_argument("--days", type=int, default=7,
                    help="delete drafted-* markers older than this many days (default 7)")
@@ -1943,15 +1968,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="report what would be removed/truncated; change nothing")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = _add(sub, "challenge", help="dispute a scar (still fires, marked challenged)")
+    p = _add(sub, "challenge", _cmd_challenge, help="dispute a scar (still fires, marked challenged)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why the scar may no longer hold")
 
-    p = _add(sub, "archive", help="retire a scar (never fires; history kept)")
+    p = _add(sub, "archive", _cmd_archive, help="retire a scar (never fires; history kept)")
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why it is retired (e.g. expiry condition met)")
 
-    p = _add(sub, "orphan", help="list scars whose anchors all went dead")
+    p = _add(sub, "orphan", _cmd_orphan, help="list scars whose anchors all went dead")
     p.add_argument("--apply", action="store_true",
                    help="persist status: orphaned (human review only — never CI)")
     p.add_argument("--id", type=int, default=None,
@@ -1965,7 +1990,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit machine-readable JSON (read mode only)")
 
-    p = _add(sub, "reanchor", help="propose new anchors for orphaned/partial-rot scars (#111)")
+    p = _add(sub, "reanchor", _cmd_reanchor, help="propose new anchors for orphaned/partial-rot scars (#111)")
     p.add_argument("--id", type=int, default=None,
                    help="with --apply: the scar id whose eligible anchors to rewrite")
     p.add_argument("--apply", action="store_true",
@@ -1974,7 +1999,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit machine-readable JSON (propose mode only)")
 
-    p = _add(sub, "harvest", help="mine git history for candidate scars")
+    p = _add(sub, "harvest", _cmd_harvest, help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
     p.add_argument("--top-k", type=int, default=None,
                    help="show the N highest-scoring candidates across all sections "
@@ -1993,14 +2018,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--at", default=None,
                    help="with --precision: comma-separated N values (default 5,10,20)")
 
-    p = _add(sub, "draft-check", help="git-native abandonment nudge — universal "
+    p = _add(sub, "draft-check", _cmd_draft_check, help="git-native abandonment nudge — universal "
                                       "authoring trigger for any runtime (#117)")
     p.add_argument("--from-hook", action="store_true",
                    help="invoked by the post-commit git hook; adds a 1h throttle "
                         "per repo so commit-heavy sessions aren't nagged")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
+    p = _add(sub, "hook", _cmd_hook, help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "precheck-command", "posttool",
                                     "session-notice", "stop-drafter"])
@@ -2011,21 +2036,21 @@ def build_parser() -> argparse.ArgumentParser:
                         ".git/hooks/post-commit trigger for `scar draft-check` "
                         "(#117) instead of Claude Code's settings.json")
 
-    p = _add(sub, "skill", help="install, remove, or inspect the scar-authoring skill")
+    p = _add(sub, "skill", _cmd_skill_lifecycle, help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])
     p.add_argument("--dry-run", action="store_true",
                    help="show changes without writing to ~/.claude/skills")
 
-    _add(sub, "mcp", help="run the SCAR MCP stdio server")
+    _add(sub, "mcp", _cmd_mcp, help="run the SCAR MCP stdio server")
 
-    p = _add(sub, "agent", help="agent integration helpers")
+    p = _add(sub, "agent", _cmd_agent, help="agent integration helpers")
     agent_sub = p.add_subparsers(dest="agent_command", required=True)
-    _add(agent_sub, "doctor", help="show local agent integration readiness")
-    cfg = _add(agent_sub, "config", help="print config for an agent runtime")
+    _add(agent_sub, "doctor", _cmd_agent, help="show local agent integration readiness")
+    cfg = _add(agent_sub, "config", _cmd_agent, help="print config for an agent runtime")
     cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
-    _add(agent_sub, "skill", help="print the scar-authoring skill body")
+    _add(agent_sub, "skill", _cmd_agent, help="print the scar-authoring skill body")
 
-    p = _add(sub, "brief", help="paste-ready scar block for sub-agent launch "
+    p = _add(sub, "brief", _cmd_brief, help="paste-ready scar block for sub-agent launch "
                                 "prompts (#176) — plain text, byte-capped")
     p.add_argument("--compact", action="store_true", default=True,
                    help="compact one-line-per-scar format (the only mode today)")
@@ -2036,10 +2061,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="byte budget for the block (default 2000); omissions "
                         "are reported, never silent")
 
-    p = _add(sub, "inject", help="machine mode for hooks: JSON or silence")
+    p = _add(sub, "inject", _cmd_inject, help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")
-    # dest MUST NOT be "command": the subparser dispatch dict is keyed on
-    # args.command, and argparse lets a flag silently overwrite it.
+    # dest kept off "command" for clarity; dispatch no longer keys on
+    # args.command (set_defaults(func=...), #180 — archived scar 0014).
     p.add_argument("--command", dest="shell_command",
                    help="shell command about to execute — fires "
                         "command-anchored scars (#175)")
@@ -2054,29 +2079,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "mcp":
-        from .mcp import serve
-        return serve()
-    if args.command == "hook":
-        if args.kind in ("install", "uninstall", "status"):
-            return _cmd_hook_lifecycle(args)
-        from .hooks import HANDLERS  # hot path: imports nothing beyond library
-        return HANDLERS[args.kind]()
-    if args.command == "skill":
-        return _cmd_skill_lifecycle(args)
-    if args.command in ("challenge", "archive"):
-        status = {"challenge": "challenged", "archive": "archived"}[args.command]
-        return _cmd_transition(args, status)
-    handler = {
-        "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
-        "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
-        "brief": _cmd_brief,
-        "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
-        "reanchor": _cmd_reanchor,
-        "agent": _cmd_agent, "stats": _cmd_stats, "gc": _cmd_gc,
-        "draft-check": _cmd_draft_check,
-    }[args.command]
-    return handler(args)
+    # Dispatch via the subparser's set_defaults(func=...) — never via
+    # args.command, which any same-dest flag could shadow (#180, scar 0014).
+    return args.func(args)
 
 
 if __name__ == "__main__":
