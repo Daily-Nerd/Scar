@@ -36,25 +36,19 @@ def _store(repo: str | None) -> ScarStore:
 
 
 def _read_message() -> dict[str, Any] | None:
-    headers: dict[str, str] = {}
     while True:
         line = sys.stdin.buffer.readline()
         if line == b"":
             return None
-        if line in (b"\r\n", b"\n"):
-            break
-        key, _, value = line.decode("ascii", errors="ignore").partition(":")
-        headers[key.lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length <= 0:
-        return {}
-    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+        line = line.strip()
+        if not line:
+            continue
+        return json.loads(line.decode("utf-8"))
 
 
 def _write_message(payload: dict[str, Any]) -> None:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii"))
-    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.write(body + b"\n")
     sys.stdout.buffer.flush()
 
 
