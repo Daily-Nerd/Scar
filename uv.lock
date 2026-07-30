@@ -125,7 +125,7 @@ wheels = [
 
 [[package]]
 name = "scar-cli"
-version = "0.16.1"
+version = "0.16.2"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },

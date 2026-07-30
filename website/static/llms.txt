@@ -1,0 +1,29 @@
+# SCAR — Version Control for Negative Knowledge
+
+> SCAR captures a codebase's negative knowledge — dead ends (deadend), intentional-looking-wrong code (fence), non-obvious coupling (landmine) — as YAML+Markdown files in .scars/, anchored to code via paths, tree-sitter symbols, and diff-scoped regex patterns. A pre-edit hook injects relevant scars into an AI agent's context before it edits anchored code; an optional post-edit `violation:` regex tripwire logs fired-then-violated events, making compliance measurable. Advisory by default, human promotion gate for all agent-authored candidates.
+
+Install: `uv tool install scar-cli` (PyPI: scar-cli, Python >= 3.10, stdlib-only hot path).
+Repository: https://github.com/Daily-Nerd/Scar
+
+## Docs
+
+- [Overview](https://daily-nerd.github.io/Scar/): what SCAR is, the three primitives, why agents make it urgent and viable
+- [Quickstart](https://daily-nerd.github.io/Scar/quickstart): install → init → first scar → hook, plus lifecycle commands
+- [Concepts](https://daily-nerd.github.io/Scar/concepts): scar file format, anchor classes, violation tripwires, fatigue budget, lifecycle, harvest
+- [Measurement methodology](https://daily-nerd.github.io/Scar/methodology): the fired→violated compliance instrument, pre-registered thresholds, window results, caught measurement errors
+- [Agent integration](https://daily-nerd.github.io/Scar/agents): Claude Code hook/plugin, MCP server (newline-delimited stdio: scar_query, scar_why, scar_draft), git-native draft-check for any runtime, CI gates
+- [Changelog](https://daily-nerd.github.io/Scar/changelog): release history (synced from CHANGELOG.md)
+
+## Raw sources
+
+- [README](https://raw.githubusercontent.com/Daily-Nerd/Scar/main/README.md)
+- [SPEC](https://raw.githubusercontent.com/Daily-Nerd/Scar/main/SPEC.md)
+- [SCAR-FORMAT](https://raw.githubusercontent.com/Daily-Nerd/Scar/main/SCAR-FORMAT.md)
+- [AGENTS](https://raw.githubusercontent.com/Daily-Nerd/Scar/main/AGENTS.md)
+- [CHANGELOG](https://raw.githubusercontent.com/Daily-Nerd/Scar/main/CHANGELOG.md)
+
+## For agents
+
+- Authoring contract: run `scar agent skill` for the full scar-authoring skill text, or install via `scar skill install` (Claude Code).
+- Machine query surface: `scar inject --path <p> | --diff <d>` (hook JSON), `scar mcp` (MCP stdio server).
+- Write candidates only to .scars/candidates/ — never directly to .scars/. Humans promote.

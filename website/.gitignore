@@ -1,0 +1,17 @@
+# Dependencies
+/node_modules
+
+# Production
+/build
+
+# Generated files
+.docusaurus
+.cache-loader
+# synced from repo-root CHANGELOG.md at build time — never edit or commit
+docs/changelog.md
+
+# Misc
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
