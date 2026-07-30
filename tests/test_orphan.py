@@ -625,3 +625,30 @@ def test_pattern_liveness_bound_is_max_anchor_scan(tmp_path):
     ctx = build_repo_context(tmp_path)
     assert "BEYOND_HORIZON" in ctx.file_contents["vast.py"]      # loaded...
     assert not _pattern_anchor_live("BEYOND_HORIZON", ctx)       # ...but capped
+
+
+# --- command anchors (#175): exempt from content liveness ---
+
+def test_command_only_scar_never_orphans(tmp_path):
+    scar_text = """---
+id: 9
+type: deadend
+title: command trap
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync"
+evidence:
+  - issue: 175
+status: active
+---
+
+body
+"""
+    from scar.model import parse_scar_text
+    from scar.orphan import anchors_all_dead
+    ctx = _make_repo_context(tracked_paths=[])
+    scar = parse_scar_text(scar_text)
+    assert anchors_all_dead(scar, ctx) is False

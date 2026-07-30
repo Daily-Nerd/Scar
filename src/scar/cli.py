@@ -1386,6 +1386,9 @@ def _cmd_inject(args) -> int:
             # whatever lands in --diff — fall back to treating it as text
             diff_text = args.diff
         matches = rank_matches_for_diff(store, diff_text, top_k=top_k)
+    elif getattr(args, "shell_command", None):
+        from .match import rank_matches_for_command
+        matches = rank_matches_for_command(store, args.shell_command, top_k=top_k)
     elif args.path:
         matches = rank_matches_for_edit(store, Path(args.path).resolve(),
                                         args.content or "", top_k=top_k)
@@ -1938,8 +1941,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "hook", help="install, remove, inspect, or run Claude Code hooks")
     p.add_argument("kind", choices=["install", "uninstall", "status",
-                                    "precheck", "posttool", "session-notice",
-                                    "stop-drafter"])
+                                    "precheck", "precheck-command", "posttool",
+                                    "session-notice", "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
     p.add_argument("--git", action="store_true",
@@ -1963,6 +1966,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")
+    # dest MUST NOT be "command": the subparser dispatch dict is keyed on
+    # args.command, and argparse lets a flag silently overwrite it.
+    p.add_argument("--command", dest="shell_command",
+                   help="shell command about to execute — fires "
+                        "command-anchored scars (#175)")
     p.add_argument("--content", default="")
     p.add_argument("--diff", help="unified diff text, or path to a diff file")
     p.add_argument("--top-k", type=int, default=3)

@@ -69,11 +69,12 @@ become stateless/re-derivable. Postgres-backed sessions are intentional.
 
 The hard technical problem. Line numbers are dead on arrival; file paths die on renames; the system must degrade loudly, never silently.
 
-Three anchor classes, used in combination:
+Four anchor classes, used in combination:
 
 1. **Path anchors** — file or directory globs. Cheap, survive content change, die on rename (mitigated by git rename tracking during re-anchor).
 2. **Symbol anchors** — function/class/method names resolved via tree-sitter. Survive moves within and across files in the same repo. Primary anchor class for fences.
 3. **Pattern anchors** — regex/AST patterns over *new* code (diff-scoped, not whole-repo). The only anchor class that can catch a dead end being re-attempted in a brand-new file. Powers `deadend` enforcement.
+4. **Command anchors** (#175) — regexes over a *shell command about to execute* (`PreToolUse:Bash` and `scar inject --command`). The only anchor class with a firing surface for run-a-command mistakes — knowledge like "bare `uv sync` strips extras" has no edit to anchor to. Never matched against paths or content (structurally immune to self-match/partial-rot) and exempt from content liveness; `review_after` is the freshness mechanism.
 
 Plus a **content fingerprint** (normalized-token hash of the protected region) used not for matching but for *drift detection*: fingerprint drift is an advisory warning surfaced by `scar orphan` and `scar lint`. The `orphaned` transition itself is driven by the location anchors — a scar orphans when all of its path/pattern anchors go dead — and surfaces in `scar status` and CI as "this knowledge has come loose — re-anchor or archive." Orphaned ≠ deleted, ever.
 

@@ -299,3 +299,37 @@ Body.
         "incident: 2024-prod-outage",
         "note: archived 2025-01-01: superseded",
     ]
+
+
+# --- command anchors (#175) ---
+
+COMMAND_SCAR = """\
+---
+id: 4
+type: deadend
+title: Bare uv sync strips extras
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync(?!.* --all-extras)"
+evidence:
+  - issue: 175
+status: active
+---
+
+Always run uv sync --all-extras.
+"""
+
+
+def test_parse_command_anchor():
+    scar = parse_scar_text(COMMAND_SCAR)
+    assert scar.command_anchors == ["uv sync(?!.* --all-extras)"]
+    assert scar.path_anchors == []
+
+
+def test_command_anchor_roundtrips_through_to_text():
+    scar = parse_scar_text(COMMAND_SCAR)
+    again = parse_scar_text(scar.to_text())
+    assert again.command_anchors == ["uv sync(?!.* --all-extras)"]

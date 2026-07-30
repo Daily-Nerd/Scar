@@ -45,18 +45,20 @@ class ScarMatch:
         d = dict(self.scar.__dict__)
         d["anchors"] = {"paths": d.pop("path_anchors"),
                         "patterns": d.pop("pattern_anchors"),
-                        "symbols": d.pop("symbol_anchors")}
+                        "symbols": d.pop("symbol_anchors"),
+                        "commands": d.pop("command_anchors")}
         d.update(matched_by=list(self.matched_by),
                  anchor_strength=self.anchor_strength,
                  rank=self.rank, path=self.path, source=str(self.source))
         return d
 
 
-# Signal types that prove the EDIT is related to the scar (not merely the
-# file): a pattern hit inside the new content, or a symbol resolution.
-# Path-prefix and pattern-on-path matches only prove file proximity — they
-# render as one-line hints, not full bodies (precision engine).
-CONTENT_SIGNALS = frozenset({"content_pattern", "symbol"})
+# Signal types that prove the ACT is related to the scar (not merely the
+# file): a pattern hit inside the new content, a symbol resolution, or a
+# command anchor matching the command about to run. Path-prefix and
+# pattern-on-path matches only prove file proximity — they render as
+# one-line hints, not full bodies (precision engine).
+CONTENT_SIGNALS = frozenset({"content_pattern", "symbol", "command"})
 
 
 def has_content_signal(match: ScarMatch) -> bool:
@@ -178,6 +180,26 @@ def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
     except ValueError:
         return []
     return _match_target(store.firing(), store.root, rel_path, new_content)[:top_k]
+
+
+def rank_matches_for_command(store: ScarStore, command: str,
+                             top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
+    """Top-k firing scars whose command anchors match a shell command about
+    to execute (#175). Command anchors are matched ONLY here — never against
+    edit paths or content — and a hit is act-proof (full-body tier), because
+    the command IS the mistake the scar warns about."""
+    ranked: list[ScarMatch] = []
+    for source, scar in store.firing():
+        if not scar.command_anchors:
+            continue
+        if not any(_pattern_anchor_matches(c, command) for c in scar.command_anchors):
+            continue
+        rank = 2.5 * SEVERITY_WEIGHT.get(scar.severity, 2) * scar.confidence
+        ranked.append(ScarMatch(scar=scar, source=source.relative_to(store.root),
+                                rank=rank, anchor_strength=2.5,
+                                matched_by=("command",), path=command))
+    ranked.sort(key=lambda m: -m.rank)
+    return ranked[:top_k]
 
 
 def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,

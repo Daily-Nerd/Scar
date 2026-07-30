@@ -76,7 +76,8 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding("error", f"invalid severity '{scar.severity}'"))
     if scar.status not in STATUSES:
         findings.append(Finding("error", f"invalid status '{scar.status}'"))
-    if not scar.path_anchors and not scar.pattern_anchors and not scar.symbol_anchors:
+    if (not scar.path_anchors and not scar.pattern_anchors
+            and not scar.symbol_anchors and not scar.command_anchors):
         findings.append(Finding("error", "no anchors — scar protects nothing"))
     # Scan the raw frontmatter for anchor keys the model cannot represent.
     front = text.split("\n---", 1)[0]
@@ -98,6 +99,20 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         if _is_redos_prone(pat):
             findings.append(Finding(
                 "error", f"pathological pattern anchor /{pat}/: nested quantifier "
+                "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+    for cmd in scar.command_anchors:
+        try:
+            rx = re.compile(cmd)
+        except re.error as exc:
+            findings.append(Finding("error", f"invalid command anchor /{cmd}/: {exc}"))
+            continue
+        if rx.search(""):
+            findings.append(Finding(
+                "error", f"command anchor /{cmd}/ matches the empty string — it "
+                "would fire on every command; anchor a concrete command shape"))
+        if _is_redos_prone(cmd):
+            findings.append(Finding(
+                "error", f"pathological command anchor /{cmd}/: nested quantifier "
                 "risks catastrophic backtracking (ReDoS) — simplify the regex"))
     if scar.violation:
         try:
