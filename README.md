@@ -26,24 +26,13 @@ The flip side: agents also solve the historically fatal flaw of every knowledge-
 
 **Agents created the urgency. Agents remove the adoption barrier. That's the wedge.**
 
-## How it works
+## Documentation
 
-```
-.scars/
-├── 0001-redis-sessions.deadend.md
-├── 0002-vendor-retry-window.fence.md
-└── 0003-csv-column-order.landmine.md
-```
+**Docs site: <https://daily-nerd.github.io/Scar/>** — [quickstart](https://daily-nerd.github.io/Scar/quickstart), [concepts](https://daily-nerd.github.io/Scar/concepts), [measurement methodology](https://daily-nerd.github.io/Scar/methodology), [agent integration](https://daily-nerd.github.io/Scar/agents), [changelog](https://daily-nerd.github.io/Scar/changelog).
 
-- Scars are small structured Markdown files with YAML frontmatter, tracked in git, reviewed in PRs like code.
-- Each scar is **anchored** to code via paths, symbol names, and content fingerprints — not line numbers — so anchors survive refactors.
-- Enforcement happens **at the moment of action**:
-  - `scar check <path>... [--diff FILE] --exit-code` — CLI gate for humans and CI (non-zero exit when a scar fires)
-  - Agent hook (Claude Code `PreToolUse`, etc.) — injects relevant scars into the agent's context *before* it edits the file. Path-only matches render as one-line hints; the full scar body is injected only when the edit content or a symbol actually trips the scar's pattern — and a body already shown for the same file in the last 4 hours collapses to a one-liner.
-  - A scar can also declare an optional `violation:` regex — a post-edit compliance tripwire (Claude Code `PostToolUse`) that flags when the code an agent *just wrote* actually does the forbidden thing, and `scar check --diff --exit-code` gates on the same pattern in CI.
-  - `scar mcp` — local MCP server, so MCP-capable agents can query and draft scars.
-- `scar harvest` — mines git history (reverts, add-then-remove dependencies, reopened issues) to propose candidate scars for codebases starting from zero.
-- Scars are **advisory, never blocking, by default** — and stale knowledge has a lifecycle: `scar challenge <id> --reason` disputes a scar (it still fires, marked as disputed), `scar archive <id> --reason` retires it (never fires again; `scar why` keeps the history), and `scar lint`/`scar status` surface any scar whose `review_after` date has passed. Nothing expires automatically — archiving is a human decision, same governance as promotion.
+AI agents: a machine-readable index lives at [llms.txt](https://daily-nerd.github.io/Scar/llms.txt).
+
+In one paragraph: scars are small YAML+Markdown files in `.scars/`, tracked in git and reviewed in PRs, **anchored** to code via paths, tree-sitter symbols, and diff-scoped patterns — not line numbers. A pre-edit hook injects relevant scars into an agent's context at the moment of action; an optional `violation:` regex is a post-edit tripwire that makes compliance measurable. Advisory, never blocking, by default; agents and `scar harvest` write only candidates, a human promotes.
 
 ## Install
 
@@ -66,94 +55,18 @@ The parser and agent hook hot-path are stdlib-only; the human-facing CLI adds
 
 ```bash
 cd your-repo
-scar init                  # creates .scars/ with template + README
-
-# write your first scar
+scar init                        # creates .scars/ with template + seeded example
 cp .scars/template.md .scars/candidates/redis-sessions.md
 $EDITOR .scars/candidates/redis-sessions.md
-
-scar lint                  # validate format
+scar lint                        # validate format
 scar promote redis-sessions.md   # human review gate: candidate -> active
-
-# from then on
-scar check src/auth/       # what's anchored here?
-scar why src/auth/         # full history of pain for this path
-scar harvest               # mine git history for candidate scars
+scar hook install                # Claude Code: inject scars before agent edits
 ```
 
-Wiring the Claude Code hook (auto-injects scars before any agent edit):
-
-```bash
-scar hook install
-scar hook status
-```
-
-Hooks are advisory and are installed only by this explicit user command. To
-stop all automatic injection and drafting while keeping the repository's
-`.scars/` records:
-
-```bash
-scar hook uninstall
-```
-
-**Recommended (Claude Code): install the plugin** so the hooks *and* the
-scar-authoring skill arrive together via the marketplace.
-
-**Fallback / non-marketplace:** `scar hook install` registers the hooks, and
-`scar skill install` drops the authoring skill into `~/.claude/skills/`. Both are
-explicit — you run them, nothing is installed as a side effect.
-
-Non-Claude agents: `scar agent skill` prints the authoring skill for any runtime;
-MCP agents get the digest via the `scar_draft` tool description.
-
-Wiring MCP-capable agents — the stdio server speaks newline-delimited JSON
-per the MCP spec (fixed in [#162](https://github.com/Daily-Nerd/Scar/issues/162)):
-
-```bash
-scar agent doctor
-scar agent config opencode   # or: codex, cursor, windsurf
-```
-
-The MCP server runs as:
-
-```bash
-scar mcp
-```
-
-It is designed to expose `scar_query`, `scar_why`, and `scar_draft`. Drafting
-writes only to `.scars/candidates/`; active enforcement still requires human
-promotion.
-
-## Authoring from any agent
-
-`stop_drafter` (the Claude Code `Stop` hook) is transcript-based, so it only
-exists inside Claude Code. `scar draft-check` closes that gap for every other
-runtime — Codex, Cursor, opencode, a human at a terminal — with the same
-prompt, driven entirely by git evidence instead of a transcript: revert
-language in commit messages, actual `git revert`/`reset --hard` history, and
-files churned across recent commits. Advisory only — it never blocks
-anything and always exits 0.
-
-**With the hook (any git repo):**
-
-```bash
-scar hook install --git      # writes .git/hooks/post-commit
-scar hook status --git
-scar hook uninstall --git
-```
-
-Every commit runs `scar draft-check --from-hook`, throttled to at most one
-nudge per hour per repo so a commit-heavy session isn't nagged repeatedly. If
-hooks are already managed elsewhere (`core.hooksPath`, husky, lefthook),
-install prints the one line to add manually instead of touching anything.
-
-**Without the hook:** run `scar draft-check` yourself (or have the agent run
-it) before ending a session — `scar agent config <target>` and AGENTS.md both
-carry the instruction to do so. When it trips, follow the same two-branch
-contract as `stop_drafter`: write a short candidate scar, or — if nothing was
-actually abandoned — log one line to `.scars/candidates/fp-log.txt` tagged
-`draft-check`, so false-trigger data from git evidence stays separate from
-transcript-based false triggers.
+Full walkthrough, lifecycle commands, and agent wiring (Claude Code plugin,
+MCP server, `scar draft-check` for every other runtime):
+[quickstart](https://daily-nerd.github.io/Scar/quickstart) ·
+[agent integration](https://daily-nerd.github.io/Scar/agents).
 
 ## CI / pre-commit
 
@@ -197,6 +110,7 @@ release-please, so pin a tag for reproducible CI.
 
 ## Read more
 
+- [Docs site](https://daily-nerd.github.io/Scar/) — quickstart, concepts, measurement methodology, agent integration
 - [IDEA.md](IDEA.md) — the full pitch: problem, solution, why this, why now, why me
 - [SPEC.md](SPEC.md) — scar format, anchoring model, CLI surface, agent integration
 - [STRESS-TEST.md](STRESS-TEST.md) — adversarial analysis: failure modes, loopholes, objections, premortem
