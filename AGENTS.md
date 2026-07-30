@@ -37,7 +37,7 @@ as the `scar-authoring` skill.
 
 ## Agent Integrations
 
-- MCP-capable agents can launch the local server with `scar mcp` — **experimental, currently broken ([#162](https://github.com/Daily-Nerd/Scar/issues/162)): the stdio framing is incompatible with MCP clients.** Use `scar agent skill` + the CLI until it lands.
+- MCP-capable agents can launch the local server with `scar mcp` (newline-delimited JSON stdio per the MCP spec; fixed in [#162](https://github.com/Daily-Nerd/Scar/issues/162)).
 - Integration snippets are available with:
   - `scar agent config codex`
   - `scar agent config cursor`

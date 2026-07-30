@@ -27,7 +27,7 @@ Public at [github.com/Daily-Nerd/Scar](https://github.com/Daily-Nerd/Scar), `sca
 
 ## Phase 2 — Ecosystem 🔄 in progress
 
-- ⚠️ **MCP server** (`scar_query`, `scar_why`, `scar_draft`) — landed v0.3.0, dependency-free stdio, drafts gated to candidates/, but **experimental: the stdio transport uses the wrong framing and MCP clients cannot complete a handshake ([#162](https://github.com/Daily-Nerd/Scar/issues/162))**. First non-Claude agent (Codex) arrived and contributed the implementation — the deferral condition resolving itself.
+- ✅ **MCP server** (`scar_query`, `scar_why`, `scar_draft`) — landed v0.3.0, dependency-free stdio, drafts gated to candidates/; stdio framing fixed to newline-delimited JSON per the MCP spec ([#162](https://github.com/Daily-Nerd/Scar/issues/162)). First non-Claude agent (Codex) arrived and contributed the implementation — the deferral condition resolving itself.
 - ✅ Multi-agent surface: committed `AGENTS.md`, `scar inject --diff`, `scar agent doctor/config` for Codex, Cursor, Windsurf, opencode (v0.3.0)
 - ✅ CI surface: expiry warnings (`lint`/`status`, v0.2.0); orphan detection — all-anchors-dead firing scars → `orphaned`, loud in CI (#34); partial-rot advisory — firing scars with ≥1 dead anchor among live ones, named in `lint`/`status`/`orphan` (#35). Principle 3 now enforced by code for both total and partial rot.
 - ✅ Harvest ranking layer — heuristic weighted scorer + label-capture instrument, zero-dep, deterministic (#39). Weights remain intuition until real-repo labels calibrate precision.

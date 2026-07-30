@@ -111,7 +111,7 @@ Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X a
 
 ### 4.2 MCP server
 
-`scar mcp` exposes: `scar_query(paths|content|diff)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Intended for any MCP-capable agent — Codex, Cursor, Windsurf, opencode, custom. **Status: experimental — the stdio transport currently uses the wrong framing and MCP clients cannot complete a handshake ([#162](https://github.com/Daily-Nerd/Scar/issues/162)).**
+`scar mcp` exposes: `scar_query(paths|content|diff)`, `scar_why(path)`, `scar_draft(type, title, body, anchors, evidence)` (writes to `candidates/`, never directly to active). Intended for any MCP-capable agent — Codex, Cursor, Windsurf, opencode, custom. Stdio transport is newline-delimited JSON per the MCP spec ([#162](https://github.com/Daily-Nerd/Scar/issues/162), fixed).
 
 ### 4.3 Ranking and the fatigue budget
 
