@@ -60,6 +60,16 @@ scar hook install --git      # writes .git/hooks/post-commit
 
 Throttled to one nudge per hour per repo, advisory only, always exits 0. And `scar agent skill` prints the full authoring contract as text for pasting into any runtime's instructions.
 
+## Orchestrators and sub-agents
+
+Sub-agents launch in fresh contexts: edit-anchored scars reach them (the hook fires inside their session), but process-level knowledge — command traps, workflow rules — only arrives if the launch prompt carries it. `scar brief --compact` makes that mechanical:
+
+```bash
+scar brief --compact --paths src/payments/ --max-chars 1500
+```
+
+One tight line per scar, severity-ordered, byte-capped, plain text with omissions reported (never silent). Command-anchored scars are always included — they are precisely the ones the edit hook cannot deliver. Orchestrator pattern: run it with the files the sub-agent will touch, prepend the block to the launch prompt.
+
 ## CI
 
 ```bash

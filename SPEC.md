@@ -89,6 +89,7 @@ scar harvest              # mine git history, emit candidate scars to .scars/can
 scar status               # active/orphaned/challenged/expiring counts; repo health
 scar inject --path <p>    # machine mode: top-k scars for one edit as hook JSON
 scar inject --diff <d>    # machine mode: top-k scars for a unified diff as hook JSON
+scar brief --compact      # paste-ready scar block for sub-agent launch prompts
 scar mcp                  # stdio MCP server for MCP-capable agents
 scar agent config <name>  # print setup snippets for supported agent runtimes
 ```
