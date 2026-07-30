@@ -2855,3 +2855,11 @@ def test_brief_excludes_candidates_and_archived(tmp_path, monkeypatch, capsys):
 def test_brief_outside_scar_repo_fails_cleanly(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["brief", "--compact"]) == 1
+
+
+# --- set_defaults dispatch (#180): the args.command collision class is dead ---
+
+def test_every_subcommand_dispatches_via_func():
+    from scar.cli import build_parser
+    for name, sp in _subparsers_choices(build_parser()).items():
+        assert callable(sp.get_default("func")), f"{name} has no func default"
