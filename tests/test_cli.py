@@ -2740,3 +2740,118 @@ def test_inject_command_silent_on_innocent_command(tmp_path, monkeypatch, capsys
     monkeypatch.chdir(tmp_path)
     assert main(["inject", "--command", "uv sync --all-extras"]) == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+# --- scar brief --compact (#176) ---
+
+BRIEF_PATH_SCAR = """\
+---
+id: 1
+type: fence
+title: Sleep is 7s for vendor window
+severity: critical
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - path: payments/
+evidence:
+  - issue: 176
+status: active
+---
+
+Do not lower the sleep below 7s; the vendor rate limiter has an
+undocumented 6-second window.
+"""
+
+BRIEF_COMMAND_SCAR = """\
+---
+id: 2
+type: deadend
+title: Bare uv sync strips extras
+severity: high
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - command: "uv sync(?!.* --all-extras)"
+evidence:
+  - issue: 176
+status: active
+---
+
+Always run uv sync --all-extras; bare uv sync strips extras.
+"""
+
+BRIEF_LOW_SCAR = """\
+---
+id: 3
+type: landmine
+title: CSV export depends on SELECT column order
+severity: low
+confidence: 0.9
+created: 2026-07-30
+authors: ["kib"]
+anchors:
+  - path: reports/
+evidence:
+  - issue: 176
+status: active
+---
+
+Reordering the SELECT corrupts the reconciliation pipeline.
+"""
+
+
+def _brief_repo(tmp_path):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-vendor.fence.md").write_text(BRIEF_PATH_SCAR)
+    (tmp_path / ".scars" / "0002-uv-sync.deadend.md").write_text(BRIEF_COMMAND_SCAR)
+    (tmp_path / ".scars" / "0003-csv.landmine.md").write_text(BRIEF_LOW_SCAR)
+    return tmp_path
+
+
+def test_brief_lists_scars_ordered_by_severity(tmp_path, monkeypatch, capsys):
+    _brief_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["brief", "--compact"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("Sleep is 7s") < out.index("uv sync")
+    assert out.index("uv sync") < out.index("CSV export")
+    assert "vendor rate limiter" in out          # one actionable rule from body
+    assert "\x1b" not in out                     # scar #8: plain, never rich
+    assert "---" not in out                      # no YAML leakage
+
+
+def test_brief_paths_filter_keeps_overlapping_and_command_scars(tmp_path, monkeypatch, capsys):
+    _brief_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["brief", "--compact", "--paths", "payments/retry.py"]) == 0
+    out = capsys.readouterr().out
+    assert "Sleep is 7s" in out
+    assert "CSV export" not in out       # reports/ does not overlap
+    assert "uv sync" in out              # command scars always ride along
+
+
+def test_brief_max_chars_caps_and_reports_omissions(tmp_path, monkeypatch, capsys):
+    _brief_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["brief", "--compact", "--max-chars", "220"]) == 0
+    out = capsys.readouterr().out
+    assert len(out) <= 320               # budget + the omission trailer
+    assert "more scar(s) omitted" in out # no silent caps
+
+
+def test_brief_excludes_candidates_and_archived(tmp_path, monkeypatch, capsys):
+    _brief_repo(tmp_path)
+    (tmp_path / ".scars" / "candidates" / "draft.md").write_text(
+        BRIEF_LOW_SCAR.replace("status: active", "status: candidate"))
+    monkeypatch.chdir(tmp_path)
+    main(["brief", "--compact"])
+    out = capsys.readouterr().out
+    assert out.count("CSV export") == 1  # the active one only
+
+
+def test_brief_outside_scar_repo_fails_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["brief", "--compact"]) == 1

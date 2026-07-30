@@ -1067,6 +1067,67 @@ def _cmd_reanchor(args) -> int:
     return 0
 
 
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _brief_rule(body: str) -> str:
+    """The one actionable line for a brief entry: the first sentence of the
+    body (or the first line, whichever ends sooner), trimmed to ~140 chars."""
+    text = " ".join(body.split())
+    cut = text.find(". ")
+    rule = text[:cut + 1] if cut != -1 else text
+    return rule[:140]
+
+
+def _cmd_brief(args) -> int:
+    """Paste-ready scar block for sub-agent launch prompts (#176). Plain text
+    only, on tty and non-tty alike — the output IS the machine artifact
+    (scar #8: never rich on a machine path), so no rendering layer here."""
+    store = ScarStore.discover(Path.cwd())
+    if store is None:
+        print("no .scars/ directory found", file=sys.stderr)
+        return 1
+    firing = store.firing()
+    selected = []
+    for source, scar in firing:
+        if args.paths and not scar.command_anchors:
+            # Overlap in either direction: anchor covers the path, or the
+            # given path (a directory) covers the anchor. Pattern anchors
+            # are tested against the path string, mirroring injection.
+            from .match import _path_anchor_matches, _pattern_anchor_matches
+            hit = any(_path_anchor_matches(a, p) or p.rstrip("/") in ("", ".")
+                      or a.startswith(p.rstrip("/") + "/")
+                      for a in scar.path_anchors for p in args.paths)
+            if not hit:
+                hit = any(_pattern_anchor_matches(pat, p)
+                          for pat in scar.pattern_anchors for p in args.paths)
+            if not hit:
+                continue
+        selected.append(scar)
+    selected.sort(key=lambda s: (SEVERITY_ORDER.get(s.severity, 2),
+                                 -s.confidence, s.id or 0))
+    if not selected:
+        return 0
+    header = (f"Repo negative knowledge ({len(selected)} scar(s)) — do not "
+              "repeat these recorded mistakes:")
+    lines, omitted = [header], 0
+    budget = max(args.max_chars - len(header), 0)
+    for scar in selected:
+        sid = f"#{scar.id}" if scar.id is not None else "cand"
+        entry = (f"- [{scar.type} {sid} | {scar.severity}] {scar.title}"
+                 f" — {_brief_rule(scar.body)}")
+        if len(entry) + 1 > budget:
+            omitted += 1
+            continue
+        budget -= len(entry) + 1
+        lines.append(entry)
+    if omitted:
+        lines.append(f"(+{omitted} more scar(s) omitted by --max-chars — "
+                     "run `scar status` for the full set)")
+    print("\n".join(lines))
+    return 0
+
+
 def _cmd_why(args) -> int:
     """History of pain for a path: every scar that anchors it, any status."""
     store = _require_store(Path(args.path).resolve())
@@ -1964,6 +2025,17 @@ def build_parser() -> argparse.ArgumentParser:
     cfg.add_argument("target", choices=["codex", "cursor", "opencode", "windsurf"])
     _add(agent_sub, "skill", help="print the scar-authoring skill body")
 
+    p = _add(sub, "brief", help="paste-ready scar block for sub-agent launch "
+                                "prompts (#176) — plain text, byte-capped")
+    p.add_argument("--compact", action="store_true", default=True,
+                   help="compact one-line-per-scar format (the only mode today)")
+    p.add_argument("--paths", nargs="*", default=[],
+                   help="filter to scars whose anchors overlap these paths; "
+                        "command-anchored scars are always included")
+    p.add_argument("--max-chars", type=int, default=2000,
+                   help="byte budget for the block (default 2000); omissions "
+                        "are reported, never silent")
+
     p = _add(sub, "inject", help="machine mode for hooks: JSON or silence")
     p.add_argument("--path")
     # dest MUST NOT be "command": the subparser dispatch dict is keyed on
@@ -1998,6 +2070,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {
         "init": _cmd_init, "lint": _cmd_lint, "status": _cmd_status,
         "promote": _cmd_promote, "check": _cmd_check, "why": _cmd_why,
+        "brief": _cmd_brief,
         "inject": _cmd_inject, "harvest": _cmd_harvest, "orphan": _cmd_orphan,
         "reanchor": _cmd_reanchor,
         "agent": _cmd_agent, "stats": _cmd_stats, "gc": _cmd_gc,
