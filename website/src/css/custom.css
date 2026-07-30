@@ -1,0 +1,27 @@
+/**
+ * SCAR site theme. Infima variable overrides only — no structural CSS.
+ * Primary is a scar-tissue red, darkened for AA contrast on white.
+ */
+
+:root {
+  --ifm-color-primary: #a83240;
+  --ifm-color-primary-dark: #972d3a;
+  --ifm-color-primary-darker: #8f2b36;
+  --ifm-color-primary-darkest: #76232d;
+  --ifm-color-primary-light: #b93746;
+  --ifm-color-primary-lighter: #c13a4a;
+  --ifm-color-primary-lightest: #cd5361;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #e07683;
+  --ifm-color-primary-dark: #da5b6b;
+  --ifm-color-primary-darker: #d64e5f;
+  --ifm-color-primary-darkest: #c52e41;
+  --ifm-color-primary-light: #e6919b;
+  --ifm-color-primary-lighter: #e99ea7;
+  --ifm-color-primary-lightest: #f1c5ca;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
