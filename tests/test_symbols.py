@@ -150,3 +150,50 @@ def test_fingerprint_node_distinguishes_same_named_defs():
     fps = [symbols.fingerprint_node(n) for name, n in
            symbols._walk_defs(tree.root_node) if name == "foo"]
     assert len(fps) == 2 and fps[0] != fps[1]
+
+
+# --- ambiguity-aware resolution + identifier-aware fingerprints (#187) ---
+
+AMBIG_SRC = ("class A:\n    def foo(self):\n        return 1\n\n"
+             "class B:\n    def foo(self):\n        return 2\n")
+
+
+def _need_symbols():
+    from scar import symbols
+    if not symbols.symbols_available():
+        import pytest
+        pytest.skip("symbols extra not installed")
+    return symbols
+
+
+def test_fingerprint_refuses_ambiguous_bare_anchor():
+    symbols = _need_symbols()
+    assert symbols.fingerprint("foo", "z.py", AMBIG_SRC) is None
+
+
+def test_fingerprint_resolves_dotted_anchors_past_ambiguity():
+    symbols = _need_symbols()
+    fa = symbols.fingerprint("A.foo", "z.py", AMBIG_SRC)
+    fb = symbols.fingerprint("B.foo", "z.py", AMBIG_SRC)
+    assert fa is not None and fb is not None
+    assert fa != fb  # identifier-aware: bodies differ only in literals
+
+
+def test_resolve_any_still_matches_ambiguous_names():
+    symbols = _need_symbols()
+    assert symbols.resolve_any(["foo"], "z.py", AMBIG_SRC) is True
+
+
+def test_fingerprint_distinguishes_unrelated_same_shape_bodies():
+    symbols = _need_symbols()
+    fa = symbols.fingerprint("bar", "x.py", "def bar(a):\n    return a.b(1)\n")
+    fb = symbols.fingerprint("baz", "y.py", "def baz(q):\n    return q.z(2)\n")
+    assert symbols.jaccard(fa, fb) < 1.0
+
+
+def test_fingerprint_identical_bodies_still_match_exactly():
+    symbols = _need_symbols()
+    src = "def f(x):\n    for i in range(x):\n        print(i)\n    return x\n"
+    fa = symbols.fingerprint("f", "x.py", src)
+    fb = symbols.fingerprint("f", "y.py", src)
+    assert symbols.jaccard(fa, fb) == 1.0
