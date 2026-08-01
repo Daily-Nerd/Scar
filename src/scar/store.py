@@ -219,7 +219,10 @@ class ScarStore:
         scar = parse_scar_text(text)
         scar.id = self.next_id()
         scar.status = "active"
-        if reviewer and reviewer not in scar.authors:
+        # Case-insensitive dedup (#182): the same human under a different
+        # casing is not a new reviewer. Keep the spelling already present —
+        # promote never rewrites attribution, it only declines to duplicate.
+        if reviewer and reviewer.casefold() not in {a.casefold() for a in scar.authors}:
             scar.authors.append(reviewer)
         slug = candidate.stem
         new_path = self.scars_dir / f"{scar.id:04d}-{slug}.{scar.type}.md"

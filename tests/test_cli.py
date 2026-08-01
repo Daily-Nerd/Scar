@@ -2863,3 +2863,30 @@ def test_every_subcommand_dispatches_via_func():
     from scar.cli import build_parser
     for name, sp in _subparsers_choices(build_parser()).items():
         assert callable(sp.get_default("func")), f"{name} has no func default"
+
+
+# --- author drift across the store + promote case warning (#182) ---
+
+def test_lint_cli_warns_on_author_case_drift_across_store(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    scar_a = CANDIDATE.replace("status: candidate", "status: active").replace(
+        'authors: ["claude-code"]', 'authors: ["kibukx"]')
+    scar_b = CANDIDATE.replace("status: candidate", "status: active").replace(
+        'authors: ["claude-code"]', 'authors: ["Kibukx"]').replace(
+        "title: Tried X, failed", "title: Tried Y, failed")
+    (tmp_path / ".scars" / "0001-a.deadend.md").write_text("---\nid: 1\n" + scar_a.split("---\n", 2)[1] + "---\n\nbody\n")
+    (tmp_path / ".scars" / "0002-b.deadend.md").write_text("---\nid: 2\n" + scar_b.split("---\n", 2)[1] + "---\n\nbody\n")
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "kibukx" in out and "Kibukx" in out
+    assert "case" in out.lower()
+
+
+def test_promote_warns_when_explicit_reviewer_differs_from_git_only_by_case(repo, capsys):
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "kibukx"], cwd=repo, check=True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x", "--reviewer", "Kibukx"]) == 0
+    out = capsys.readouterr().out
+    assert "case" in out.lower() and "git" in out.lower()

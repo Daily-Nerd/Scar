@@ -251,3 +251,36 @@ def test_redos_command_regex_is_an_error():
     findings = lint_text(_command_scar("(a+)+b"))
     assert any(f.level == "error" and "command" in f.message
                and "backtracking" in f.message for f in findings)
+
+
+# --- author identity drift (#182) ---
+
+def _authors_scar(authors: str) -> str:
+    return f"""---
+type: deadend
+title: authors drift probe
+severity: medium
+confidence: 0.7
+created: 2026-07-31
+authors: [{authors}]
+anchors:
+  - path: src/
+evidence:
+  - issue: 182
+status: active
+---
+
+body
+"""
+
+
+def test_lint_warns_on_case_only_author_drift_within_one_scar():
+    findings = lint_text(_authors_scar('"kibukx", "Kibukx"'))
+    assert any(f.level == "warning" and "author" in f.message.lower()
+               and "case" in f.message.lower() for f in findings)
+
+
+def test_lint_silent_on_distinct_authors():
+    findings = lint_text(_authors_scar('"claude-code", "kibukx"'))
+    assert not any("author" in f.message.lower() and "case" in f.message.lower()
+                   for f in findings)

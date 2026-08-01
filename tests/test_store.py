@@ -135,3 +135,28 @@ def test_template_with_durable_forms_parses_clean():
     text = TEMPLATE.replace("status: template", "status: active")
     s = parse_scar_text(text)
     assert any(e.startswith("issue:") or e.startswith("url:") for e in s.evidence)
+
+
+# --- reviewer dedup is case-insensitive (#182) ---
+
+DUP_AUTHOR_CANDIDATE = CANDIDATE.replace(
+    'authors: ["claude-code"]', 'authors: ["claude-code", "kibukx"]')
+
+
+def test_promote_reviewer_dedup_ignores_case(repo):
+    cand = repo / ".scars" / "candidates" / "dup-author.md"
+    cand.write_text(DUP_AUTHOR_CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="Kibukx")
+    text = new_path.read_text()
+    # existing spelling kept, duplicate NOT appended
+    assert 'authors: ["claude-code", "kibukx"]' in text
+    assert "Kibukx" not in text
+
+
+def test_promote_still_appends_genuinely_new_reviewer(repo):
+    cand = repo / ".scars" / "candidates" / "dup-author.md"
+    cand.write_text(DUP_AUTHOR_CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="mara")
+    assert 'authors: ["claude-code", "kibukx", "mara"]' in new_path.read_text()
