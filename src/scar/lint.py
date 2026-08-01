@@ -13,21 +13,117 @@ from . import symbols
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
 
 
-# A valid regex can still be a ReDoS weapon: a quantified group that is itself
-# quantified — (a+)+, (a*)*, (a+)*, (a*)+, ([a-z]+)* — backtracks catastrophically.
-# re.compile accepts it (the syntax is fine) so the plain compile-check below lets
-# it through; search() then hangs on adversarial input on the read hot path.
-# Reject the classic nested-quantifier forms at the gate so a pathological anchor
-# can never be promoted to an active (firing) scar. Conservative by construction:
-# the group must (a) open with a real, unescaped '(' — so an escaped literal paren
-# like redis\.get\( is ignored — (b) contain its own '+'/'*' quantifier, and
-# (c) be immediately followed by another '+'/'*'. Ordinary anchors
-# (redis\.get\(, output\.render\(, TODO|FIXME) never satisfy all three.
-_NESTED_QUANTIFIER = re.compile(r"(?<!\\)\((?:\?[:=!])?[^()]*[*+][^()]*\)[*+]")
+# A valid regex can still be a ReDoS weapon. re.compile accepts it (the syntax
+# is fine) so a plain compile-check lets it through; search() then hangs on
+# adversarial input on the read hot path. Two catastrophic families are gated
+# here (#184 — the old single-regex check missed both beyond one nesting level):
+#   1. A quantified group whose INTERIOR contains a quantifier at any depth:
+#      (a+)+, ((a+))+, (x(y+)z)*, ([a-z]+)*.
+#   2. A quantified alternation with identical or prefix-overlapping branches:
+#      (a|a)*, (x|xy)*, (?:foo|foobar)+.
+# Deliberately over-broad on family 1 (e.g. (ab+c)* is flagged even when the
+# surrounding literals make it deterministic) — this is a promote/CI gate with
+# a human in the loop, and the pre-#184 gate had the same conservatism one
+# level shallower. Escapes and character classes are skipped, so redis\.get\(
+# and [+*]+ never trip it.
+_GROUP_PREFIX = re.compile(r"\?(?:P<[^>]*>|<[=!]|[:=!])")
+
+
+def _scan_groups(pattern: str) -> list[tuple[int, int]]:
+    """(start, end) index pairs of parenthesized groups, end pointing at ')'.
+    Balanced scan skipping escaped chars and [...] classes."""
+    spans: list[tuple[int, int]] = []
+    stack: list[int] = []
+    in_class = False
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            stack.append(i)
+        elif c == ")" and stack:
+            spans.append((stack.pop(), i))
+        i += 1
+    return spans
+
+
+def _strip_group_prefix(interior: str) -> str:
+    """Drop a leading (?: / (?= / (?! / (?<= / (?<! / (?P<name> marker."""
+    m = _GROUP_PREFIX.match(interior)
+    return interior[m.end():] if m else interior
+
+
+def _has_bare_quantifier(text: str) -> bool:
+    """True iff text contains an unescaped '*' or '+' outside a [...] class."""
+    in_class = False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c in "*+":
+            return True
+        i += 1
+    return False
+
+
+def _top_level_branches(text: str) -> list[str]:
+    """Split on '|' at depth 0, outside classes, ignoring escaped bars."""
+    branches: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    in_class = False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            cur.append(text[i:i + 2])
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(0, depth - 1)
+        elif c == "|" and depth == 0:
+            branches.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    branches.append("".join(cur))
+    return branches
 
 
 def _is_redos_prone(pattern: str) -> bool:
-    return bool(_NESTED_QUANTIFIER.search(pattern))
+    for start, end in _scan_groups(pattern):
+        if end + 1 >= len(pattern) or pattern[end + 1] not in "*+":
+            continue
+        interior = _strip_group_prefix(pattern[start + 1:end])
+        if _has_bare_quantifier(interior):
+            return True
+        branches = _top_level_branches(interior)
+        if len(branches) > 1:
+            for i, a in enumerate(branches):
+                for b in branches[i + 1:]:
+                    if a and b and (a.startswith(b) or b.startswith(a)):
+                        return True
+    return False
 
 
 # The model extracts `path`/`pattern`/`symbol` anchors; any other anchor key is

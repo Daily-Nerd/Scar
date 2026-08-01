@@ -284,3 +284,33 @@ def test_lint_silent_on_distinct_authors():
     findings = lint_text(_authors_scar('"claude-code", "kibukx"'))
     assert not any("author" in f.message.lower() and "case" in f.message.lower()
                    for f in findings)
+
+
+# --- ReDoS gate: nested-group and alternation-overlap evasions (#184) ---
+
+def test_redos_gate_catches_nested_group_at_depth():
+    from scar.lint import _is_redos_prone
+    assert _is_redos_prone("((a+))+$")
+    assert _is_redos_prone("(x(y+)z)*")
+    assert _is_redos_prone("(?:(a*))+")
+
+
+def test_redos_gate_catches_overlapping_alternation():
+    from scar.lint import _is_redos_prone
+    assert _is_redos_prone("(a|a)*$")
+    assert _is_redos_prone("(x|xy)*$")
+    assert _is_redos_prone("(?:foo|foobar)+")
+
+
+def test_redos_gate_still_accepts_ordinary_anchors():
+    from scar.lint import _is_redos_prone
+    for benign in (r"redis\.get\(", r"TODO|FIXME", r"(abc)+", r"(a|b)*",
+                   r"uv sync(?!.* --all-extras)", r"except \((KeyError|TypeError)[^)]*\)",
+                   r"[+*]+", r"\(a\+\)\+"):
+        assert not _is_redos_prone(benign), benign
+
+
+def test_redos_gate_still_catches_original_form():
+    from scar.lint import _is_redos_prone
+    assert _is_redos_prone("(a+)+$")
+    assert _is_redos_prone("([a-z]+)*")
