@@ -362,10 +362,11 @@ def trace_dead_symbol(repo: Path, scar, anchor: str, sha: str,
         tree = symbols._parse(cand_path, source)
         if tree is None:
             continue
-        for cand_name, _node in symbols._walk_defs(tree.root_node):
-            cand_fp = symbols.fingerprint(cand_name, cand_path, source)
-            if cand_fp is None:
-                continue
+        for cand_name, node in symbols._walk_defs(tree.root_node):
+            # Fingerprint the node we already hold (#186): re-resolving by
+            # name re-parsed the file per definition AND collapsed same-named
+            # definitions onto the last one, emitting duplicate proposals.
+            cand_fp = symbols.fingerprint_node(node)
             sim = symbols.jaccard(base_fp, cand_fp)
             same_name = cand_name == name
             score = min(1.0, sim + SYMBOL_NAME_BONUS) if same_name else sim
