@@ -483,3 +483,73 @@ def test_edit_matching_never_fires_command_anchors(tmp_path):
     store = _command_repo(tmp_path)
     hits = rank_matches_for_edit(store, tmp_path / "uv sync", "uv sync")
     assert all(m.scar.id != 7 for m in hits)
+
+
+# --- tiering before truncation (#185) ---
+
+def _breadth_repo(tmp_path):
+    """Three broad critical path-only scars that outrank one low-severity
+    content-signal scar — the #185 truncation shape."""
+    store = make_repo(tmp_path)
+    for i, name in enumerate(("alpha", "beta", "gamma"), start=2):
+        (tmp_path / ".scars" / f"000{i}-{name}.fence.md").write_text(f"""---
+id: {i}
+type: fence
+title: broad {name}
+severity: critical
+confidence: 1.0
+created: 2026-08-01
+authors: ["kib"]
+anchors:
+  - path: payments/
+evidence:
+  - issue: 185
+status: active
+---
+
+broad {name} body
+""")
+    (tmp_path / ".scars" / "0005-narrow.deadend.md").write_text("""---
+id: 5
+type: deadend
+title: narrow content trap
+severity: low
+confidence: 0.3
+created: 2026-08-01
+authors: ["kib"]
+anchors:
+  - path: payments/
+  - pattern: "forbidden_widget"
+evidence:
+  - issue: 185
+status: active
+---
+
+do not use forbidden_widget
+""")
+    return store
+
+
+def test_content_signal_match_survives_topk_over_louder_path_matches(tmp_path):
+    store = _breadth_repo(tmp_path)
+    hits = rank_matches_for_edit(store, tmp_path / "payments" / "x.py",
+                                 "y = forbidden_widget()")
+    ids = [m.scar.id for m in hits]
+    assert 5 in ids, f"content-signal scar deleted by truncation: {ids}"
+    assert len(hits) <= 3
+
+
+def test_path_only_matches_still_fill_remaining_slots(tmp_path):
+    store = _breadth_repo(tmp_path)
+    hits = rank_matches_for_edit(store, tmp_path / "payments" / "x.py",
+                                 "y = forbidden_widget()")
+    assert sum(1 for m in hits if not has_content_signal(m)) == 2
+
+
+def test_no_content_signal_keeps_pure_rank_order(tmp_path):
+    store = _breadth_repo(tmp_path)
+    hits = rank_matches_for_edit(store, tmp_path / "payments" / "x.py", "")
+    assert [m.scar.id for m in hits] == sorted(
+        (m.scar.id for m in hits),
+        key=lambda i: next(-m.rank for m in hits if m.scar.id == i))
+    assert 5 not in [m.scar.id for m in hits][:3] or len(hits) == 3
