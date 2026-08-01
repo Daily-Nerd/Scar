@@ -2945,3 +2945,18 @@ def test_lint_silent_on_narrow_path_anchor(repo, capsys):
     assert main(["lint"]) == 0
     out = capsys.readouterr().out
     assert "%" not in out
+
+
+def test_breadth_warning_skipped_in_tiny_repos(repo, capsys):
+    # Below the 20-tracked-file floor, coverage share is quantization noise —
+    # a 4-file repo's single-file anchor is already 25%.
+    init_scars(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "seed"], cwd=repo, check=True)
+    (repo / ".scars" / "0001-broad.fence.md").write_text(
+        BROAD_SCAR.replace("path: apps/", "path: src/"))
+    assert main(["lint"]) == 0
+    assert "% of tracked files" not in capsys.readouterr().out

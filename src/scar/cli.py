@@ -504,7 +504,10 @@ def _cmd_lint(args) -> int:
     # field offender (29-58%) trips it while deliberate guard anchors like
     # this repo's own `.scars/` (13%) stay quiet. Warning only — breadth is
     # sometimes intentional. Uses the SAME shared predicate as injection.
-    if ctx is not None and ctx.tracked_paths:
+    # Floor: below ~20 tracked files a single file already exceeds 5%, so the
+    # share is quantization noise, not breadth signal (the predicted
+    # small-repo instability). Skip the check entirely rather than warn on it.
+    if ctx is not None and len(ctx.tracked_paths) >= 20:
         from .match import _path_anchor_matches
         n_tracked = len(ctx.tracked_paths)
         for rel, parsed in parsed_files:
