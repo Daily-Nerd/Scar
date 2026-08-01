@@ -616,3 +616,17 @@ def test_precheck_command_collapses_repeat_within_cooldown(command_repo, monkeyp
     out = out_json(capsys)
     # second showing within 4h demotes to a one-liner, never a full body
     assert out is None or "already shown" in str(out)
+
+
+# --- hot path parses each scar file exactly once (#186) ---
+
+def test_precheck_parses_each_scar_file_once(repo, monkeypatch, capsys):
+    import scar.store as store_mod
+    calls = []
+    real = store_mod.parse_scar_text
+    monkeypatch.setattr(store_mod, "parse_scar_text",
+                        lambda text: (calls.append(1), real(text))[1])
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "x.py"),
+                                      "new_string": "pass"}})
+    assert main(["hook", "precheck"]) == 0
+    assert len(calls) == 1, f"1 scar file parsed {len(calls)} times"

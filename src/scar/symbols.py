@@ -123,6 +123,18 @@ def _type_sequence(node) -> list[str]:
     return out
 
 
+def fingerprint_node(node) -> frozenset[str]:
+    """Fingerprint an already-resolved definition node (#186): callers that
+    hold the node from _walk_defs must not re-resolve by name — that re-parses
+    the file per definition AND collapses same-named definitions onto the
+    last one (the _resolve_node last-wins collision)."""
+    seq = _type_sequence(node)
+    if len(seq) < 3:
+        return frozenset(seq)  # too small for 3-grams → raw type set
+    return frozenset(
+        f"{seq[i]}|{seq[i + 1]}|{seq[i + 2]}" for i in range(len(seq) - 2))
+
+
 def fingerprint(anchor: str, rel_path: str, source: str) -> frozenset[str] | None:
     tree = _parse(rel_path, source)
     if tree is None:
@@ -130,11 +142,7 @@ def fingerprint(anchor: str, rel_path: str, source: str) -> frozenset[str] | Non
     node = _resolve_node(tree.root_node, anchor, rel_path)
     if node is None:
         return None
-    seq = _type_sequence(node)
-    if len(seq) < 3:
-        return frozenset(seq)  # too small for 3-grams → raw type set
-    return frozenset(
-        f"{seq[i]}|{seq[i + 1]}|{seq[i + 2]}" for i in range(len(seq) - 2))
+    return fingerprint_node(node)
 
 
 def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
@@ -143,8 +151,14 @@ def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+@functools.lru_cache(maxsize=64)
 def _parse(rel_path: str, source: str):
-    """Parse source for rel_path's language; None if unavailable/unknown ext."""
+    """Parse source for rel_path's language; None if unavailable/unknown ext.
+    lru_cache'd (#186): one hook invocation resolves symbol anchors for every
+    symbol-anchored scar against the SAME edited file — uncached, that was one
+    full tree-sitter parse per scar. Keyed on (rel_path, source); a re-passed
+    identical source string hits the str's cached hash, so the key cost is
+    one hash of the source on first sight, not per call."""
     if not symbols_available():
         return None
     lang = _lang_for(rel_path)

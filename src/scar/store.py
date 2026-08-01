@@ -161,6 +161,26 @@ class ScarStore:
         return [(f, s) for f, s in self.parsed()
                 if s.status in ("active", "challenged")]
 
+    def scan(self) -> tuple[list[tuple[Path, Scar]], list[Path]]:
+        """One directory pass returning (firing, broken) together (#186).
+        The hook hot path needs both; calling firing() then broken() re-reads
+        and re-parses every scar file a second time per edit. Deliberately a
+        fresh read, not an instance cache — commands that write scars and
+        re-read through the same store must never see stale results."""
+        firing: list[tuple[Path, Scar]] = []
+        broken: list[Path] = []
+        for f in self._scar_files():
+            try:
+                scar = parse_scar_text(f.read_text(encoding="utf-8"))
+            except ParseError:
+                broken.append(f)
+                continue
+            except OSError:
+                continue
+            if scar.status in ("active", "challenged"):
+                firing.append((f, scar))
+        return firing, broken
+
     def broken(self) -> list[Path]:
         out = []
         for f in self._scar_files():

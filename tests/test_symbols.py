@@ -114,3 +114,39 @@ def test_python_symbols_still_resolve_after_ts_fix():
     py = "class SessionStore:\n    def save(self):\n        return 1\n"
     assert symbols.resolve_symbol("SessionStore", "s.py", py) is not None
     assert symbols.resolve_symbol("SessionStore.save", "s.py", py) is not None
+
+
+# --- parse cache + node-direct fingerprints (#186) ---
+
+def test_parse_is_cached_for_identical_input():
+    from scar import symbols
+    if not symbols.symbols_available():
+        import pytest
+        pytest.skip("symbols extra not installed")
+    src = "def f():\n    return 1\n"
+    assert symbols._parse("m.py", src) is symbols._parse("m.py", src)
+
+
+def test_fingerprint_node_matches_name_based_fingerprint():
+    from scar import symbols
+    if not symbols.symbols_available():
+        import pytest
+        pytest.skip("symbols extra not installed")
+    src = "def f():\n    for i in range(3):\n        print(i)\n"
+    tree = symbols._parse("m.py", src)
+    name, node = next(iter(symbols._walk_defs(tree.root_node)))
+    assert symbols.fingerprint_node(node) == symbols.fingerprint("f", "m.py", src)
+
+
+def test_fingerprint_node_distinguishes_same_named_defs():
+    from scar import symbols
+    if not symbols.symbols_available():
+        import pytest
+        pytest.skip("symbols extra not installed")
+    src = ("class A:\n    def foo(self):\n        return 1\n\n"
+           "class B:\n    def foo(self):\n        for i in range(3):\n"
+           "            print(i)\n        return [x for x in 'ab']\n")
+    tree = symbols._parse("z.py", src)
+    fps = [symbols.fingerprint_node(n) for name, n in
+           symbols._walk_defs(tree.root_node) if name == "foo"]
+    assert len(fps) == 2 and fps[0] != fps[1]

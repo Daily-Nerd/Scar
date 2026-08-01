@@ -185,24 +185,32 @@ def merge_best_matches(match_lists: list[list[ScarMatch]],
 
 
 def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
-                          top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
-    """Top-k firing scar matches relevant to editing `target`."""
+                          top_k: int = DEFAULT_TOP_K,
+                          firing: list | None = None) -> list[ScarMatch]:
+    """Top-k firing scar matches relevant to editing `target`. Pass `firing`
+    when the caller already holds a store.scan() result (#186) — the hook hot
+    path must not trigger a second directory parse."""
     try:
         rel_path = str(Path(target).resolve().relative_to(store.root))
     except ValueError:
         return []
+    if firing is None:
+        firing = store.firing()
     return _select_top(
-        _match_target(store.firing(), store.root, rel_path, new_content), top_k)
+        _match_target(firing, store.root, rel_path, new_content), top_k)
 
 
 def rank_matches_for_command(store: ScarStore, command: str,
-                             top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
+                             top_k: int = DEFAULT_TOP_K,
+                             firing: list | None = None) -> list[ScarMatch]:
     """Top-k firing scars whose command anchors match a shell command about
     to execute (#175). Command anchors are matched ONLY here — never against
     edit paths or content — and a hit is act-proof (full-body tier), because
     the command IS the mistake the scar warns about."""
     ranked: list[ScarMatch] = []
-    for source, scar in store.firing():
+    if firing is None:
+        firing = store.firing()
+    for source, scar in firing:
         if not scar.command_anchors:
             continue
         if not any(_pattern_anchor_matches(c, command) for c in scar.command_anchors):

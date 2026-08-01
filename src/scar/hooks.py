@@ -211,7 +211,9 @@ def precheck() -> int:
         if store is None:
             return 0
         new_content = _extract_edit_content(tool_input)
-        matches = rank_matches_for_edit(store, Path(target), new_content)
+        firing, broken = store.scan()  # one directory pass, not two (#186)
+        matches = rank_matches_for_edit(store, Path(target), new_content,
+                                        firing=firing)
         recent = _recently_fired(str(store.root), target)
         full, demoted = [], []
         for m in matches:
@@ -221,7 +223,7 @@ def precheck() -> int:
                 demoted.append((m.scar, "already shown in the last 4h"))
             else:
                 full.append(m.scar)
-        context = injection_context(full, store.broken(), store.scars_dir,
+        context = injection_context(full, broken, store.scars_dir,
                                     demoted=demoted)
         hits = [m.scar for m in matches]
         if context:
@@ -254,7 +256,8 @@ def precheck_command() -> int:
         if store is None:
             return 0
         from .match import rank_matches_for_command
-        matches = rank_matches_for_command(store, command)
+        firing, broken = store.scan()  # one directory pass, not two (#186)
+        matches = rank_matches_for_command(store, command, firing=firing)
         if not matches:
             return 0
         recent = _recently_fired(str(store.root), command)
@@ -264,7 +267,7 @@ def precheck_command() -> int:
                 demoted.append((m.scar, "already shown in the last 4h"))
             else:
                 full.append(m.scar)
-        context = injection_context(full, store.broken(), store.scars_dir,
+        context = injection_context(full, broken, store.scars_dir,
                                     demoted=demoted)
         if context:
             _emit("PreToolUse", context)
