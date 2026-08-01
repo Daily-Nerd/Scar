@@ -90,32 +90,61 @@ def _walk_defs(node):
         yield from _walk_defs(child)
 
 
-def _resolve_node(root_node, anchor: str, rel_path: str):
-    """The tree-sitter node for a symbol anchor, or None. Shares the qualified-
-    path + dotted-member logic with _resolve_in_tree."""
+def _resolve_all(root_node, anchor: str, rel_path: str) -> list:
+    """EVERY node a symbol anchor could mean. The old dict(_walk_defs()) form
+    silently kept the LAST same-named definition (#187 last-wins collision) —
+    a bare anchor `foo` in a file with A.foo and B.foo pointed at B's body
+    with no signal. Dotted parts filter at each level."""
     name = anchor
     if "::" in anchor:
         qpath, name = anchor.split("::", 1)
         if qpath and qpath != rel_path:
-            return None
+            return []
     parts = name.split(".")
-    node = dict(_walk_defs(root_node)).get(parts[0])
+    nodes = [n for nm, n in _walk_defs(root_node) if nm == parts[0]]
     for part in parts[1:]:
-        if node is None:
-            return None
-        node = dict(_walk_defs(node)).get(part)
-    return node
+        nodes = [inner for n in nodes
+                 for nm, inner in _walk_defs(n) if nm == part]
+    return nodes
+
+
+def _resolve_node(root_node, anchor: str, rel_path: str):
+    """The UNIQUE node for a symbol anchor, or None — including None when the
+    anchor is ambiguous (#187). Shape-sensitive consumers (fingerprint, drift,
+    reanchor) must never silently pick one of several same-named definitions;
+    refusing is honest, guessing points the scar at the wrong symbol. Matcher
+    existence checks go through _resolve_in_tree, which accepts any match."""
+    nodes = _resolve_all(root_node, anchor, rel_path)
+    return nodes[0] if len(nodes) == 1 else None
 
 
 def _resolve_in_tree(root_node, anchor: str, rel_path: str) -> tuple[int, int] | None:
-    node = _resolve_node(root_node, anchor, rel_path)
-    return (node.start_byte, node.end_byte) if node is not None else None
+    # Matcher semantics: the anchor names a symbol that EXISTS here — with two
+    # same-named definitions, an edit to this file is relevant to either, so
+    # any match counts (ambiguity must not stop a scar from firing).
+    nodes = _resolve_all(root_node, anchor, rel_path)
+    return (nodes[0].start_byte, nodes[0].end_byte) if nodes else None
+
+
+# Cap leaf-token text folded into fingerprints: identifiers are short; a long
+# string literal would bloat the shingle set without adding discriminating
+# power beyond its prefix.
+_TOKEN_CAP = 32
 
 
 def _type_sequence(node) -> list[str]:
-    """Pre-order node TYPES in the subtree, skipping comment nodes."""
+    """Pre-order node types, with LEAF tokens carrying their text (#187).
+    Type-only sequences made semantically unrelated functions with the same
+    control-flow shape fingerprint-identical (measured jaccard 1.0) —
+    defeating exactly the generic-name disambiguation the anchor-survival
+    experiment prescribed fingerprints for. Leaves whose text just repeats
+    their type (punctuation: '(', ':') stay bare. Comments skipped as before."""
     out: list[str] = []
     if node.type == "comment":
+        return out
+    if not node.children:
+        text = node.text.decode("utf8", "replace")[:_TOKEN_CAP]
+        out.append(f"{node.type}={text}" if text != node.type else node.type)
         return out
     out.append(node.type)
     for child in node.children:
