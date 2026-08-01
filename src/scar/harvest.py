@@ -78,6 +78,23 @@ def _deleted_components(repo: Path) -> list[dict]:
     return sorted(results, key=lambda r: r["died"], reverse=True)
 
 
+def _count_oscillations(values: list[str]) -> int:
+    """Non-overlapping A→B→A cycles (#188). The old loop advanced by one and
+    counted every window, so A,B,A,B,A scored 3 instead of 2 — inflating
+    _FLAPPING_OSC_BONUS in proportion to sequence length. A counted cycle
+    consumes its endpoint: the next cycle may start there (shared A), so
+    advance by 2 on a match."""
+    count = 0
+    i = 0
+    while i < len(values) - 2:
+        if values[i] == values[i + 2] and values[i] != values[i + 1]:
+            count += 1
+            i += 2
+        else:
+            i += 1
+    return count
+
+
 def _flapping(repo: Path) -> list[dict]:
     key_re = re.compile(r"^[+-]\s*(" + "|".join(TRACKED_KEYS) + r"):\s*(.+)$")
     out = _git(repo, "log", "-p", "--reverse", "--format=\x02%h\x01%ad\x01%s",
@@ -98,16 +115,14 @@ def _flapping(repo: Path) -> list[dict]:
     flaps = []
     for (fname, key), seq in history.items():
         values = [v for v, _, _ in seq]
-        # Count all A→B→A cycles (non-overlapping scan)
+        osc_count = _count_oscillations(values)
         first_i = None
-        osc_count = 0
         all_commits: list[str] = []
         for i in range(len(values) - 2):
             if values[i] == values[i + 2] and values[i] != values[i + 1]:
-                if first_i is None:
-                    first_i = i
-                    all_commits = [seq[i][1], seq[i + 1][1], seq[i + 2][1]]
-                osc_count += 1
+                first_i = i
+                all_commits = [seq[i][1], seq[i + 1][1], seq[i + 2][1]]
+                break
         if first_i is not None:
             fi = first_i
             flaps.append({

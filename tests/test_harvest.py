@@ -547,3 +547,15 @@ def test_harvest_tolerates_non_utf8_git_metadata(tmp_path):
          b"revert broken \xff build"], check=True, capture_output=True)
     result = harvest(tmp_path)  # must not raise UnicodeDecodeError
     assert any("revert" in c["subject"].lower() for c in result["reverts"])
+
+
+# --- non-overlapping oscillation count (#188) ---
+
+def test_oscillation_count_is_non_overlapping():
+    from scar.harvest import _count_oscillations
+    assert _count_oscillations(["A", "B", "A"]) == 1
+    assert _count_oscillations(["A", "B", "A", "B", "A"]) == 2
+    assert _count_oscillations(["A", "B", "A", "B", "A", "B", "A"]) == 3
+    assert _count_oscillations(["A", "B", "C"]) == 0
+    assert _count_oscillations(["A", "A", "A"]) == 0
+    assert _count_oscillations([]) == 0
