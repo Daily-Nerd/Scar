@@ -145,6 +145,18 @@ def _anchor_signal(scar: Scar, rel_path: str, new_content: str,
     return score, tuple(dict.fromkeys(matched))
 
 
+def _select_top(matches: list["ScarMatch"], top_k: int) -> list["ScarMatch"]:
+    """Tier BEFORE truncating (#185): the fatigue budget's slots go to
+    act-proof (content-signal) matches first, then fill with path-proximity
+    matches. Without this, a content-signal match ranked below top_k by
+    louder path-only scars is deleted outright instead of the path-only
+    match being demoted to a one-liner — the opposite of the precision
+    engine's contract. Order within each tier stays rank-descending."""
+    content = [m for m in matches if has_content_signal(m)]
+    proximity = [m for m in matches if not has_content_signal(m)]
+    return (content + proximity)[:top_k]
+
+
 def _match_target(firing: list, root: Path, rel_path: str,
                   new_content: str) -> list[ScarMatch]:
     """Rank one target against an already-loaded firing set (no disk I/O)."""
@@ -169,7 +181,7 @@ def merge_best_matches(match_lists: list[list[ScarMatch]],
             key = match.scar.id if match.scar.id is not None else match.source.as_posix()
             if key not in best or match.rank > best[key].rank:
                 best[key] = match
-    return sorted(best.values(), key=lambda m: -m.rank)[:top_k]
+    return _select_top(sorted(best.values(), key=lambda m: -m.rank), top_k)
 
 
 def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
@@ -179,7 +191,8 @@ def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
         rel_path = str(Path(target).resolve().relative_to(store.root))
     except ValueError:
         return []
-    return _match_target(store.firing(), store.root, rel_path, new_content)[:top_k]
+    return _select_top(
+        _match_target(store.firing(), store.root, rel_path, new_content), top_k)
 
 
 def rank_matches_for_command(store: ScarStore, command: str,
@@ -212,7 +225,8 @@ def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,
             rel = str((store.root / str(path)).resolve().relative_to(store.root))
         except ValueError:
             continue
-        lists.append(_match_target(firing, store.root, rel, new_content)[:top_k])
+        lists.append(_select_top(
+            _match_target(firing, store.root, rel, new_content), top_k))
     return merge_best_matches(lists, top_k)
 
 
@@ -247,7 +261,7 @@ def rank_matches_for_diff(store: ScarStore, diff_text: str,
                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Top-k firing scar matches across a unified diff (one store walk)."""
     firing = store.firing()
-    lists = [_match_target(firing, store.root, rel_path, added)[:top_k]
+    lists = [_select_top(_match_target(firing, store.root, rel_path, added), top_k)
              for rel_path, added in _diff_targets(diff_text)]
     return merge_best_matches(lists, top_k)
 
