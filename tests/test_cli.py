@@ -2890,3 +2890,58 @@ def test_promote_warns_when_explicit_reviewer_differs_from_git_only_by_case(repo
     assert main(["promote", "tried-x", "--reviewer", "Kibukx"]) == 0
     out = capsys.readouterr().out
     assert "case" in out.lower() and "git" in out.lower()
+
+
+# --- over-broad path anchor warning (#189) ---
+
+BROAD_SCAR = """\
+---
+id: 1
+type: fence
+title: guards all of apps
+severity: medium
+confidence: 0.8
+created: 2026-08-01
+authors: ["kib"]
+anchors:
+  - path: apps/
+evidence:
+  - issue: 189
+status: active
+---
+
+body
+"""
+
+
+def _tracked_repo(repo):
+    init_scars(repo)
+    for i in range(15):
+        d = repo / "apps" / f"svc{i}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "main.py").write_text("x = 1\n")
+    for i in range(5):
+        (repo / f"tool{i}.py").write_text("y = 2\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "seed"], cwd=repo, check=True)
+    return repo
+
+
+def test_lint_warns_on_over_broad_path_anchor(repo, capsys):
+    _tracked_repo(repo)
+    (repo / ".scars" / "0001-broad.fence.md").write_text(BROAD_SCAR)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "path anchor 'apps/' matches" in out
+    assert "% of tracked files" in out
+    assert "narrow" in out
+
+
+def test_lint_silent_on_narrow_path_anchor(repo, capsys):
+    _tracked_repo(repo)
+    (repo / ".scars" / "0001-narrow.fence.md").write_text(
+        BROAD_SCAR.replace("path: apps/", "path: apps/svc0/main.py"))
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "%" not in out

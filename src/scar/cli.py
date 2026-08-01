@@ -464,13 +464,15 @@ def _cmd_lint(args) -> int:
     # offending file, so plain/rich/--json renderers all inherit it for free.
     from .lint import Finding
     from .model import ParseError
-    author_files: dict[str, dict[str, list[str]]] = {}
+    parsed_files: list[tuple[str, Scar]] = []
     for f in files:
         try:
-            parsed = parse_scar_text(f.read_text(encoding="utf-8"))
+            parsed_files.append((str(f.relative_to(store.root)),
+                                 parse_scar_text(f.read_text(encoding="utf-8"))))
         except ParseError:
             continue
-        rel = str(f.relative_to(store.root))
+    author_files: dict[str, dict[str, list[str]]] = {}
+    for rel, parsed in parsed_files:
         for author in parsed.authors:
             author_files.setdefault(author.casefold(), {}).setdefault(
                 author, []).append(rel)
@@ -493,6 +495,31 @@ def _cmd_lint(args) -> int:
         reverse_hints = [s for _f, s in store.parsed()
                          if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
         drift = detect_symbol_drift(store, store.root)
+
+    # Over-broad path anchors (#189): an anchor covering a large share of
+    # tracked files carries almost no information about edit relevance —
+    # field-measured driver of one-liner noise (75% of demoted showings)
+    # and of F-inflation in the compliance metric (daimon #5: 97% of window
+    # F from one whole-repo anchor). Warn at >=25% coverage: every measured
+    # field offender (29-58%) trips it while deliberate guard anchors like
+    # this repo's own `.scars/` (13%) stay quiet. Warning only — breadth is
+    # sometimes intentional. Uses the SAME shared predicate as injection.
+    if ctx is not None and ctx.tracked_paths:
+        from .match import _path_anchor_matches
+        n_tracked = len(ctx.tracked_paths)
+        for rel, parsed in parsed_files:
+            if parsed.status not in ("active", "challenged"):
+                continue
+            for anchor in parsed.path_anchors:
+                covered = sum(1 for p in ctx.tracked_paths
+                              if _path_anchor_matches(anchor, p))
+                share = covered / n_tracked
+                if share >= 0.25:
+                    findings_by_file.append((rel, [Finding(
+                        "warning", f"path anchor '{anchor}' matches "
+                        f"{share:.0%} of tracked files ({covered}/{n_tracked}) "
+                        "— too broad to discriminate; narrow it to the "
+                        "files the scar actually protects")]))
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
