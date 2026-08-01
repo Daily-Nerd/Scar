@@ -124,6 +124,18 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
                 findings.append(Finding(
                     "error", f"pathological violation /{scar.violation}/: nested quantifier "
                     "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+    # Author identity drift (#182): one handle, two casings = one human
+    # credited twice. Warning, never error — two genuinely distinct people
+    # whose handles differ only by case is possible, so report, don't break.
+    folds: dict[str, set[str]] = {}
+    for author in scar.authors:
+        folds.setdefault(author.casefold(), set()).add(author)
+    for spellings in folds.values():
+        if len(spellings) > 1:
+            findings.append(Finding(
+                "warning", "authors differ only by case: "
+                + ", ".join(sorted(spellings))
+                + " — one human, two spellings; keep one"))
     if not scar.evidence:
         findings.append(Finding("warning", "no evidence links — challengeable on sight"))
     for e in scar.evidence:

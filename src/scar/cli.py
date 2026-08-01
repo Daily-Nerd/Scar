@@ -190,6 +190,9 @@ def _promote_rich(data: dict) -> None:
     if data["born_orphan"]:
         lines.append("[yellow]advisory:[/] this scar's anchors resolve to nothing in the "
                      "current tree (born orphan-detected) — confirm the anchors are right")
+    if data.get("reviewer_case_warning"):
+        lines.append("[yellow]warning:[/] --reviewer differs from git user.name only "
+                     "by case — pick one spelling or author identity drifts (#182)")
     output.console.print(Panel("\n".join(lines), title="scar promote", border_style="green"))
 
 
@@ -455,6 +458,32 @@ def _cmd_lint(args) -> int:
         if any(fi.level == "error" for fi in findings):
             failed += 1
 
+    # Cross-store author drift (#182): the per-file rule in lint_text cannot
+    # see a handle split ACROSS scars. Group every author by casefold; a fold
+    # with >1 spelling gets a synthetic warning finding attached to its first
+    # offending file, so plain/rich/--json renderers all inherit it for free.
+    from .lint import Finding
+    from .model import ParseError
+    author_files: dict[str, dict[str, list[str]]] = {}
+    for f in files:
+        try:
+            parsed = parse_scar_text(f.read_text(encoding="utf-8"))
+        except ParseError:
+            continue
+        rel = str(f.relative_to(store.root))
+        for author in parsed.authors:
+            author_files.setdefault(author.casefold(), {}).setdefault(
+                author, []).append(rel)
+    for spellings in author_files.values():
+        if len(spellings) > 1:
+            detail = "; ".join(
+                f"'{sp}' in {', '.join(sorted(set(rels)))}"
+                for sp, rels in sorted(spellings.items()))
+            first = min(r for rels in spellings.values() for r in rels)
+            findings_by_file.append((first, [Finding(
+                "warning", "author identity drift across the store — "
+                f"spellings differing only by case: {detail}")]))
+
     ctx = _repo_context(store)
     if ctx is None:
         orphans, partial, reverse_hints, drift = [], [], [], []
@@ -625,13 +654,23 @@ def _cmd_promote(args) -> int:
     ctx = _repo_context(store)
     born_orphan = ctx is not None and anchors_all_dead(promoted, ctx)
     rel = new_path.relative_to(store.root)
+    # Explicit --reviewer differing from the git identity only by case is the
+    # exact keystroke behind the field drift in #182 — warn, don't block.
+    git_name = _git(store.root, "config", "user.name").stdout.strip()
+    case_warning = (args.reviewer and git_name and git_name != args.reviewer
+                    and git_name.casefold() == args.reviewer.casefold())
     data = {"promoted": str(rel), "reviewer": reviewer or None,
-            "reviewer_from_git": from_git, "born_orphan": born_orphan}
+            "reviewer_from_git": from_git, "born_orphan": born_orphan,
+            "reviewer_case_warning": bool(case_warning)}
 
     def plain():
         print(f"promoted -> {rel}")
         if from_git:
             print(f"  reviewer: {reviewer} (from git config)")
+        if case_warning:
+            print(f"  warning: --reviewer '{args.reviewer}' differs from git "
+                  f"user.name '{git_name}' only by case — pick one spelling "
+                  "or author identity drifts (#182)")
         if born_orphan:
             print("  advisory: this scar's anchors resolve to nothing in the current "
                   "tree (born orphan-detected) — confirm the anchors are right")
