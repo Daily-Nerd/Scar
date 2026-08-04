@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: Agent integration
-description: Claude Code hook and plugin, MCP server, and the git-native path for every other runtime.
+description: Claude Code hook and plugin, Windsurf/Cascade hooks, MCP server, and the git-native path for every other runtime.
 ---
 
 # Agent integration
@@ -28,6 +28,32 @@ How the hook behaves:
 - Everything is installed only by explicit command; `scar hook uninstall` removes it cleanly.
 
 After upgrading scar-cli, re-run `scar skill install` — the installed skill is a static copy and does not update itself.
+
+## Windsurf / Cascade (block-once injection)
+
+Cascade runs shell commands on lifecycle events, configured per workspace in a committable `.windsurf/hooks.json`:
+
+```bash
+scar hook install --runtime windsurf     # run inside the repo
+scar hook status --runtime windsurf
+```
+
+This wires `pre_write_code` and `pre_run_command` (injection) plus `post_write_code` (the `violation:` tripwire) to `scar cascade-hook`. An existing `hooks.json` is **merged**, never overwritten — your team's own hooks keep their place and run first.
+
+**Why blocking.** Cascade has no `additionalContext` equivalent: on exit 0 stdout reaches the Cascade UI only, never the model. The one channel into the agent's context is a blocking exit, which surfaces stderr and cancels the pending action. So a firing scar bounces the action **once**:
+
+1. The agent is about to write code (or run a command) that an armed scar anchors. The action is cancelled and the scar arrives on stderr, compact — label line plus the one rule that matters.
+2. The agent retries the identical action. This time it goes straight through, informed.
+
+Exactly one bounced action per firing, scoped to the Cascade conversation. Retries are never blocked twice; the state expires on its own, since Cascade gives no session-end signal to clean up on.
+
+**Precision bar is deliberately higher here** than in Claude Code. A false firing there spends tokens; here it cancels something the user can see. So only content-signal matches block — the pattern hit the pending edit, the symbol resolved, or the command *is* the recorded mistake. Path-proximity matches print a one-liner to the UI for the human and never block anything.
+
+Firings and violations land in the same log `scar stats` reads, tagged with the runtime that produced them.
+
+**Known no-op:** Cascade does not load hooks while a workspace is open in Restricted Mode. Install still succeeds; the hooks simply never run there.
+
+For pull access as well, Windsurf speaks MCP — see below.
 
 ## MCP server (any MCP-capable agent)
 

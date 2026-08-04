@@ -19,6 +19,24 @@ def label_line(scar: Scar) -> str:
             f"confidence: {scar.confidence}] {scar.title}")
 
 
+def rule_line(body: str, max_chars: int = 140) -> str:
+    """The one actionable line of a scar body: its first sentence (or first
+    line, whichever ends sooner), trimmed. The unit of every compact tier —
+    `scar brief` and the Cascade block text both render from here."""
+    text = " ".join(body.split())
+    cut = text.find(". ")
+    rule = text[:cut + 1] if cut != -1 else text
+    return rule[:max_chars]
+
+
+def compact_block(scars: list[Scar]) -> str:
+    """The most conservative tier: label line + one rule line per scar, no
+    bodies. For channels where the render itself costs the user something —
+    Cascade surfaces it as an error on a cancelled action — so the budget is
+    tighter than the injection block's MAX_BODY_CHARS."""
+    return "\n\n".join(f"{label_line(s)}\n  {rule_line(s.body)}" for s in scars)
+
+
 def injection_context(scars: list[Scar], broken: list[Path],
                       scars_dir: Path, max_body: int = MAX_BODY_CHARS,
                       demoted: list[tuple[Scar, str]] | None = None) -> str:

@@ -62,6 +62,7 @@ scar lint                        # validate format
 scar promote redis-sessions.md   # human review gate: candidate -> active
 scar hook install                # Claude Code: inject scars before agent edits
 scar skill install               # Claude Code: authoring skill into ~/.claude/skills/
+scar hook install --runtime windsurf   # Windsurf/Cascade: block-once injection
 ```
 
 Claude Code users: the marketplace **plugin** ships the hooks and the
@@ -69,7 +70,7 @@ scar-authoring skill together; the two commands above are the manual fallback.
 Re-run `scar skill install` after upgrading — the installed skill is a static copy.
 
 Full walkthrough, lifecycle commands, and agent wiring (Claude Code plugin,
-MCP server, `scar draft-check` for every other runtime):
+Windsurf/Cascade hooks, MCP server, `scar draft-check` for every other runtime):
 [quickstart](https://daily-nerd.github.io/Scar/quickstart) ·
 [agent integration](https://daily-nerd.github.io/Scar/agents).
 
