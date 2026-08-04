@@ -95,7 +95,21 @@ Add this to opencode.jsonc:
   }
 }
 """,
-    "windsurf": "Cascade: " + _MCP_SERVERS_SNIPPET,
+    # Windsurf is the one non-Claude runtime with both channels: MCP for pull
+    # (the agent asks) and Cascade hooks for push (the anchor fires whether it
+    # asks or not). Lead with the hooks — pull-only means anchors never fire
+    # unless the agent thinks to query.
+    "windsurf": """\
+Cascade hooks (push injection — run this inside the repo):
+
+  scar hook install --runtime windsurf
+
+Writes .windsurf/hooks.json (workspace-level, committable; merged, never
+overwritten). An armed scar matching a pending write or command blocks that
+action once, with the scar on stderr where Cascade shows it to the agent; the
+identical retry proceeds. Hooks do not load in a Restricted Mode workspace.
+
+Plus, for pull access — """ + _MCP_SERVERS_SNIPPET,
 }
 
 # Every target carries the same reciprocal-duty + draft-check block (#117):

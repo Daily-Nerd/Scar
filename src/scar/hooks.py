@@ -75,14 +75,17 @@ def _recently_fired(repo: str, target: str) -> set[int]:
     return recent
 
 
-def _read_payload() -> dict | None:
+_TTY_HINT = ("scar hook expects a hook payload on stdin (it is run by the "
+             "agent harness, not by hand). Try: echo '{}' | scar hook <kind>")
+
+
+def _read_payload(hint: str = _TTY_HINT) -> dict | None:
     """Hook payload from stdin; None means 'tty — hint printed, do nothing'."""
     if sys.stdin.isatty():
         # interactive invocation: never hang waiting for a payload that
         # only a hook harness would pipe in, and never mix the human hint
         # with machine JSON (both found live)
-        print("scar hook expects a hook payload on stdin (it is run by the "
-              "agent harness, not by hand). Try: echo '{}' | scar hook <kind>")
+        print(hint)
         return None
     try:
         return json.load(sys.stdin)
@@ -117,13 +120,18 @@ def _emit(event: str, context: str) -> None:
 
 
 def _log_firing(store: ScarStore, target: str, hits: list,
-                demoted_ids: list | None = None) -> None:
+                demoted_ids: list | None = None,
+                runtime: str = "claude-code") -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
     whatever) is swallowed here rather than propagated. Scope: FIRING COUNTS
     only — this cannot and does not know whether the agent honored the
-    injected scar, only that it was shown to it."""
+    injected scar, only that it was shown to it.
+
+    `runtime` attributes the firing to the surface that produced it (#197):
+    the log is machine-global and now has more than one writer, so a count
+    that mixes runtimes silently is a count nobody can act on."""
     try:
         log_path = firing_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +142,7 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             "scar_ids": [s.id for s in hits],
             "count": len(hits),
             "demoted_ids": demoted_ids or [],
+            "runtime": runtime,
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
@@ -141,7 +150,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         pass
 
 
-def _log_violation_firing(store: ScarStore, target: str, violations: list) -> None:
+def _log_violation_firing(store: ScarStore, target: str, violations: list,
+                          runtime: str = "claude-code") -> None:
     """Append one line to the firing log when posttool actually flags a
     violation. Best-effort only, mirroring _log_firing: this must NEVER raise
     or delay the caller, so any failure (permissions, disk full, bad
@@ -155,6 +165,7 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list) -> No
             "target": target,
             "violation_ids": [v.scar.id for v in violations],
             "count": len(violations),
+            "runtime": runtime,
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")

@@ -390,6 +390,15 @@ def test_agent_config_returns_setup_text_per_target(target, token):
     assert token in config(target)
 
 
+def test_agent_config_windsurf_points_at_the_cascade_hook_install():
+    """MCP is pull — the agent has to think to ask. The Cascade hooks are the
+    push path, so the windsurf setup text must name the install command."""
+    from scar.agent import config
+    text = config("windsurf")
+    assert "scar hook install --runtime windsurf" in text
+    assert "mcpServers" in text
+
+
 @pytest.mark.parametrize("target", ["codex", "cursor", "opencode", "windsurf"])
 def test_agent_config_includes_draft_check_block_for_every_target(target):
     """#117: every runtime's setup text carries the reciprocal-duty +

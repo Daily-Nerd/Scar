@@ -309,6 +309,163 @@ def git_hook_status(repo: Path) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Windsurf/Cascade hooks (#197). Third lifecycle in this module, third target:
+# Claude Code's hooks live in the USER's ~/.claude/settings.json, the git hook
+# lives in the repo's .git/hooks/ (untracked), and this one is COMMITTED —
+# .windsurf/hooks.json is workspace-level config a team shares. That makes
+# merge-never-overwrite non-negotiable, and it means a teammate on an older
+# scar-cli will run whatever command string we write here.
+# ---------------------------------------------------------------------------
+
+CASCADE_CONFIG_RELPATH = Path(".windsurf") / "hooks.json"
+CASCADE_EVENTS = ("pre_write_code", "pre_run_command", "post_write_code")
+CASCADE_MARKER = "cascade-hook"
+
+
+def cascade_command(scar_path: str) -> str:
+    """The shell command wired into every Cascade event.
+
+    `scar cascade-hook` signals a block with its own sentinel code, never 2:
+    argparse exits 2 on an unknown subcommand, so a committed hooks.json read
+    by an older scar-cli would block every write with a usage message. Mapping
+    the sentinel here keeps version skew a silent no-op — Cascade treats any
+    code that is neither 0 nor 2 as "action proceeds normally".
+    """
+    from .cascade import BLOCK_EXIT
+    return f"{scar_path} cascade-hook; [ $? -eq {BLOCK_EXIT} ] && exit 2; exit 0"
+
+
+def _cascade_entry(scar_path: str) -> dict:
+    # show_output surfaces the UI-only channel (path-proximity one-liners the
+    # model never sees) to the human who can act on them.
+    return {"command": cascade_command(scar_path), "show_output": True}
+
+
+def _cascade_is_ours(entry: object) -> bool:
+    return isinstance(entry, dict) and CASCADE_MARKER in str(entry.get("command", ""))
+
+
+def _load_cascade_config(path: Path) -> dict | None:
+    """The repo's existing Cascade config, or {} when absent. None means the
+    file exists but does not parse — the team's file, hand-edited; refuse
+    rather than overwrite (this one is committed, unlike settings.json which
+    we back up and rewrite)."""
+    if not path.exists():
+        return {}
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return config if isinstance(config, dict) else None
+
+
+def _save_cascade_config(path: Path, config: dict, dry: bool) -> None:
+    if dry:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    print(f"  {path} written")
+
+
+def cascade_install(repo: Path, dry: bool = False) -> int:
+    scar_path = find_scar()
+    if not scar_path:
+        print("scar binary not found on PATH.")
+        if os.environ.get("VIRTUAL_ENV"):
+            print("Note: an active venv is ignored on purpose — hooks must "
+                  "bind to a stable install, not a venv shim (scar 0003).")
+        print("Install it first: uv tool install scar-cli")
+        return 1
+
+    path = repo / CASCADE_CONFIG_RELPATH
+    config = _load_cascade_config(path)
+    if config is None:
+        print(f"[cascade] {path} exists but is not valid JSON — left untouched. "
+              "Fix or remove it, then re-run.")
+        return 1
+
+    hooks_cfg = config.setdefault("hooks", {})
+    if not isinstance(hooks_cfg, dict):
+        print(f"[cascade] {path} has a non-object 'hooks' key — left untouched.")
+        return 1
+
+    desired = _cascade_entry(scar_path)
+    changed = False
+    for event in CASCADE_EVENTS:
+        entries = hooks_cfg.get(event)
+        entries = entries if isinstance(entries, list) else []
+        ours = [e for e in entries if _cascade_is_ours(e)]
+        if ours == [desired]:
+            print(f"[cascade] {event}: up-to-date")
+            hooks_cfg[event] = entries
+            continue
+        verb = "update" if ours else "register"
+        print(f"[cascade] {event}: {verb}")
+        # Foreign hooks keep their order and their position relative to each
+        # other; ours is appended so a team lint/format hook still runs first.
+        hooks_cfg[event] = [e for e in entries if not _cascade_is_ours(e)] + [desired]
+        changed = True
+
+    if changed:
+        _save_cascade_config(path, config, dry)
+    print("cascade install: done" + (" (dry-run, nothing written)" if dry else
+          f". All {len(CASCADE_EVENTS)} Cascade hooks route through {scar_path}."))
+    print("  Note: Cascade does not load hooks in a Restricted Mode workspace "
+          "— there they silently no-op.")
+    return 0
+
+
+def cascade_uninstall(repo: Path, dry: bool = False) -> int:
+    path = repo / CASCADE_CONFIG_RELPATH
+    config = _load_cascade_config(path)
+    if config is None:
+        print(f"[cascade] {path} is not valid JSON — left untouched.")
+        return 1
+    hooks_cfg = config.get("hooks")
+    if not isinstance(hooks_cfg, dict):
+        print(f"[cascade] {path}: nothing of ours to remove")
+        return 0
+
+    changed = False
+    for event in CASCADE_EVENTS:
+        entries = hooks_cfg.get(event)
+        if not isinstance(entries, list):
+            continue
+        keep = [e for e in entries if not _cascade_is_ours(e)]
+        if len(keep) != len(entries):
+            print(f"[cascade] {event}: removing")
+            changed = True
+        if keep:
+            hooks_cfg[event] = keep
+        else:
+            hooks_cfg.pop(event, None)
+
+    if changed:
+        _save_cascade_config(path, config, dry)
+    print("cascade uninstall: done" + (" (dry-run, nothing written)" if dry else
+          ". Scars themselves (.scars/ in repos) are untouched."))
+    return 0
+
+
+def cascade_status(repo: Path) -> int:
+    path = repo / CASCADE_CONFIG_RELPATH
+    print(f"cascade config: {path}")
+    config = _load_cascade_config(path)
+    if config is None:
+        print("  not valid JSON — install would refuse to touch it")
+        return 0
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
+    for event in CASCADE_EVENTS:
+        entries = hooks_cfg.get(event)
+        entries = entries if isinstance(entries, list) else []
+        state = "installed" if any(_cascade_is_ours(e) for e in entries) else "not installed"
+        print(f"{event:17} {state}")
+    print("  Note: hooks do not load in a Restricted Mode workspace.")
+    return 0
+
+
 def _skill_source() -> Path:
     from importlib.resources import files
     return Path(str(files("scar").joinpath("skills") / SKILL_NAME))

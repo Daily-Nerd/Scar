@@ -62,7 +62,13 @@ scar hook status
 
 Hooks are advisory, never blocking, and installed only by this explicit command. `scar hook uninstall` stops all automatic injection while keeping `.scars/` intact.
 
-For every other runtime — MCP hosts, Codex, Cursor, Windsurf, opencode, plain git — see [Agent integration](./agents.md).
+Windsurf gets the same push injection through Cascade hooks — with one bounced action per firing, since Cascade has no non-blocking channel into the model:
+
+```bash
+scar hook install --runtime windsurf
+```
+
+For every other runtime — MCP hosts, Codex, Cursor, opencode, plain git — see [Agent integration](./agents.md).
 
 ## Knowledge lifecycle
 

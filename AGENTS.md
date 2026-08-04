@@ -38,6 +38,7 @@ as the `scar-authoring` skill.
 ## Agent Integrations
 
 - MCP-capable agents can launch the local server with `scar mcp` (newline-delimited JSON stdio per the MCP spec; fixed in [#162](https://github.com/Daily-Nerd/Scar/issues/162)).
+- Windsurf also gets push injection: `scar hook install --runtime windsurf` wires Cascade's `pre_write_code` / `pre_run_command` / `post_write_code` to `scar cascade-hook`, which blocks a matching action once so the scar reaches the agent ([#197](https://github.com/Daily-Nerd/Scar/issues/197)).
 - Integration snippets are available with:
   - `scar agent config codex`
   - `scar agent config cursor`

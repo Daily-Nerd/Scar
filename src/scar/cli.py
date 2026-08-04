@@ -39,7 +39,7 @@ from .reanchor import (
     propose_path_reanchors,
     propose_symbol_reanchors_for_scar,
 )
-from .render import injection_context, label_line
+from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
 from .store import ScarStore, init_scars
 from . import output
@@ -1147,15 +1147,6 @@ def _cmd_reanchor(args) -> int:
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
-def _brief_rule(body: str) -> str:
-    """The one actionable line for a brief entry: the first sentence of the
-    body (or the first line, whichever ends sooner), trimmed to ~140 chars."""
-    text = " ".join(body.split())
-    cut = text.find(". ")
-    rule = text[:cut + 1] if cut != -1 else text
-    return rule[:140]
-
-
 def _cmd_brief(args) -> int:
     """Paste-ready scar block for sub-agent launch prompts (#176). Plain text
     only, on tty and non-tty alike — the output IS the machine artifact
@@ -1192,7 +1183,7 @@ def _cmd_brief(args) -> int:
     for scar in selected:
         sid = f"#{scar.id}" if scar.id is not None else "cand"
         entry = (f"- [{scar.type} {sid} | {scar.severity}] {scar.title}"
-                 f" — {_brief_rule(scar.body)}")
+                 f" — {rule_line(scar.body)}")
         if len(entry) + 1 > budget:
             omitted += 1
             continue
@@ -1931,7 +1922,23 @@ def _cmd_hook(args) -> int:
     return HANDLERS[args.kind]()
 
 
+def _cmd_cascade_hook(args) -> int:
+    """Windsurf/Cascade entrypoint (#197): Cascade JSON on stdin, exit code
+    out. Returns cascade.BLOCK_EXIT to bounce the action once — never 2
+    directly; see cascade.py for why the installed command does that mapping."""
+    from .cascade import cascade_hook  # hot path: imports nothing beyond library
+    return cascade_hook()
+
+
 def _cmd_hook_lifecycle(args) -> int:
+    if getattr(args, "runtime", "claude") == "windsurf":
+        from .installer import cascade_install, cascade_status, cascade_uninstall
+        repo = Path.cwd()
+        if args.kind == "install":
+            return cascade_install(repo, dry=args.dry_run)
+        if args.kind == "uninstall":
+            return cascade_uninstall(repo, dry=args.dry_run)
+        return cascade_status(repo)
     if getattr(args, "git", False):
         from .installer import git_hook_install, git_hook_status, git_hook_uninstall
         repo = Path.cwd()
@@ -2094,16 +2101,30 @@ def build_parser() -> argparse.ArgumentParser:
                         "per repo so commit-heavy sessions aren't nagged")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    p = _add(sub, "hook", _cmd_hook, help="install, remove, inspect, or run Claude Code hooks")
+    p = _add(sub, "hook", _cmd_hook, help="install, remove, inspect, or run agent hooks "
+                                  "(Claude Code by default; --runtime windsurf, --git)")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "precheck-command", "posttool",
                                     "session-notice", "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
-    p.add_argument("--git", action="store_true",
-                   help="with install/uninstall/status: target this repo's "
-                        ".git/hooks/post-commit trigger for `scar draft-check` "
-                        "(#117) instead of Claude Code's settings.json")
+    # One invocation, one target: --git writes .git/hooks/post-commit,
+    # --runtime windsurf writes .windsurf/hooks.json, and the default writes
+    # ~/.claude/settings.json. Passing two can only mean one is ignored.
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--git", action="store_true",
+                        help="with install/uninstall/status: target this repo's "
+                             ".git/hooks/post-commit trigger for `scar draft-check` "
+                             "(#117) instead of Claude Code's settings.json")
+    target.add_argument("--runtime", choices=["claude", "windsurf"], default="claude",
+                        help="with install/uninstall/status: which runtime to wire. "
+                             "windsurf writes this repo's committed "
+                             ".windsurf/hooks.json (Cascade block-once, #197); "
+                             "claude (default) writes ~/.claude/settings.json")
+
+    _add(sub, "cascade-hook", _cmd_cascade_hook,
+         help="run the Windsurf/Cascade hook adapter (stdin JSON; installed by "
+              "`scar hook install --runtime windsurf`, not run by hand)")
 
     p = _add(sub, "skill", _cmd_skill_lifecycle, help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])
