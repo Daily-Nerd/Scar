@@ -2108,15 +2108,19 @@ def build_parser() -> argparse.ArgumentParser:
                                     "session-notice", "stop-drafter"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
-    p.add_argument("--git", action="store_true",
-                   help="with install/uninstall/status: target this repo's "
-                        ".git/hooks/post-commit trigger for `scar draft-check` "
-                        "(#117) instead of Claude Code's settings.json")
-    p.add_argument("--runtime", choices=["claude", "windsurf"], default="claude",
-                   help="with install/uninstall/status: which runtime to wire. "
-                        "windsurf writes this repo's committed "
-                        ".windsurf/hooks.json (Cascade block-once, #197); "
-                        "claude (default) writes ~/.claude/settings.json")
+    # One invocation, one target: --git writes .git/hooks/post-commit,
+    # --runtime windsurf writes .windsurf/hooks.json, and the default writes
+    # ~/.claude/settings.json. Passing two can only mean one is ignored.
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--git", action="store_true",
+                        help="with install/uninstall/status: target this repo's "
+                             ".git/hooks/post-commit trigger for `scar draft-check` "
+                             "(#117) instead of Claude Code's settings.json")
+    target.add_argument("--runtime", choices=["claude", "windsurf"], default="claude",
+                        help="with install/uninstall/status: which runtime to wire. "
+                             "windsurf writes this repo's committed "
+                             ".windsurf/hooks.json (Cascade block-once, #197); "
+                             "claude (default) writes ~/.claude/settings.json")
 
     _add(sub, "cascade-hook", _cmd_cascade_hook,
          help="run the Windsurf/Cascade hook adapter (stdin JSON; installed by "

@@ -257,6 +257,13 @@ def test_cascade_dry_run_writes_nothing(cascade_repo):
     assert not (cascade_repo / ".windsurf" / "hooks.json").exists()
 
 
+def test_git_and_runtime_targets_are_mutually_exclusive(cascade_repo):
+    """Three lifecycles, three different files. Picking two targets in one
+    invocation can only mean one of them is silently ignored."""
+    with pytest.raises(SystemExit):
+        main(["hook", "install", "--git", "--runtime", "windsurf"])
+
+
 def test_cascade_install_leaves_an_unreadable_config_alone(cascade_repo, capsys):
     """A hand-edited hooks.json that no longer parses is the team's file —
     refuse loudly rather than overwrite it."""
