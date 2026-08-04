@@ -249,7 +249,10 @@ def cascade_hook() -> int:
         hint="scar cascade-hook expects a Cascade hook payload on stdin (it is "
              "run by Windsurf, not by hand). Wire it with: "
              "scar hook install --runtime windsurf")
-    if payload is None:
+    if not isinstance(payload, dict):
+        # None is the tty path; anything else is valid JSON that simply is not
+        # an object (`[]`, `null`, a bare number) and would explode on .get()
+        # — the same shape that has bitten the firing-log readers before.
         return 0
     handler = EVENTS.get(payload.get("agent_action_name"))
     if handler is None:

@@ -281,6 +281,15 @@ def test_empty_payload_proceeds(repo, monkeypatch, capsys):
     assert main(["cascade-hook"]) == 0
 
 
+@pytest.mark.parametrize("raw", ["[]", "null", '"a string"', "3"])
+def test_non_object_payload_proceeds(repo, monkeypatch, capsys, raw):
+    """Valid JSON that is not an object parses fine and then explodes on
+    .get() — the same shape that has bitten the firing-log readers
+    (landmine #12). It must read as 'nothing to do', not a traceback."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(raw))
+    assert main(["cascade-hook"]) == 0
+
+
 def test_unknown_event_proceeds(repo, monkeypatch, capsys):
     feed(monkeypatch, {"agent_action_name": "pre_read_code",
                        "tool_info": {"file_path": str(repo / "payments" / "x.py")}})
