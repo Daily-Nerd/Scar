@@ -74,7 +74,15 @@ class Scar:
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
         if self.violation:
-            lines.append(f'violation: "{self.violation}"')
+            # A violation regex often needs a literal double quote (matching
+            # an HTML attribute like id="state"), but this format has no
+            # escaping -- a value is recovered only by stripping whichever
+            # quote character wraps it (#200). Always wrapping in double
+            # quotes then silently corrupts (or gets rejected) once the
+            # value itself contains one. Wrap in whichever quote character
+            # the value does NOT contain, so it round-trips intact.
+            quote = "'" if '"' in self.violation else '"'
+            lines.append(f"violation: {quote}{self.violation}{quote}")
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
 
@@ -174,7 +182,11 @@ def parse_scar_text(text: str) -> Scar:
         evidence=evidence,
         expires_condition=_unquote(_field(front, "condition")),
         review_after=_field(front, "review_after"),
-        violation=_field(front, "violation").strip('"'),
+        # Same double-then-single strip as command_anchors (#175): a
+        # single-quoted violation value must not be left with its wrapper
+        # quotes still attached, or the stored regex can never match the
+        # source it was written for while `lint` still reports it clean (#200).
+        violation=_field(front, "violation").strip('"').strip("'"),
         status=_field(front, "status", "active"),
         body=body.strip(),
     )
