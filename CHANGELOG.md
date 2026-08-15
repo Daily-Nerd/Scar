@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.17.0](https://github.com/Daily-Nerd/Scar/compare/v0.16.2...v0.17.0) (2026-08-15)
+
+
+### Features
+
+* **agents:** Windsurf/Cascade hooks — block-once scar injection ([#198](https://github.com/Daily-Nerd/Scar/issues/198)) ([164f6d3](https://github.com/Daily-Nerd/Scar/commit/164f6d3b9155c1e8a408ef818d2bd94ffa9990b0))
+* **anchors:** command anchors — fire scars on shell command execution ([#175](https://github.com/Daily-Nerd/Scar/issues/175)) ([#177](https://github.com/Daily-Nerd/Scar/issues/177)) ([8b378b7](https://github.com/Daily-Nerd/Scar/commit/8b378b7c6b14e31cda8265514aaa18d9be8ad76e))
+* **cli:** scar brief --compact — paste-ready scar block for sub-agent launch prompts ([#176](https://github.com/Daily-Nerd/Scar/issues/176)) ([#178](https://github.com/Daily-Nerd/Scar/issues/178)) ([aad9a86](https://github.com/Daily-Nerd/Scar/commit/aad9a86f5128ab9a82232aa5e53f35d48f13ebe3))
+* **docs:** documentation site — methodology, quickstart, concepts, agents, llms.txt ([#171](https://github.com/Daily-Nerd/Scar/issues/171)) ([1fc2610](https://github.com/Daily-Nerd/Scar/commit/1fc26108100f8a9f89cbd2b1d575e780a12a10d2))
+* **lint:** warn on over-broad path anchors — report coverage of tracked files ([#193](https://github.com/Daily-Nerd/Scar/issues/193)) ([60f03de](https://github.com/Daily-Nerd/Scar/commit/60f03de5cbb855fd3b1f41a0162699364d40b5fb))
+
+
+### Bug Fixes
+
+* **gitignore:** add .scar/candidates/fp-log.txt to ignore list; remove obsolete fp-log.txt file ([#208](https://github.com/Daily-Nerd/Scar/issues/208)) ([eeb1e35](https://github.com/Daily-Nerd/Scar/commit/eeb1e35beac9fb539113953d0a3f1280dabf287f))
+* **harvest:** count oscillations non-overlapping, as the comment always claimed ([#188](https://github.com/Daily-Nerd/Scar/issues/188)) ([#194](https://github.com/Daily-Nerd/Scar/issues/194)) ([d9dbdd3](https://github.com/Daily-Nerd/Scar/commit/d9dbdd32e43b8d9901986264d68ededf1d68236b))
+* **lint:** ReDoS gate catches nested groups at depth and overlapping alternations ([#191](https://github.com/Daily-Nerd/Scar/issues/191)) ([0166eaf](https://github.com/Daily-Nerd/Scar/commit/0166eafa29889a35861496361a7878b1f6aa551a)), closes [#184](https://github.com/Daily-Nerd/Scar/issues/184)
+* **match:** tier before truncating — content-signal matches never lose top-k slots ([#185](https://github.com/Daily-Nerd/Scar/issues/185)) ([#192](https://github.com/Daily-Nerd/Scar/issues/192)) ([ad34b7e](https://github.com/Daily-Nerd/Scar/commit/ad34b7ecb8396231f7af6c76fb488f758dd78735))
+* **model:** unquote matched wrapper pair for pattern/command/condition ([#202](https://github.com/Daily-Nerd/Scar/issues/202)) ([#204](https://github.com/Daily-Nerd/Scar/issues/204)) ([553ef99](https://github.com/Daily-Nerd/Scar/commit/553ef99bcd45fa14527e0e031ad80877bf2bb64a))
+* **promote:** case-insensitive reviewer dedup + author-drift lint ([#182](https://github.com/Daily-Nerd/Scar/issues/182)) ([#183](https://github.com/Daily-Nerd/Scar/issues/183)) ([9a4ae78](https://github.com/Daily-Nerd/Scar/commit/9a4ae7854d0b00f3f545fe664d290dae4e2bab80))
+* **symbols:** refuse ambiguous bare anchors; fold leaf tokens into fingerprints ([#187](https://github.com/Daily-Nerd/Scar/issues/187)) ([#196](https://github.com/Daily-Nerd/Scar/issues/196)) ([eec8f7b](https://github.com/Daily-Nerd/Scar/commit/eec8f7bec64e71cb54ab5e3ead1305d3b8e9b9ed))
+
+
+### Performance Improvements
+
+* **hooks:** one directory parse per hook, cached tree-sitter parse, node-direct fingerprints ([#186](https://github.com/Daily-Nerd/Scar/issues/186)) ([#195](https://github.com/Daily-Nerd/Scar/issues/195)) ([3ba38ab](https://github.com/Daily-Nerd/Scar/commit/3ba38aba03eba018e44cbb57afa09a3288eddaa3))
+
+
+### Documentation
+
+* **readme:** slim README to pitch, install, and docs-site links ([#174](https://github.com/Daily-Nerd/Scar/issues/174)) ([4820ad3](https://github.com/Daily-Nerd/Scar/commit/4820ad361f6acd8c368298d7daac80804bf4e36f))
+
 ## [0.16.2](https://github.com/Daily-Nerd/Scar/compare/v0.16.1...v0.16.2) (2026-07-30)
 
 
