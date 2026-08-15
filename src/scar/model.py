@@ -79,6 +79,26 @@ class Scar:
         return "\n".join(lines)
 
 
+_TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
+
+
+def _unquote(value: str) -> str:
+    # Remove exactly ONE matching wrapper-quote pair — never edge quote
+    # characters that are part of the value (#202: to_text always adds one
+    # double-quote pair, so pair-removal is the exact inverse; char-wise
+    # .strip('"') corrupted regexes with edge/embedded quotes). A trailing
+    # "  # comment" after the closing quote is dropped first: quoted values
+    # skip _strip_inline_comment (a '#' inside quotes is data), which
+    # otherwise fuses the template's trailing comments into the value.
+    if value[:1] in ('"', "'"):
+        closing = value.rfind(value[0])
+        if closing > 0:
+            tail = value[closing + 1:]
+            if not tail or _TRAILING_COMMENT_RE.fullmatch(tail):
+                return value[1:closing]
+    return value
+
+
 def _strip_inline_comment(value: str) -> str:
     # Strip an unquoted inline comment (YAML: a '#' after whitespace starts a
     # comment). The template ships '# ...' on every field; a copied-but-uncleaned
@@ -142,17 +162,17 @@ def parse_scar_text(text: str) -> Scar:
         authors=authors,
         path_anchors=[_strip_inline_comment(p).strip('"').strip("'")
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
-        pattern_anchors=[p.strip().strip('"')
+        pattern_anchors=[_unquote(p.strip())
                          for p in re.findall(r"^\s*-\s*pattern:\s*(.+?)\s*$", front, re.MULTILINE)],
         symbol_anchors=[_strip_inline_comment(s).strip('"').strip("'")
                         for s in re.findall(r"^\s*-\s*symbol:\s*(.+?)\s*$", front, re.MULTILINE)],
-        # Raw-regex contract, same as pattern/violation: quotes stripped,
-        # nothing un-escaped. Single quotes stripped too so the silently-dead
-        # single-quoted trap (daimon 0021) cannot recur for command anchors.
-        command_anchors=[c.strip().strip('"').strip("'")
+        # Raw-regex contract, same as pattern/violation: wrapper quotes
+        # removed, nothing un-escaped. Single-quote wrappers removed too so
+        # the silently-dead single-quoted trap (daimon 0021) cannot recur.
+        command_anchors=[_unquote(c.strip())
                          for c in re.findall(r"^\s*-\s*command:\s*(.+?)\s*$", front, re.MULTILINE)],
         evidence=evidence,
-        expires_condition=_field(front, "condition").strip('"'),
+        expires_condition=_unquote(_field(front, "condition")),
         review_after=_field(front, "review_after"),
         violation=_field(front, "violation").strip('"'),
         status=_field(front, "status", "active"),

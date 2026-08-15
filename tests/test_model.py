@@ -333,3 +333,71 @@ def test_command_anchor_roundtrips_through_to_text():
     scar = parse_scar_text(COMMAND_SCAR)
     again = parse_scar_text(scar.to_text())
     assert again.command_anchors == ["uv sync(?!.* --all-extras)"]
+
+
+# --- #202: quoted values must survive a write/read round-trip byte-identical.
+# to_text() wraps pattern/command/condition in exactly one double-quote pair;
+# parse must remove exactly that pair, never edge quote CHARACTERS that are
+# part of the value.
+
+
+def test_pattern_anchor_with_edge_quote_survives_roundtrip():
+    scar = Scar(title="t", pattern_anchors=['class="'])
+    again = parse_scar_text(scar.to_text())
+    assert again.pattern_anchors == ['class="']
+
+
+def test_command_anchor_with_embedded_quotes_survives_roundtrip():
+    scar = Scar(title="t", command_anchors=['grep "foo"'])
+    again = parse_scar_text(scar.to_text())
+    assert again.command_anchors == ['grep "foo"']
+
+
+def test_condition_with_edge_quote_survives_roundtrip():
+    scar = Scar(title="t", expires_condition='flag="on"')
+    again = parse_scar_text(scar.to_text())
+    assert again.expires_condition == 'flag="on"'
+
+
+def test_pattern_anchor_fully_quoted_value_survives_roundtrip():
+    # A regex that itself matches a double-quoted token: the wrapper pair is
+    # removed once, the value's own quotes stay.
+    scar = Scar(title="t", pattern_anchors=['"redis"'])
+    again = parse_scar_text(scar.to_text())
+    assert again.pattern_anchors == ['"redis"']
+
+
+def test_single_quoted_command_anchor_still_unwrapped():
+    # daimon-0021 protection: a hand-written single-quoted command anchor must
+    # not keep its wrapper (silently-dead tripwire).
+    text = COMMAND_SCAR.replace(
+        '- command: "uv sync(?!.* --all-extras)"',
+        "- command: 'uv sync(?!.* --all-extras)'",
+    )
+    assert parse_scar_text(text).command_anchors == ["uv sync(?!.* --all-extras)"]
+
+
+def test_quoted_pattern_with_trailing_comment_is_stripped():
+    # The template ships trailing comments; a quoted value used to fuse the
+    # comment into the regex (compiles, lints clean, never matches).
+    text = VALID.replace(
+        '- pattern: "redis|aioredis"',
+        '- pattern: "redis|aioredis"  # tripwire',
+    )
+    assert parse_scar_text(text).pattern_anchors == ["redis|aioredis"]
+
+
+def test_quoted_condition_with_trailing_comment_is_stripped():
+    text = VALID.replace(
+        'condition: "sessions become re-derivable"',
+        'condition: "sessions become re-derivable"  # when to retire',
+    )
+    assert parse_scar_text(text).expires_condition == "sessions become re-derivable"
+
+
+def test_quoted_command_with_trailing_comment_is_stripped():
+    text = COMMAND_SCAR.replace(
+        '- command: "uv sync(?!.* --all-extras)"',
+        '- command: "uv sync(?!.* --all-extras)"  # regex',
+    )
+    assert parse_scar_text(text).command_anchors == ["uv sync(?!.* --all-extras)"]
