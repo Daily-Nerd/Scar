@@ -16,3 +16,5 @@ experiments/fence-honor/runs/
 .idea/
 .vscode/
 .claude/
+
+.scars/candidates/fp-log.txt
