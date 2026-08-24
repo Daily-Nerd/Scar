@@ -74,15 +74,10 @@ class Scar:
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
         if self.violation:
-            # A violation regex often needs a literal double quote (matching
-            # an HTML attribute like id="state"), but this format has no
-            # escaping -- a value is recovered only by stripping whichever
-            # quote character wraps it (#200). Always wrapping in double
-            # quotes then silently corrupts (or gets rejected) once the
-            # value itself contains one. Wrap in whichever quote character
-            # the value does NOT contain, so it round-trips intact.
-            quote = "'" if '"' in self.violation else '"'
-            lines.append(f"violation: {quote}{self.violation}{quote}")
+            # Always double-quoted: released parsers only understand a
+            # double-quote wrapper, and _unquote's pair removal recovers a
+            # value with embedded/edge quotes without a wrapper flip (#200).
+            lines.append(f'violation: "{self.violation}"')
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
 
@@ -182,11 +177,11 @@ def parse_scar_text(text: str) -> Scar:
         evidence=evidence,
         expires_condition=_unquote(_field(front, "condition")),
         review_after=_field(front, "review_after"),
-        # Same double-then-single strip as command_anchors (#175): a
-        # single-quoted violation value must not be left with its wrapper
-        # quotes still attached, or the stored regex can never match the
-        # source it was written for while `lint` still reports it clean (#200).
-        violation=_field(front, "violation").strip('"').strip("'"),
+        # Matched-pair removal, same as pattern/command/condition (#202): a
+        # single-quoted violation value must not keep its wrapper attached
+        # (silently-dead tripwire, #200), and a value with edge quotes of its
+        # own must not lose them.
+        violation=_unquote(_field(front, "violation")),
         status=_field(front, "status", "active"),
         body=body.strip(),
     )
