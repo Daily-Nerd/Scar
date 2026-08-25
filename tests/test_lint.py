@@ -314,3 +314,19 @@ def test_redos_gate_still_catches_original_form():
     from scar.lint import _is_redos_prone
     assert _is_redos_prone("(a+)+$")
     assert _is_redos_prone("([a-z]+)*")
+
+
+def test_missing_status_field_is_error():
+    # #199: omitting status: entirely used to default to active AND lint
+    # clean — an unreviewed scar armed by omission, bypassing the human
+    # promotion gate. Omission must be an error, distinct from an invalid
+    # status value.
+    text = GOOD.replace("status: active\n", "")
+    findings = lint_text(text)
+    assert any(f.level == "error" and "missing status" in f.message
+               for f in findings)
+
+
+def test_explicit_status_still_clean():
+    assert lint_text(GOOD) == []
+    assert lint_text(GOOD.replace("status: active", "status: candidate")) == []
