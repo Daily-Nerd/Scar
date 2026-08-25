@@ -1,5 +1,7 @@
 """Scar model: parse, validate shape, serialize. One parser for the whole system."""
 
+import re
+
 import pytest
 
 from scar.model import ParseError, Scar, parse_scar_text
@@ -273,6 +275,63 @@ def test_to_text_omits_violation_line_when_absent():
     s = Scar(title="t", type="deadend", severity="high", confidence=0.9,
              status="active", path_anchors=["src/"])
     assert "violation:" not in s.to_text()
+
+
+def test_violation_with_embedded_double_quotes_roundtrips():
+    # #200: a violation regex matching an HTML attribute (id="state") needs a
+    # literal double quote. to_text() used to always wrap in double quotes,
+    # producing `violation: "id="state""` -- unrecoverable on the next parse,
+    # since nothing un-escapes the interior quotes and stripping only removes
+    # the outermost quote characters. The stored regex silently stopped
+    # matching what it was written for while `lint` still reported it clean.
+    regex = 'id="state"[^>]*aria-live|aria-live[^>]*id="state"'
+    s = Scar(title="t", type="fence", severity="high", confidence=0.9,
+             status="active", path_anchors=["src/"], violation=regex)
+    s2 = parse_scar_text(s.to_text())
+    assert s2.violation == regex
+    compiled = re.compile(s2.violation)
+    assert compiled.search('<div id="state" aria-live="polite">')
+    assert compiled.search('<div aria-live="polite" id="state">')
+
+
+def test_violation_single_quoted_source_with_embedded_double_quotes_parses():
+    # #200 Path B: an author works around the lack of escaping by wrapping the
+    # value in single quotes so the interior double quotes stay literal. The
+    # read side used to strip only double quotes, leaving the wrapper single
+    # quotes attached -- the regex then began with a literal "'" and could
+    # never match real source, even though `scar lint` reported 0 errors.
+    text = VALID.replace(
+        "status: active\n",
+        "violation: 'id=\"state\"[^>]*aria-live|aria-live[^>]*id=\"state\"'\n"
+        "status: active\n",
+    )
+    s = parse_scar_text(text)
+    assert s.violation == 'id="state"[^>]*aria-live|aria-live[^>]*id="state"'
+    compiled = re.compile(s.violation)
+    assert compiled.search('<div id="state" aria-live="polite">')
+
+
+def test_violation_with_edge_apostrophes_survives_roundtrip():
+    # A regex whose content legitimately starts/ends with an apostrophe
+    # (matching a single-quoted token like 'use client'). Wrapper removal must
+    # take exactly one matching PAIR — char-wise stripping eats the data's own
+    # apostrophes, silently broadening the regex, and every re-serialization
+    # path persists the corruption.
+    scar = Scar(title="t", violation="'use client'")
+    again = parse_scar_text(scar.to_text())
+    assert again.violation == "'use client'"
+
+
+def test_violation_emission_stays_double_quoted():
+    # .scars/ files are git-shared while scar binaries are per-machine: every
+    # released parser removes only double-quote wrappers, so a single-quoted
+    # emission reads back with wrapper apostrophes attached on older binaries
+    # — regex compiles, lint is clean, tripwire silently dead. Emission must
+    # stay double-quoted; _unquote's pair semantics make embedded double
+    # quotes recoverable without a wrapper flip.
+    scar = Scar(title="t", violation='id="state"')
+    line = [ln for ln in scar.to_text().splitlines() if ln.startswith("violation:")][0]
+    assert line == 'violation: "id="state""'
 
 
 def test_existing_evidence_prefixes_still_parse():

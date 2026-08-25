@@ -74,6 +74,9 @@ class Scar:
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
         if self.violation:
+            # Always double-quoted: released parsers only understand a
+            # double-quote wrapper, and _unquote's pair removal recovers a
+            # value with embedded/edge quotes without a wrapper flip (#200).
             lines.append(f'violation: "{self.violation}"')
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
@@ -174,7 +177,11 @@ def parse_scar_text(text: str) -> Scar:
         evidence=evidence,
         expires_condition=_unquote(_field(front, "condition")),
         review_after=_field(front, "review_after"),
-        violation=_field(front, "violation").strip('"'),
+        # Matched-pair removal, same as pattern/command/condition (#202): a
+        # single-quoted violation value must not keep its wrapper attached
+        # (silently-dead tripwire, #200), and a value with edge quotes of its
+        # own must not lose them.
+        violation=_unquote(_field(front, "violation")),
         status=_field(front, "status", "active"),
         body=body.strip(),
     )
