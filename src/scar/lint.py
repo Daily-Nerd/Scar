@@ -172,6 +172,14 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding("error", f"invalid severity '{scar.severity}'"))
     if scar.status not in STATUSES:
         findings.append(Finding("error", f"invalid status '{scar.status}'"))
+    elif not re.search(r"^\s*status:", text.split("\n---", 1)[0], re.MULTILINE):
+        # #199: parse defaults an absent status to 'active', so a scar written
+        # without the field is armed immediately with no reviewer recorded —
+        # the promotion gate bypassed by omission. Presence is mandatory.
+        findings.append(Finding(
+            "error", "missing status field — an omitted status silently "
+            "defaults to active, bypassing human promotion; write "
+            "status: candidate (or the intended status) explicitly"))
     if (not scar.path_anchors and not scar.pattern_anchors
             and not scar.symbol_anchors and not scar.command_anchors):
         findings.append(Finding("error", "no anchors — scar protects nothing"))

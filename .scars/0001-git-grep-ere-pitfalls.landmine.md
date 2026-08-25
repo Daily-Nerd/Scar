@@ -16,6 +16,7 @@ evidence:
 expires:
   condition: "resolver layer gains integration tests over its git invocations"
   review_after: 2027-06-09
+status: active
 ---
 
 Two git quirks that combined into a silent total failure during gate 0.2:
