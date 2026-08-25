@@ -19,6 +19,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .model import _unquote
 from .store import ScarStore
 
 # A bare git object name: 7–40 lowercase hex chars. Full SHAs and the common
@@ -50,7 +51,7 @@ def _commit_shas(scar) -> list[str]:
     for entry in scar.evidence:
         key, _, value = entry.partition(":")
         if key.strip() == "commit":
-            sha = value.strip().strip('"').strip("'")
+            sha = _unquote(value.strip())
             if _SHA_RE.match(sha):
                 shas.append(sha)
     return shas

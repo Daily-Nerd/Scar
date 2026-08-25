@@ -460,3 +460,42 @@ def test_quoted_command_with_trailing_comment_is_stripped():
         '- command: "uv sync(?!.* --all-extras)"  # regex',
     )
     assert parse_scar_text(text).command_anchors == ["uv sync(?!.* --all-extras)"]
+
+
+# --- #203: ONE quote policy. Every quoted field round-trips byte-identical
+# through to_text()/parse for any single-line value without edge whitespace.
+
+
+def test_evidence_note_with_trailing_quote_roundtrips():
+    s = Scar(title="t", path_anchors=["src/"], evidence=['note: say "hi"'])
+    s2 = parse_scar_text(s.to_text())
+    assert s2.evidence == ['note: say "hi"']
+
+
+NASTY = [
+    'id="state"[^>]*aria-live',
+    "'use client'",
+    '"redis"',
+    'class="',
+    'foo"',
+    "foo'",
+    'id="x" state=\'on\'',
+    'say "hi"\'',
+    "shutil\\.which",
+    "a  # not a comment",
+    '"foo"  # tail',
+]
+
+
+def test_quoted_fields_roundtrip_property():
+    # Pair-removal is the exact inverse of one-pair emission: there is no
+    # unrepresentable single-line value (edge whitespace aside, which the
+    # field regex trims for every field). This corpus is the receipt.
+    for value in NASTY:
+        scar = Scar(title="t", pattern_anchors=[value], command_anchors=[value],
+                    expires_condition=value, violation=value)
+        again = parse_scar_text(scar.to_text())
+        assert again.pattern_anchors == [value], value
+        assert again.command_anchors == [value], value
+        assert again.expires_condition == value, value
+        assert again.violation == value, value
