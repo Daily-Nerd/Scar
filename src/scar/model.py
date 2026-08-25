@@ -58,31 +58,37 @@ class Scar:
         if self.created:
             lines.append(f"created: {self.created}")
         if self.authors:
-            lines.append("authors: [" + ", ".join(f'"{a}"' for a in self.authors) + "]")
+            lines.append("authors: [" + ", ".join(_quote(a) for a in self.authors) + "]")
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
-        lines += [f'  - pattern: "{p}"' for p in self.pattern_anchors]
+        lines += [f"  - pattern: {_quote(p)}" for p in self.pattern_anchors]
         lines += [f"  - symbol: {s}" for s in self.symbol_anchors]
-        lines += [f'  - command: "{c}"' for c in self.command_anchors]
+        lines += [f"  - command: {_quote(c)}" for c in self.command_anchors]
         if self.evidence:
             lines.append("evidence:")
             lines += [f"  - {e}" for e in self.evidence]
         if self.expires_condition or self.review_after:
             lines.append("expires:")
             if self.expires_condition:
-                lines.append(f'  condition: "{self.expires_condition}"')
+                lines.append(f"  condition: {_quote(self.expires_condition)}")
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
         if self.violation:
-            # Always double-quoted: released parsers only understand a
-            # double-quote wrapper, and _unquote's pair removal recovers a
-            # value with embedded/edge quotes without a wrapper flip (#200).
-            lines.append(f'violation: "{self.violation}"')
+            lines.append(f"violation: {_quote(self.violation)}")
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
 
 
 _TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
+
+
+def _quote(value: str) -> str:
+    # The ONE emission policy for quoted fields: exactly one double-quote
+    # pair, no wrapper flip, no escaping. Released parsers only remove
+    # double-quote wrappers, and _unquote's pair removal recovers any
+    # single-line interior — including embedded/edge quotes — so this is
+    # the exact inverse of parse (#203).
+    return f'"{value}"'
 
 
 def _unquote(value: str) -> str:
@@ -143,7 +149,7 @@ def parse_scar_text(text: str) -> Scar:
         scar_id = None
 
     authors_raw = _field(front, "authors")
-    authors = [a.strip().strip('"').strip("'")
+    authors = [_unquote(a.strip())
                for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
 
     # Evidence values get the same inline-comment strip as scalar fields (#69,
@@ -151,7 +157,7 @@ def parse_scar_text(text: str) -> Scar:
     # an unstripped comment silently voids the receipt downstream (a commit SHA
     # with a comment fails _commit_shas' regex, hiding it from the
     # unreachable-evidence check). Quoted values keep their '#'.
-    evidence = [f"{m1.group(1)}: {_strip_inline_comment(m1.group(2)).strip().strip('\"')}"
+    evidence = [f"{m1.group(1)}: {_unquote(_strip_inline_comment(m1.group(2)).strip())}"
                 for m1 in re.finditer(
         r"^\s*-\s*(commit|pr|issue|incident|note|url):\s*(.+)\s*$", front, re.MULTILINE)]
 
@@ -163,11 +169,11 @@ def parse_scar_text(text: str) -> Scar:
         confidence=confidence,
         created=_field(front, "created"),
         authors=authors,
-        path_anchors=[_strip_inline_comment(p).strip('"').strip("'")
+        path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())
                          for p in re.findall(r"^\s*-\s*pattern:\s*(.+?)\s*$", front, re.MULTILINE)],
-        symbol_anchors=[_strip_inline_comment(s).strip('"').strip("'")
+        symbol_anchors=[_unquote(_strip_inline_comment(s))
                         for s in re.findall(r"^\s*-\s*symbol:\s*(.+?)\s*$", front, re.MULTILINE)],
         # Raw-regex contract, same as pattern/violation: wrapper quotes
         # removed, nothing un-escaped. Single-quote wrappers removed too so

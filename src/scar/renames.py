@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 
 from .evidence import _git, _is_shallow
-from .model import _strip_inline_comment
+from .model import _strip_inline_comment, _unquote
 
 # Directory anchors (trailing '/') and glob-shaped anchors are out of scope —
 # renames apply to concrete tracked files only (#109 design).
@@ -192,7 +192,7 @@ def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) 
         if not m:
             continue
         raw_val = m.group(1)
-        stripped = _strip_inline_comment(raw_val).strip('"').strip("'")
+        stripped = _unquote(_strip_inline_comment(raw_val))
         new_val = renamed.get(stripped)
         if new_val is None:
             continue
