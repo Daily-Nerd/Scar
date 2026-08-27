@@ -60,6 +60,7 @@ Every metric we published or nearly published contained a measurement error we c
 ## Caveats
 
 - Obedience is unobservable from inside the hook; only violations are observable.
+- The headline V/F is an **enforcement** number: of the scars that were surfaced, how many were ignored. It says nothing about scars that should have been surfaced and were not. `scar stats` reports that second failure mode separately as a retrieval floor — violations with no prior firing on that target — and it is a **lower bound, not a rate**: a retrieval miss on a scar carrying no `violation:` pattern leaves no trace in the log at all (#207).
 - `violation:` coverage is machine-checkable scars only — a minority of active scars (4 of 10 and 5 of 25 in the two window repos).
 - n = 1 developer dogfooding across two repos. No claim of generalization; the instrument is open source so you can run it on your own repositories.
 - F concentration matters: report the robustness cut alongside the raw total, or the number is theater.
@@ -69,6 +70,6 @@ Every metric we published or nearly published contained a measurement error we c
 ```bash
 scar init
 # arm a machine-checkable scar with a violation: regex, then:
-scar stats          # per-scar firing and violation counts for this repo
+scar stats          # enforcement, retrieval floor, and demotion counts for this repo
 scar check --diff changes.patch --exit-code   # the same tripwire, CI-side
 ```

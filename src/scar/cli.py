@@ -1247,14 +1247,32 @@ def _aggregate_firings(records: list[dict]) -> dict:
     aggregating across repos sums different scars under one id (#137)."""
     counts: dict[int, int] = {}
     violations: dict[int, int] = {}
+    # (scar_id, target) -> earliest firing ts, for the retrieval-miss check.
+    fired_on: dict[tuple[int, str], str] = {}
+    pending_violations: list[tuple[int, str, str]] = []
+    demotions = 0
     last_fired = None
     for rec in records:
+        target = rec.get("target")
+        ts_rec = rec.get("ts")
         sids = rec.get("scar_ids", [])
         if isinstance(sids, list):
             for sid in sids:
                 if isinstance(sid, int):
                     counts[sid] = counts.get(sid, 0) + 1
+                    if isinstance(target, str) and isinstance(ts_rec, str):
+                        key = (sid, target)
+                        prev = fired_on.get(key)
+                        if prev is None or ts_rec < prev:
+                            fired_on[key] = ts_rec
+        dids = rec.get("demoted_ids", [])
+        if isinstance(dids, list):
+            demotions += sum(1 for d in dids if isinstance(d, int))
         vids = rec.get("violation_ids", [])
+        if isinstance(vids, list) and isinstance(target, str) and isinstance(ts_rec, str):
+            for vid in vids:
+                if isinstance(vid, int):
+                    pending_violations.append((vid, target, ts_rec))
         if isinstance(vids, list):
             # Guard: violation_ids might be garbage in corrupted records —
             # skip the whole record unless it's a list, and skip any
@@ -1265,12 +1283,27 @@ def _aggregate_firings(records: list[dict]) -> dict:
         ts = rec.get("ts")
         if isinstance(ts, str) and (last_fired is None or ts > last_fired):
             last_fired = ts
+    # A violation whose scar never fired on that target BEFORE the violation
+    # was recorded is a RETRIEVAL miss: the hazard was hit but the scar was
+    # never surfaced for that file. Deliberately window-free — "any earlier
+    # firing on this target" needs no lookback constant, so no unvalidated
+    # fitted parameter enters the metric (#54/#95 discipline). This is a
+    # FLOOR, not a rate: misses on scars carrying no violation: pattern are
+    # not observable from this log at all.
+    retrieval_misses = 0
+    for vid, target, vts in pending_violations:
+        first = fired_on.get((vid, target))
+        if first is None or first > vts:
+            retrieval_misses += 1
+
     # Merge counts and violations: include all scars that fired OR violated
     all_scar_ids = set(counts.keys()) | set(violations.keys())
     per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
                        for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
     return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
+            "retrieval_misses": retrieval_misses,
+            "demotions": demotions,
             "total": sum(counts.values())}
 
 
@@ -1301,6 +1334,8 @@ def _cmd_stats(args) -> int:
     repo_key = str(store.root)
     agg = _aggregate_firings([r for r in records if r.get("repo") == repo_key])
     counts, per_scar, last_fired = agg["counts"], agg["per_scar"], agg["last_fired"]
+    retrieval_misses = agg["retrieval_misses"]
+    demotions = agg["demotions"]
     fired_scars = [e for e in per_scar if e["count"] > 0]
     most_fired = fired_scars[0]["id"] if fired_scars else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
@@ -1324,6 +1359,8 @@ def _cmd_stats(args) -> int:
         "most_fired": most_fired,
         "last_fired": last_fired,
         "never_fired": never_fired,
+        "retrieval_misses": retrieval_misses,
+        "demotions": demotions,
         "advisories": advisories,
     }
 
@@ -1341,9 +1378,17 @@ def _cmd_stats(args) -> int:
             print(f"  last fired: {last_fired}")
         if never_fired:
             print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
+        total_violations = sum(e.get("violations", 0) for e in per_scar)
+        print(f"  enforcement: {total_violations} violation(s) / "
+              f"{data['total_firings']} firing(s)")
+        print(f"  retrieval: {retrieval_misses} missed firing(s) — LOWER BOUND")
+        print(f"  demotions: {demotions} scar(s) rendered as one-liners")
         for adv in data["advisories"]:
             print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
                   f"firings — {adv['note']}")
+        print("  note: retrieval is a LOWER BOUND, not a rate — it counts only "
+              "violations with no prior firing on that target. Misses on scars "
+              "with no violation: pattern are not observable from this log.")
         print("  note: firing + violation counts — whether the agent honored an "
               "injected scar is unobservable from inside the hook")
 
