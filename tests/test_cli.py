@@ -2969,3 +2969,83 @@ def test_breadth_warning_skipped_in_tiny_repos(repo, capsys):
         BROAD_SCAR.replace("path: apps/", "path: src/"))
     assert main(["lint"]) == 0
     assert "% of tracked files" not in capsys.readouterr().out
+
+
+def test_stats_reports_retrieval_miss_when_violation_has_no_prior_firing(
+        repo, capsys, monkeypatch):
+    """A violation on a target where the scar never previously fired is a
+    RETRIEVAL miss — the scar existed and the hazard was hit, but the scar was
+    never surfaced for that file. Distinct from an enforcement failure, where
+    the scar WAS shown and ignored."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["retrieval_misses"] == 1
+
+
+def test_stats_violation_after_firing_on_same_target_is_not_a_retrieval_miss(
+        repo, capsys, monkeypatch):
+    """The scar fired on this target before the violation, so it WAS
+    retrieved — the failure is enforcement, not retrieval. Counting it as a
+    retrieval miss would double-blame a single failure."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/a.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["retrieval_misses"] == 0
+
+
+def test_stats_counts_demotions_as_a_separate_stage(repo, capsys, monkeypatch):
+    """demoted_ids is a THIRD stage: the scar matched but rendered as a
+    one-liner rather than a full body. It is neither a firing nor a violation
+    and must never be summed with either."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2]},
+        {"ts": "2026-06-11T10:00:00", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2, 3]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["demotions"] == 3
+    assert data["total_firings"] == 2
+
+
+def test_stats_plain_output_labels_retrieval_as_a_floor_not_a_rate(
+        repo, capsys, monkeypatch):
+    """The retrieval number MUST be published as a lower bound. Misses on
+    scars carrying no violation: pattern are invisible in this log, so
+    rendering it as a rate would overstate coverage — the exact error this
+    split exists to correct."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2]},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "retrieval" in out
+    assert "lower bound" in out.lower()
+    assert "demot" in out.lower()
