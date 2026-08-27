@@ -652,3 +652,64 @@ body
     ctx = _make_repo_context(tracked_paths=[])
     scar = parse_scar_text(scar_text)
     assert anchors_all_dead(scar, ctx) is False
+
+
+# ---------------------------------------------------------------------------
+# Alternation branch rot (#213): a live branch must not mask a dead one
+# ---------------------------------------------------------------------------
+
+def test_dead_alternation_branch_reported_though_anchor_matches(tmp_path):
+    """A pattern anchor 'live|dead' whose second branch matches nothing is
+    partial rot even though the anchor as a whole still matches. Without
+    per-branch checking the live branch masks the corpse and the gauge reads
+    green — the #6 failure mode hidden behind an alternation."""
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0001-alt.deadend.md": _scar(
+            id=1, status="active",
+            path_anchors=["src/live/"],
+            pattern_anchors=["shutil|neverappearsanywhere"],
+        ),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/live/foo.py"],
+        contents={"src/live/foo.py": "import shutil\n"},
+    )
+    rot = detect_partial_rot(store, ctx)
+    assert len(rot) == 1
+    assert rot[0].dead_pattern_branches == ["neverappearsanywhere"]
+
+
+def test_all_alternation_branches_live_is_not_partial_rot(tmp_path):
+    """Every branch matching something means nothing rotted — no finding."""
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0001-alt.deadend.md": _scar(
+            id=1, status="active",
+            path_anchors=["src/live/"],
+            pattern_anchors=["shutil|pathlib"],
+        ),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/live/foo.py"],
+        contents={"src/live/foo.py": "import shutil\nimport pathlib\n"},
+    )
+    assert detect_partial_rot(store, ctx) == []
+
+
+def test_alternation_inside_a_group_is_not_split(tmp_path):
+    """`foo(a|b)` is ONE top-level branch. Splitting inside the group would
+    produce phantom branches 'foo(a' and 'b)' and report false rot."""
+    from scar.orphan import detect_partial_rot
+    store = _make_store(tmp_path, {
+        "0001-grp.deadend.md": _scar(
+            id=1, status="active",
+            path_anchors=["src/live/"],
+            pattern_anchors=["shut(il|xx)"],
+        ),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/live/foo.py"],
+        contents={"src/live/foo.py": "import shutil\n"},
+    )
+    assert detect_partial_rot(store, ctx) == []

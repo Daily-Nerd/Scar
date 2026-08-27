@@ -3049,3 +3049,46 @@ def test_stats_plain_output_labels_retrieval_as_a_floor_not_a_rate(
     assert "retrieval" in out
     assert "lower bound" in out.lower()
     assert "demot" in out.lower()
+
+
+def _git_repo_with_alternation_branch_rot(tmp_path):
+    """Real git repo whose scar carries a pattern anchor with one live and one
+    dead top-level branch — the anchor as a whole still matches (#213)."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "mod.py").write_text("import shutil\n")
+    (tmp_path / ".scars" / "0007-alt.landmine.md").write_text(
+        "---\n"
+        "id: 7\n"
+        "type: landmine\n"
+        "title: alternation branch rot\n"
+        "severity: medium\n"
+        "confidence: 0.8\n"
+        "created: 2026-08-27\n"
+        'authors: ["t"]\n'
+        "anchors:\n"
+        "  - path: src/\n"
+        '  - pattern: "shutil|neverappearsanywhere"\n'
+        "evidence:\n"
+        "  - note: test\n"
+        "status: active\n"
+        "---\n\n"
+        "Body.\n"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+
+def test_lint_names_the_dead_alternation_branch(tmp_path, monkeypatch, capsys):
+    """The dead branch must be NAMED in the output. A finding that reports
+    'dead anchor(s) ()' with an empty list tells the reader nothing."""
+    _git_repo_with_alternation_branch_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "#7" in out
+    assert "neverappearsanywhere" in out   # the dead branch is named
+    assert "partial" in out.lower()
