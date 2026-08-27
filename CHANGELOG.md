@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.0](https://github.com/Daily-Nerd/Scar/compare/v0.17.0...v0.18.0) (2026-08-27)
+
+
+### Features
+
+* **stats:** split measurement into retrieval vs enforcement metrics ([#214](https://github.com/Daily-Nerd/Scar/issues/214)) ([7543aff](https://github.com/Daily-Nerd/Scar/commit/7543aff26505a0e04dc7aadefb2e85f92509a68b))
+
+
+### Bug Fixes
+
+* **lint:** detect a dead branch inside an alternation pattern anchor ([#215](https://github.com/Daily-Nerd/Scar/issues/215)) ([60ef296](https://github.com/Daily-Nerd/Scar/commit/60ef2968f806dd15dfd5231c4486c615920a7603))
+* **lint:** error when the status field is omitted entirely ([#199](https://github.com/Daily-Nerd/Scar/issues/199)) ([#211](https://github.com/Daily-Nerd/Scar/issues/211)) ([6b0b994](https://github.com/Daily-Nerd/Scar/commit/6b0b9946f0694f0b2f19202adb32845772f7206d))
+* Violation regex with embedded double quotes survives round-trip ([#201](https://github.com/Daily-Nerd/Scar/issues/201)) ([aecfd2d](https://github.com/Daily-Nerd/Scar/commit/aecfd2dacea232b13a6cf58313e5b7586db73d33))
+
 ## [0.17.0](https://github.com/Daily-Nerd/Scar/compare/v0.16.2...v0.17.0) (2026-08-15)
 
 
