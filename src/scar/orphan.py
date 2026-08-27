@@ -81,6 +81,7 @@ class PartialRotFinding:
     dead_path_anchors: list[str]      # path anchors that resolved to nothing
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
     renamed: dict[str, str] = field(default_factory=dict)  # dead path anchor -> git rename target (#109)
+    dead_pattern_branches: list[str] = field(default_factory=list)  # dead top-level alternation branches (#213)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +201,71 @@ def _self_rel(store: ScarStore, source: Path) -> str | None:
         return None
 
 
+def _split_top_level_alternation(pattern: str) -> list[str]:
+    r"""Split a regex on its TOP-LEVEL `|` only (#213).
+
+    A `|` inside a group `(a|b)` or a character class `[a|b]`, or escaped as
+    `\|`, is not an alternation of the whole pattern — splitting there would
+    manufacture phantom branches like `foo(a` and report false rot. Returns a
+    single-element list when there is no top-level alternation.
+    """
+    branches: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    in_class = False
+    escaped = False
+    for ch in pattern:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            buf.append(ch)
+            escaped = True
+            continue
+        if in_class:
+            buf.append(ch)
+            if ch == "]":
+                in_class = False
+            continue
+        if ch == "[":
+            in_class = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "|" and depth == 0:
+            branches.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    branches.append("".join(buf))
+    return branches
+
+
+def _dead_pattern_branches(scar: Scar, ctx: RepoContext,
+                           self_path: str | None) -> list[str]:
+    """Top-level alternation branches that match nothing, for pattern anchors
+    that are otherwise LIVE (#213).
+
+    A live branch masks a dead one: `"a|b"` with `a` dead and `b` live reports
+    clean today, so the over-escape trap scar #6 exists to catch hides behind
+    the alternation. Anchors that are wholly dead are already reported by
+    _dead_anchors — checking their branches too would double-report.
+    """
+    dead: list[str] = []
+    for pat in scar.pattern_anchors:
+        if not _pattern_anchor_live(pat, ctx, exclude_path=self_path):
+            continue   # wholly dead — _dead_anchors already reports it
+        branches = _split_top_level_alternation(pat)
+        if len(branches) < 2:
+            continue   # no alternation, nothing to sub-check
+        for b in branches:
+            if not _pattern_anchor_live(b, ctx, exclude_path=self_path):
+                dead.append(b)
+    return dead
+
+
 def _dead_anchors(scar: Scar, ctx: RepoContext,
                   self_path: str | None) -> tuple[list[str], list[str]]:
     """The (dead_path_anchors, dead_pattern_anchors) for one scar — the SHARED
@@ -277,13 +343,15 @@ def detect_partial_rot(store: ScarStore, ctx: RepoContext,
             if anchors_all_dead(scar, ctx, self_path=self_path):
                 continue
             dead_paths, dead_patterns = _dead_anchors(scar, ctx, self_path)
-            if not dead_paths and not dead_patterns:
+            dead_branches = _dead_pattern_branches(scar, ctx, self_path)
+            if not dead_paths and not dead_patterns and not dead_branches:
                 continue   # fully live → nothing rotted
             findings.append(PartialRotFinding(
                 scar_id=scar.id,
                 dead_path_anchors=dead_paths,
                 dead_pattern_anchors=dead_patterns,
                 renamed=resolver.resolve(dead_paths, tracked),
+                dead_pattern_branches=dead_branches,
             ))
         except Exception:
             continue

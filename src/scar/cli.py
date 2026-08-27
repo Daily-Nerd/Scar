@@ -114,6 +114,12 @@ def _dead_anchor_summary(finding) -> str:
             _dead_path_text(finding, p) for p in finding.dead_path_anchors))
     if finding.dead_pattern_anchors:
         dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
+    # Dead top-level alternation branches (#213). getattr: OrphanFinding has no
+    # such field — an all-dead scar's branches are moot, and the summary is
+    # shared with the orphan surface.
+    branches = getattr(finding, "dead_pattern_branches", None)
+    if branches:
+        dead.append("pattern branches: " + ", ".join(f"/{b}/" for b in branches))
     return "; ".join(dead)
 
 
