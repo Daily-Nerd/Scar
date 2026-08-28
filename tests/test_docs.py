@@ -25,8 +25,14 @@ def test_agents_doc_documents_the_cascade_hook_install():
 
 
 def test_agents_doc_documents_native_codex_hooks_and_trust():
+    """#246: the plugin's hooks.json is not materialized into every Codex
+    install, so the docs must lead with the installer, not the plugin. And
+    Codex skips untrusted hooks SILENTLY — a doc that omits that ships users
+    an install they cannot tell is dead."""
     text = (ROOT / "website" / "docs" / "agents.md").read_text(encoding="utf-8")
-    assert "## Codex (native plugin hooks)" in text
-    assert "hooks/hooks.json" in text
+    assert "## Codex (native hooks)" in text
+    assert "scar hook install --runtime codex" in text
+    assert "~/.codex/hooks.json" in text
     assert "Bash" in text and "apply_patch" in text
     assert "/hooks" in text
+    assert "silently" in text

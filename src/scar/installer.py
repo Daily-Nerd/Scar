@@ -546,6 +546,230 @@ def cascade_status(repo: Path) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Codex hooks (~/.codex/hooks.json) — #246. Codex's user-level hooks file is
+# the direct analogue of Claude's settings.json and carries the same entry
+# shape, so the wire format is reused verbatim. Two things differ and both
+# are load-bearing:
+#
+#   1. The file is SHARED with every other tool the user has wired into
+#      Codex. It is merged, never rewritten wholesale, and a parse failure
+#      refuses rather than clobbers (as with .windsurf/hooks.json).
+#   2. Codex will not run a hook until its definition hash is trusted, and it
+#      skips untrusted hooks SILENTLY — no error, no stderr. Verified on
+#      codex-cli 0.147.0: a hook config parsed, printed its own timeout
+#      warning, and never executed. An install that stops at "written" is
+#      therefore reporting a success the user does not yet have, so the
+#      trust step is part of the install's own output.
+# ---------------------------------------------------------------------------
+
+CODEX_CONFIG_NAME = "hooks.json"
+
+# Codex exposes edits as one `apply_patch` program and commands as `Bash`;
+# Edit/Write/MultiEdit are Claude tool names and match nothing here.
+CODEX_HOOKS = [
+    {"kind": "codex-session-notice", "event": "SessionStart",
+     "matcher": None, "timeout": 10, "status": "Checking scar conventions..."},
+    {"kind": "codex-pretool", "event": "PreToolUse",
+     "matcher": "Bash|apply_patch",
+     "timeout": 10, "status": "Checking scars..."},
+    {"kind": "codex-posttool", "event": "PostToolUse",
+     "matcher": "apply_patch",
+     "timeout": 10, "status": "Checking for violations..."},
+]
+
+# scar 0016, one file over: `posttool` is a proper prefix of `codex-posttool`,
+# so ownership is matched on the exact kind. The trailing (?!\S) is what keeps
+# a Claude-runtime entry that happens to share this file from being claimed.
+_CODEX_KIND_RE = {
+    spec["kind"]: re.compile(rf"scar[^ ]* hook {re.escape(spec['kind'])}(?!\S)")
+    for spec in CODEX_HOOKS
+}
+
+
+def codex_home() -> Path:
+    """Codex honours $CODEX_HOME. So must we — otherwise the install lands in
+    a directory the running agent never reads, and reports success."""
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
+def codex_config_path() -> Path:
+    return codex_home() / CODEX_CONFIG_NAME
+
+
+def _codex_owns_kind(group: object, kind: str) -> bool:
+    if not isinstance(group, dict):
+        return False
+    pattern = _CODEX_KIND_RE[kind]
+    return any(pattern.search(h.get("command", ""))
+               for h in group.get("hooks", []) if isinstance(h, dict))
+
+
+def _codex_is_ours(group: object) -> bool:
+    """Any Codex-runtime entry of ours, whatever the kind. Uninstall clears
+    every kind off an event at once; it must still leave another tool's
+    entries — and our own Claude-runtime kinds — alone."""
+    return any(_codex_owns_kind(group, spec["kind"]) for spec in CODEX_HOOKS)
+
+
+def _load_codex_config(path: Path) -> dict | None:
+    """The existing Codex hooks file, or {} when absent. None means it exists
+    but does not parse — other tools register here, so refuse rather than
+    overwrite work that is not ours."""
+    if not path.exists():
+        return {}
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return config if isinstance(config, dict) else None
+
+
+def _save_codex_config(path: Path, config: dict, dry: bool) -> None:
+    if dry:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_name(f"{path.name}.scar-backup-{int(time.time())}")
+        shutil.copy2(path, backup)
+        print(f"  backup: {backup.name}")
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    print(f"  {path} written")
+
+
+def _codex_missing_after_write(path: Path) -> list[str]:
+    """Read back what actually landed. #236 printed `register` for a hook it
+    then dropped and called that a success for a month."""
+    config = _load_codex_config(path)
+    if config is None:
+        return [spec["kind"] for spec in CODEX_HOOKS]
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
+    missing = []
+    for spec in CODEX_HOOKS:
+        groups = hooks_cfg.get(spec["event"])
+        groups = groups if isinstance(groups, list) else []
+        if not any(_codex_owns_kind(g, spec["kind"]) for g in groups):
+            missing.append(spec["kind"])
+    return missing
+
+
+def codex_install(dry: bool = False) -> int:
+    scar_path = find_scar()
+    if not scar_path:
+        print("scar binary not found on PATH.")
+        if os.environ.get("VIRTUAL_ENV"):
+            print("Note: an active venv is ignored on purpose — hooks must "
+                  "bind to a stable install, not a venv shim (scar 0003).")
+        print("Install it first: uv tool install scar-cli")
+        return 1
+
+    path = codex_config_path()
+    config = _load_codex_config(path)
+    if config is None:
+        print(f"[codex] {path} exists but is not valid JSON — left untouched. "
+              "Fix or remove it, then re-run.")
+        return 1
+
+    hooks_cfg = config.setdefault("hooks", {})
+    if not isinstance(hooks_cfg, dict):
+        print(f"[codex] {path} has a non-object 'hooks' key — left untouched.")
+        return 1
+
+    changed = False
+    for spec in CODEX_HOOKS:
+        kind, event = spec["kind"], spec["event"]
+        groups = hooks_cfg.get(event)
+        groups = groups if isinstance(groups, list) else []
+        ours = [g for g in groups if _codex_owns_kind(g, kind)]
+        desired = _entry(spec, scar_path)
+        if ours == [desired]:
+            print(f"[{kind}] hooks.json: up-to-date ({event})")
+            hooks_cfg[event] = groups
+            continue
+        print(f"[{kind}] hooks.json: "
+              f"{'update' if ours else 'register'} under {event}")
+        # Foreign entries keep their relative order; ours is appended so a
+        # tool that was already there still runs first.
+        hooks_cfg[event] = [g for g in groups
+                            if not _codex_owns_kind(g, kind)] + [desired]
+        changed = True
+
+    if changed:
+        _save_codex_config(path, config, dry)
+    if not dry:
+        missing = _codex_missing_after_write(path)
+        if missing:
+            print("codex install: FAILED — these hooks are not in the written "
+                  f"file: {', '.join(missing)}")
+            return 1
+    print("codex install: done" + (" (dry-run, nothing written)" if dry else
+          f". All {len(CODEX_HOOKS)} Codex hooks route through {scar_path}."))
+    print("  NOT ACTIVE YET: Codex runs a hook only once you have trusted its "
+          "definition. Open `/hooks` in Codex, review these entries, and trust "
+          "them. Until then Codex skips them silently — no error is printed.")
+    print("  Re-trust after every scar upgrade that changes a hook definition.")
+    return 0
+
+
+def codex_uninstall(dry: bool = False) -> int:
+    path = codex_config_path()
+    config = _load_codex_config(path)
+    if config is None:
+        print(f"[codex] {path} is not valid JSON — left untouched.")
+        return 1
+    hooks_cfg = config.get("hooks")
+    if not isinstance(hooks_cfg, dict):
+        print(f"[codex] {path}: nothing of ours to remove")
+        return 0
+
+    changed = False
+    for spec in CODEX_HOOKS:
+        event = spec["event"]
+        groups = hooks_cfg.get(event)
+        if not isinstance(groups, list):
+            continue
+        keep = [g for g in groups if not _codex_is_ours(g)]
+        if len(keep) != len(groups):
+            print(f"[{spec['kind']}] hooks.json: removing from {event}")
+            changed = True
+        if keep:
+            hooks_cfg[event] = keep
+        else:
+            hooks_cfg.pop(event, None)
+
+    if changed:
+        _save_codex_config(path, config, dry)
+    print("codex uninstall: done" + (" (dry-run, nothing written)" if dry else
+          ". Scars themselves (.scars/ in repos) are untouched."))
+    print("  Codex keeps its own trust record for hooks it has seen; removing "
+          "them here is enough to stop them running.")
+    return 0
+
+
+def codex_status() -> int:
+    scar_path = find_scar()
+    path = codex_config_path()
+    print(f"scar binary: {scar_path or 'NOT FOUND (uv tool install scar-cli)'}")
+    print(f"codex config: {path}")
+    config = _load_codex_config(path)
+    if config is None:
+        print("  not valid JSON — install would refuse to touch it")
+        return 0
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
+    for spec in CODEX_HOOKS:
+        groups = hooks_cfg.get(spec["event"])
+        groups = groups if isinstance(groups, list) else []
+        state = ("installed" if any(_codex_owns_kind(g, spec["kind"])
+                                    for g in groups) else "not installed")
+        print(f"{spec['kind']:22} {spec['event']:13} {state}")
+    print("  `installed` means present in the file. Codex additionally "
+          "requires the definition to be trusted in `/hooks` before it runs; "
+          "an untrusted hook is skipped silently.")
+    return 0
+
+
 def _skill_source() -> Path:
     from importlib.resources import files
     return Path(str(files("scar").joinpath("skills") / SKILL_NAME))
