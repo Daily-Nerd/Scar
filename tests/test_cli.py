@@ -399,12 +399,17 @@ def test_agent_config_windsurf_points_at_the_cascade_hook_install():
     assert "mcpServers" in text
 
 
-def test_agent_config_codex_leads_with_native_plugin_and_trust():
+def test_agent_config_codex_leads_with_the_installer_and_trust():
+    """#246: the plugin channel did not deliver hooks to a real install, so
+    the setup text leads with `scar hook install --runtime codex`. The trust
+    step stays mandatory in the text because Codex skips untrusted hooks
+    silently — the failure mode is a working-looking install that never fires."""
     from scar.agent import config
 
     text = config("codex")
-    assert "Scar plugin" in text
+    assert "scar hook install --runtime codex" in text
     assert "/hooks" in text
+    assert "SILENTLY" in text
     assert "Bash" in text and "apply_patch" in text
     assert "scar mcp" in text
 

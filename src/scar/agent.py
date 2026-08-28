@@ -72,17 +72,28 @@ transcript access required, so it works the same for every runtime.
 # target -> setup text; adding a runtime is one entry here, no logic change
 CONFIGS = {
     "codex": """\
-Codex native setup (recommended):
+Codex native setup (push injection — run this once):
 
-1. Install and enable the Scar plugin in Codex.
-2. Open `/hooks`, review the Scar hook definitions, and trust their current
-   hash. Enabling a plugin does not automatically trust its hooks; updates
-   that change the definitions require review again.
+  scar hook install --runtime codex
+
+Writes ~/.codex/hooks.json (honours $CODEX_HOME). That file is shared with
+every other tool you have wired into Codex, so it is merged, never
+overwritten.
+
+Then, and this step is not optional:
+
+1. Open `/hooks` in Codex, review the three Scar entries, and trust them.
+   Codex skips an untrusted hook SILENTLY — no error, no stderr — so an
+   untrusted install looks exactly like a working one.
+2. Re-trust after any upgrade that changes a hook definition.
 3. Keep AGENTS.md committed at the repository root.
 
-When active, the plugin pushes matching scars before Codex `Bash` and
+Once trusted, Scar pushes matching scars before Codex `Bash` and
 `apply_patch` calls and checks successful patches for `violation:` tripwires.
 All feedback is advisory and fail-open.
+
+`scar hook status --runtime codex` reports what is in the file; it cannot see
+Codex's trust record, so a hook shown as `installed` may still be untrusted.
 
 For pull access as a companion or CLI-only fallback, expose SCAR through MCP
 with command `scar mcp`. For direct shell use, ask the agent to run:

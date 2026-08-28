@@ -2146,7 +2146,15 @@ def _cmd_cascade_hook(args) -> int:
 
 
 def _cmd_hook_lifecycle(args) -> int:
-    if getattr(args, "runtime", "claude") == "windsurf":
+    runtime = getattr(args, "runtime", "claude")
+    if runtime == "codex":
+        from .installer import codex_install, codex_status, codex_uninstall
+        if args.kind == "install":
+            return codex_install(dry=args.dry_run)
+        if args.kind == "uninstall":
+            return codex_uninstall(dry=args.dry_run)
+        return codex_status()
+    if runtime == "windsurf":
         from .installer import cascade_install, cascade_status, cascade_uninstall
         repo = Path.cwd()
         if args.kind == "install":
@@ -2317,7 +2325,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = _add(sub, "hook", _cmd_hook, help="install, remove, inspect, or run agent hooks "
-                                  "(Claude Code by default; --runtime windsurf, --git)")
+                                  "(Claude Code by default; --runtime codex|windsurf, "
+                                  "--git)")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "precheck-command", "posttool",
                                     "session-notice", "stop-drafter",
@@ -2333,8 +2342,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="with install/uninstall/status: target this repo's "
                              ".git/hooks/post-commit trigger for `scar draft-check` "
                              "(#117) instead of Claude Code's settings.json")
-    target.add_argument("--runtime", choices=["claude", "windsurf"], default="claude",
+    target.add_argument("--runtime", choices=["claude", "codex", "windsurf"],
+                        default="claude",
                         help="with install/uninstall/status: which runtime to wire. "
+                             "codex writes ~/.codex/hooks.json — shared with other "
+                             "tools, so merged, and inactive until you trust the "
+                             "entries in Codex's `/hooks` (#246); "
                              "windsurf writes this repo's committed "
                              ".windsurf/hooks.json (Cascade block-once, #197); "
                              "claude (default) writes ~/.claude/settings.json")

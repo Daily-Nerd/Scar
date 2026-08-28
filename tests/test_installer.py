@@ -364,3 +364,172 @@ def test_cascade_install_leaves_an_unreadable_config_alone(cascade_repo, capsys)
     (cascade_repo / ".windsurf" / "hooks.json").write_text("{not json", encoding="utf-8")
     assert main(["hook", "install", "--runtime", "windsurf"]) == 1
     assert (cascade_repo / ".windsurf" / "hooks.json").read_text() == "{not json"
+
+
+# --- Codex hooks (~/.codex/hooks.json) --------------------------------------
+# #246: PR #244 shipped the Codex adapter behind a plugin whose materialized
+# cache never carried its hooks.json, so the runtime was unreachable on a real
+# install. ~/.codex/hooks.json is Codex's user-level equivalent of Claude's
+# settings.json and is SHARED with other tools, so merge behaviour is part of
+# the contract, not an implementation detail.
+
+
+@pytest.fixture
+def codex_home(tmp_path, monkeypatch):
+    home = tmp_path / "codexhome"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    monkeypatch.setattr(installer, "find_scar", lambda: "/stable/bin/scar")
+    return home
+
+
+def _codex_json(home: Path) -> dict:
+    return json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+
+
+def test_codex_install_wires_every_handler_the_adapter_implements(codex_home, capsys):
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    hooks = _codex_json(codex_home)["hooks"]
+    assert set(hooks) == {"SessionStart", "PreToolUse", "PostToolUse"}
+    commands = {event: [h["command"] for g in groups for h in g["hooks"]]
+                for event, groups in hooks.items()}
+    assert commands["SessionStart"] == ["/stable/bin/scar hook codex-session-notice"]
+    assert commands["PreToolUse"] == ["/stable/bin/scar hook codex-pretool"]
+    assert commands["PostToolUse"] == ["/stable/bin/scar hook codex-posttool"]
+
+
+def test_codex_install_matches_codex_tool_names_not_claude_ones(codex_home):
+    """Codex exposes edits as `apply_patch`, not Edit/Write/MultiEdit. A
+    Claude-shaped matcher is why the shipped plugin could never have fired."""
+    hooks = (main(["hook", "install", "--runtime", "codex"]),
+             _codex_json(codex_home)["hooks"])[1]
+    assert hooks["PreToolUse"][0]["matcher"] == "Bash|apply_patch"
+    assert hooks["PostToolUse"][0]["matcher"] == "apply_patch"
+    assert "matcher" not in hooks["SessionStart"][0]
+
+
+def test_codex_install_honors_codex_home(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "somewhere-else"
+    monkeypatch.setenv("CODEX_HOME", str(elsewhere))
+    monkeypatch.setattr(installer, "find_scar", lambda: "/stable/bin/scar")
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert (elsewhere / "hooks.json").exists()
+
+
+def test_codex_install_merges_with_another_tools_config(codex_home):
+    """~/.codex/hooks.json is shared. Another tool's SessionStart, Stop and
+    SessionEnd entries must survive untouched."""
+    codex_home.mkdir(parents=True)
+    foreign = {
+        "hooks": {
+            "SessionStart": [{"matcher": "startup|resume", "hooks": [
+                {"type": "command", "command": "python3 ~/other/start.py",
+                 "timeout": 10}]}],
+            "Stop": [{"hooks": [
+                {"type": "command", "command": "python3 ~/other/stop.py",
+                 "timeout": 10}]}],
+            "SessionEnd": [{"hooks": [
+                {"type": "command", "command": "python3 ~/other/end.py",
+                 "timeout": 3}]}],
+        },
+        "someOtherKey": {"kept": True},
+    }
+    (codex_home / "hooks.json").write_text(json.dumps(foreign), encoding="utf-8")
+
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    config = _codex_json(codex_home)
+    assert config["someOtherKey"] == {"kept": True}
+    assert config["hooks"]["Stop"] == foreign["hooks"]["Stop"]
+    assert config["hooks"]["SessionEnd"] == foreign["hooks"]["SessionEnd"]
+    start = [h["command"] for g in config["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert "python3 ~/other/start.py" in start
+    assert "/stable/bin/scar hook codex-session-notice" in start
+
+
+def test_codex_install_is_idempotent(codex_home, capsys):
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert len(_codex_json(codex_home)["hooks"]["PreToolUse"]) == 1
+    assert "up-to-date" in capsys.readouterr().out
+
+
+def test_codex_uninstall_keeps_another_tools_hooks(codex_home):
+    codex_home.mkdir(parents=True)
+    (codex_home / "hooks.json").write_text(json.dumps({"hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": "python3 ~/other/start.py"}]}]}}),
+        encoding="utf-8")
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert main(["hook", "uninstall", "--runtime", "codex"]) == 0
+    config = _codex_json(codex_home)
+    assert config["hooks"]["SessionStart"] == [
+        {"hooks": [{"type": "command", "command": "python3 ~/other/start.py"}]}]
+    assert "PreToolUse" not in config["hooks"]
+
+
+def test_codex_uninstall_does_not_touch_claude_kinds(codex_home):
+    """`posttool` is a substring of `codex-posttool`. Ownership stays scoped
+    to the exact kind — scar 0016, one file over."""
+    codex_home.mkdir(parents=True)
+    (codex_home / "hooks.json").write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"hooks": [{"type": "command", "command": "/other/scar hook posttool"}]}]}}),
+        encoding="utf-8")
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert main(["hook", "uninstall", "--runtime", "codex"]) == 0
+    commands = [h["command"] for g in _codex_json(codex_home)["hooks"]["PostToolUse"]
+                for h in g["hooks"]]
+    assert commands == ["/other/scar hook posttool"]
+
+
+def test_codex_dry_run_writes_nothing(codex_home):
+    assert main(["hook", "install", "--runtime", "codex", "--dry-run"]) == 0
+    assert not (codex_home / "hooks.json").exists()
+
+
+def test_codex_install_says_the_hooks_start_untrusted(codex_home, capsys):
+    """Codex skips untrusted hooks SILENTLY — verified on codex-cli 0.147.0:
+    the config parsed, a timeout warning printed, and the hook never ran. An
+    install that does not say so reports a success the user does not have."""
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "/hooks" in out
+    assert "trust" in out.lower()
+
+
+def test_codex_status_reports_each_kind_from_the_file(codex_home, capsys):
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    before = capsys.readouterr().out
+    assert before.count("not installed") == 3
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    after = capsys.readouterr().out
+    assert "not installed" not in after
+    for kind in ("codex-session-notice", "codex-pretool", "codex-posttool"):
+        assert kind in after
+
+
+def test_codex_install_leaves_an_unreadable_config_alone(codex_home, capsys):
+    codex_home.mkdir(parents=True)
+    (codex_home / "hooks.json").write_text("{not json", encoding="utf-8")
+    assert main(["hook", "install", "--runtime", "codex"]) == 1
+    assert (codex_home / "hooks.json").read_text() == "{not json"
+
+
+def test_codex_install_reports_a_missing_binary(codex_home, monkeypatch, capsys):
+    monkeypatch.setattr(installer, "find_scar", lambda: None)
+    assert main(["hook", "install", "--runtime", "codex"]) == 1
+    assert not (codex_home / "hooks.json").exists()
+    assert "not found" in capsys.readouterr().out
+
+
+def test_codex_install_verifies_against_the_written_file(codex_home, monkeypatch,
+                                                         capsys):
+    """#236: success is asserted against what landed on disk, never intent."""
+    real_save = installer._save_codex_config
+
+    def drop_one(path, config, dry):
+        config["hooks"].pop("PreToolUse", None)
+        return real_save(path, config, dry)
+
+    monkeypatch.setattr(installer, "_save_codex_config", drop_one)
+    assert main(["hook", "install", "--runtime", "codex"]) == 1
+    assert "FAILED" in capsys.readouterr().out

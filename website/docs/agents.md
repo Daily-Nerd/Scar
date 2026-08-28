@@ -29,14 +29,24 @@ How the hook behaves:
 
 After upgrading scar-cli, re-run `scar skill install` — the installed skill is a static copy and does not update itself.
 
-## Codex (native plugin hooks)
+## Codex (native hooks)
 
-Install and enable the Scar plugin, then open `/hooks` in Codex. Review the
-Scar hook definitions and trust their current hash. Plugin installation does
-**not** automatically trust hooks, and an update that changes those definitions
-requires review again.
+```bash
+scar hook install --runtime codex
+```
 
-Once trusted, the plugin's native `hooks/hooks.json` provides push delivery:
+Writes `~/.codex/hooks.json` (honours `$CODEX_HOME`) — Codex's user-level hooks
+file and the direct analogue of Claude Code's `settings.json`. Other tools
+register there too, so Scar **merges** into it and never rewrites it wholesale;
+a file that no longer parses is refused rather than clobbered.
+
+Then open `/hooks` in Codex, review the three Scar entries, and trust them.
+**This step is not optional.** Codex skips an untrusted hook *silently* — no
+error, no stderr — so an untrusted install is indistinguishable from a working
+one until you notice nothing ever fires. An upgrade that changes a hook
+definition requires review again.
+
+Once trusted:
 
 - `PreToolUse` on `Bash`: fires command-anchored scars before the command runs.
 - `PreToolUse` on `apply_patch`: parses every touched path and added line, ranks
@@ -44,16 +54,29 @@ Once trusted, the plugin's native `hooks/hooks.json` provides push delivery:
   as advisory `additionalContext`.
 - `PostToolUse` on successful `apply_patch`: reports armed `violation:` matches.
 
+Codex exposes edits as one `apply_patch` program, not as Claude Code's
+structured tool calls, which is why the matchers are `Bash|apply_patch` rather
+than `Edit|Write|MultiEdit`.
+
 The adapter never denies or rewrites a tool call. Malformed payloads, missing
 binaries, and internal errors fail open. A session-start notice is the single
-visible warning when the plugin is present but `scar-cli` cannot be resolved.
+visible warning when the hooks are wired but `scar-cli` cannot be resolved.
 
-`scar agent doctor` can verify the binary path used by the plugin. Hook enablement
-and trust belong to the Codex host, so verify those in `/hooks`; Scar does not
-pretend it can infer host-owned trust state.
+```bash
+scar hook status --runtime codex
+```
+
+reports what is in the file. It cannot see Codex's trust record, so an entry
+shown as `installed` may still be untrusted — trust state belongs to the host,
+and Scar does not pretend it can infer it. `scar agent doctor` verifies the
+binary path the hooks route through.
+
+The Scar Codex plugin remains available for the authoring skill. Note that a
+plugin's `hooks/hooks.json` is not materialized into every Codex install, so
+`scar hook install --runtime codex` is the supported way to get push delivery.
 
 MCP and direct `scar inject` remain useful pull companions and the fallback for
-users who install only `scar-cli` without enabling the plugin.
+users who install only `scar-cli`.
 
 ## Windsurf / Cascade (block-once injection)
 
