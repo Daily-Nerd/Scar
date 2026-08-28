@@ -3155,3 +3155,43 @@ def test_stats_rich_output_reports_all_three_stages(repo, capsys, monkeypatch):
     assert "retrieval" in text
     assert "lower bound" in text
     assert "demot" in text
+
+
+def test_stats_all_repos_json_carries_the_stage_block(repo, capsys, monkeypatch):
+    """--all-repos is the only surface that can answer 'what is the retrieval
+    floor across everything this instrument has seen', and it omitted the
+    stage fields entirely (#227)."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": "/other/repo", "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2]},
+        {"ts": "2026-06-12T08:00:00", "repo": "/other/repo", "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--all-repos", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    g = [x for x in data["repos"] if x["repo"] == "/other/repo"][0]
+    assert g["retrieval_misses"] == 1
+    assert g["demotions"] == 1
+
+
+def test_every_stats_surface_exposes_the_same_stage_keys(repo, capsys, monkeypatch):
+    """Parity guard (#227). The stage block has now been forgotten on two
+    separate surfaces (#225, #227); this fails the next time a surface is
+    added or a stage is introduced without reaching all of them."""
+    from scar.cli import STAGE_KEYS
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    single = json.loads(capsys.readouterr().out)
+    assert STAGE_KEYS <= single.keys(), STAGE_KEYS - single.keys()
+
+    assert main(["stats", "--all-repos", "--json"]) == 0
+    allrepos = json.loads(capsys.readouterr().out)
+    for g in allrepos["repos"]:
+        assert STAGE_KEYS <= g.keys(), (g["repo"], STAGE_KEYS - g.keys())

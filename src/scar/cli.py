@@ -372,19 +372,12 @@ def _stats_rich(data: dict) -> None:
                       + ", ".join(f"#{i}" for i in data["never_fired"]))
     # The three measurement stages (#214). These must stay in step with the
     # plain renderer — shipping them to one branch only is how #225 happened.
-    total_violations = sum(e.get("violations", 0) for e in data["per_scar"])
-    console.print(f"[bold]enforcement:[/] {total_violations} violation(s) / "
-                  f"{data['total_firings']} firing(s)")
-    console.print(f"[bold]retrieval:[/] {data['retrieval_misses']} missed "
-                  "firing(s) — [yellow]LOWER BOUND[/]")
-    console.print(f"[bold]demotions:[/] {data['demotions']} scar(s) rendered "
-                  "as one-liners")
+    for line in _stage_lines(data, data["per_scar"], data["total_firings"]):
+        console.print(line)
     for adv in data.get("advisories", []):
         console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
                       f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
-    console.print("[dim]note: retrieval is a LOWER BOUND, not a rate — it counts only "
-                  "violations with no prior firing on that target. Misses on scars "
-                  "with no violation: pattern are not observable from this log.[/]")
+    console.print(f"[dim]{RETRIEVAL_FLOOR_NOTE}[/]")
     console.print("[dim]note: firing + violation counts — whether the agent honored an "
                   "injected scar is unobservable from inside the hook[/]")
 
@@ -408,8 +401,11 @@ def _stats_all_repos_rich(data: dict, log_path: Path) -> None:
                 row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
             t.add_row(*row)
         console.print(t)
+        for line in _stage_lines(g, g["per_scar"], g["total_firings"]):
+            console.print(f"  {line}")
     console.print("[dim]note: ids are per-repo — the same number in two repos "
                   "is two different scars[/]")
+    console.print(f"[dim]{RETRIEVAL_FLOOR_NOTE}[/]")
 
 
 def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
@@ -1276,6 +1272,36 @@ def _read_firing_log(log_path: Path) -> list[dict]:
     return records
 
 
+# The measurement stages (#214). ONE definition, so a new stage or a new
+# surface cannot silently reach only some of them — that has now happened
+# twice (#225 Rich, #227 --all-repos). tests/test_cli.py asserts every stats
+# surface exposes exactly these keys.
+STAGE_KEYS = frozenset({"retrieval_misses", "demotions"})
+
+
+def _stage_block(agg: dict) -> dict:
+    """The stage fields for one aggregated repo, keyed by STAGE_KEYS."""
+    return {k: agg[k] for k in STAGE_KEYS}
+
+
+def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[str]:
+    """The three stage lines, shared by every renderer so plain and Rich can
+    never disagree about what a stage says."""
+    violations = sum(e.get("violations", 0) for e in per_scar)
+    return [
+        f"enforcement: {violations} violation(s) / {total_firings} firing(s)",
+        f"retrieval: {block['retrieval_misses']} missed firing(s) — LOWER BOUND",
+        f"demotions: {block['demotions']} scar(s) rendered as one-liners",
+    ]
+
+
+RETRIEVAL_FLOOR_NOTE = (
+    "note: retrieval is a LOWER BOUND, not a rate — it counts only violations "
+    "with no prior firing on that target. Misses on scars with no violation: "
+    "pattern are not observable from this log."
+)
+
+
 def _aggregate_firings(records: list[dict]) -> dict:
     """Aggregate firing-log records into per-scar counts. Callers must pass
     records from ONE repo only — scar ids are per-repo sequential ints, so
@@ -1413,17 +1439,12 @@ def _cmd_stats(args) -> int:
             print(f"  last fired: {last_fired}")
         if never_fired:
             print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
-        total_violations = sum(e.get("violations", 0) for e in per_scar)
-        print(f"  enforcement: {total_violations} violation(s) / "
-              f"{data['total_firings']} firing(s)")
-        print(f"  retrieval: {retrieval_misses} missed firing(s) — LOWER BOUND")
-        print(f"  demotions: {demotions} scar(s) rendered as one-liners")
+        for line in _stage_lines(data, per_scar, data["total_firings"]):
+            print(f"  {line}")
         for adv in data["advisories"]:
             print(f"  advisory: #{adv['id']} = {int(adv['share'] * 100)}% of "
                   f"firings — {adv['note']}")
-        print("  note: retrieval is a LOWER BOUND, not a rate — it counts only "
-              "violations with no prior firing on that target. Misses on scars "
-              "with no violation: pattern are not observable from this log.")
+        print(f"  {RETRIEVAL_FLOOR_NOTE}")
         print("  note: firing + violation counts — whether the agent honored an "
               "injected scar is unobservable from inside the hook")
 
@@ -1449,7 +1470,8 @@ def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
         agg = _aggregate_firings(by_repo[repo_key])
         groups.append({"repo": repo_key, "total_firings": agg["total"],
                        "per_scar": agg["per_scar"],
-                       "last_fired": agg["last_fired"]})
+                       "last_fired": agg["last_fired"],
+                       **_stage_block(agg)})
     groups.sort(key=lambda g: (-g["total_firings"], g["repo"]))
     data = {"all_repos": True, "repos": groups}
 
@@ -1462,8 +1484,11 @@ def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
                 if e.get("violations", 0) > 0:
                     line += f", violations: x{e['violations']}"
                 print(line)
+            for line in _stage_lines(g, g["per_scar"], g["total_firings"]):
+                print(f"    {line}")
         print("  note: ids are per-repo — the same number in two repos is "
               "two different scars")
+        print(f"  {RETRIEVAL_FLOOR_NOTE}")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_all_repos_rich(data, log_path), plain=plain)
