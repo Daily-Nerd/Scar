@@ -647,3 +647,60 @@ def test_firing_log_never_resolves_under_the_real_home_during_tests():
     assert not resolved.is_relative_to(real_home), (
         f"firing log resolved inside the real home: {resolved} — the autouse "
         "isolation fixture in tests/conftest.py is not in effect")
+
+
+def test_precheck_logs_zero_hit_pass_when_opted_in(repo, monkeypatch, capsys, tmp_path):
+    """The retrieval denominator (#217): without a record of edits the hook
+    SAW and matched nothing, 'of edits touching anchored code, how often did
+    injection occur' has no denominator. Opt-in because it is one log line per
+    edit on the hot path."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    monkeypatch.setenv("SCAR_LOG_ZERO_HITS", "1")
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "unrelated" / "x.py"),
+                                      "new_string": "pass"}})
+    assert main(["hook", "precheck"]) == 0
+    rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
+    assert rec["scar_ids"] == []
+    assert rec["count"] == 0
+    assert rec["repo"] == str(repo)
+
+
+def test_precheck_zero_hit_logging_is_off_by_default(repo, monkeypatch, capsys, tmp_path):
+    """Default must stay silent — one line per edit is real write volume and
+    gc pressure, so nobody pays for it without asking."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    monkeypatch.delenv("SCAR_LOG_ZERO_HITS", raising=False)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "unrelated" / "x.py"),
+                                      "new_string": "pass"}})
+    assert main(["hook", "precheck"]) == 0
+    assert not (state / "firing-log.jsonl").exists()
+
+
+def test_firing_record_carries_edit_id_when_payload_supplies_one(
+        repo, monkeypatch, capsys, tmp_path):
+    """Correlating a precheck with its posttool needs a shared key. ts is
+    second-resolution, so it cannot order a same-second pair (#217)."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    feed(monkeypatch, {"tool_use_id": "toolu_abc123",
+                       "tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "precheck"]) == 0
+    rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
+    assert rec["edit_id"] == "toolu_abc123"
+
+
+def test_firing_record_omits_edit_id_when_payload_has_none(
+        repo, monkeypatch, capsys, tmp_path):
+    """Graceful degradation: whether a real harness supplies tool_use_id is
+    not something this repo can verify, so its absence must be silent rather
+    than a null key or a crash."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "time.sleep(3)"}})
+    assert main(["hook", "precheck"]) == 0
+    rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
+    assert "edit_id" not in rec

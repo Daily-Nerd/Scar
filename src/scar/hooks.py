@@ -119,9 +119,21 @@ def _emit(event: str, context: str) -> None:
         "hookEventName": event, "additionalContext": context}}))
 
 
+def _zero_hit_logging() -> bool:
+    """Opt-in: log precheck passes that matched nothing (#217).
+
+    Off by default because it is one log line per edit on the hot path, plus
+    gc pressure on the state dir. Turning it on buys the retrieval
+    DENOMINATOR — 'edits the hook saw' — without which the retrieval number
+    can only ever be a floor.
+    """
+    return os.environ.get("SCAR_LOG_ZERO_HITS", "").strip() not in ("", "0")
+
+
 def _log_firing(store: ScarStore, target: str, hits: list,
                 demoted_ids: list | None = None,
-                runtime: str = "claude-code") -> None:
+                runtime: str = "claude-code",
+                edit_id: str | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -144,6 +156,11 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             "demoted_ids": demoted_ids or [],
             "runtime": runtime,
         }
+        # Correlation key (#217), omitted rather than nulled when the harness
+        # does not supply one — ts is second-resolution and cannot order a
+        # same-second precheck/posttool pair on its own.
+        if edit_id:
+            record["edit_id"] = edit_id
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -151,7 +168,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
 
 
 def _log_violation_firing(store: ScarStore, target: str, violations: list,
-                          runtime: str = "claude-code") -> None:
+                          runtime: str = "claude-code",
+                          edit_id: str | None = None) -> None:
     """Append one line to the firing log when posttool actually flags a
     violation. Best-effort only, mirroring _log_firing: this must NEVER raise
     or delay the caller, so any failure (permissions, disk full, bad
@@ -167,6 +185,8 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
             "count": len(violations),
             "runtime": runtime,
         }
+        if edit_id:
+            record["edit_id"] = edit_id
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -200,7 +220,9 @@ def posttool() -> int:
             for v in violations
         ]
         _emit("PostToolUse", "\n".join(lines))
-        _log_violation_firing(store, target, violations)
+        vid = payload.get("tool_use_id")
+        _log_violation_firing(store, target, violations,
+                              edit_id=vid if isinstance(vid, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the
         # user's action. Fail OPEN on any unexpected error — emit nothing
@@ -239,9 +261,11 @@ def precheck() -> int:
         hits = [m.scar for m in matches]
         if context:
             _emit("PreToolUse", context)
-        if hits:
+        edit_id = payload.get("tool_use_id")
+        if hits or _zero_hit_logging():
             _log_firing(store, target, hits,
-                        demoted_ids=[s.id for s, _ in demoted])
+                        demoted_ids=[s.id for s, _ in demoted],
+                        edit_id=edit_id if isinstance(edit_id, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than
