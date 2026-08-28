@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.19.0](https://github.com/Daily-Nerd/Scar/compare/v0.18.0...v0.19.0) (2026-08-28)
+
+
+### Features
+
+* **model:** revives_if — an archived scar names its resurrection condition ([#224](https://github.com/Daily-Nerd/Scar/issues/224)) ([1bb438f](https://github.com/Daily-Nerd/Scar/commit/1bb438f3bd6bb9b3ecf8c426743dcf2d25c55ed5)), closes [#205](https://github.com/Daily-Nerd/Scar/issues/205)
+* **stats:** detect a disconnected instrument ([#240](https://github.com/Daily-Nerd/Scar/issues/240)) ([79da8e5](https://github.com/Daily-Nerd/Scar/commit/79da8e5f10f0b00fab26f44ce7df6c491b3684ce)), closes [#237](https://github.com/Daily-Nerd/Scar/issues/237)
+* **stats:** earn the retrieval denominator behind an opt-in flag ([#235](https://github.com/Daily-Nerd/Scar/issues/235)) ([b02bc8f](https://github.com/Daily-Nerd/Scar/commit/b02bc8f7b945528a492ce4f1d2c5a72ac36a8480)), closes [#217](https://github.com/Daily-Nerd/Scar/issues/217)
+
+
+### Bug Fixes
+
+* **ci:** sync uv.lock on release and let --locked catch the drift ([#222](https://github.com/Daily-Nerd/Scar/issues/222)) ([e000d77](https://github.com/Daily-Nerd/Scar/commit/e000d773d2f7e22e2b6ee07b29ef7afaee29258b)), closes [#220](https://github.com/Daily-Nerd/Scar/issues/220)
+* **installer:** scope hook ownership to the kind, not the event ([#238](https://github.com/Daily-Nerd/Scar/issues/238)) ([87b9c53](https://github.com/Daily-Nerd/Scar/commit/87b9c535d11ba3a39f6cffba2659aab792565f50))
+* **stats:** one stage block, rendered by every surface ([#233](https://github.com/Daily-Nerd/Scar/issues/233)) ([de02850](https://github.com/Daily-Nerd/Scar/commit/de028500ec57e6218d49e2444a5df74a27df4fd8)), closes [#227](https://github.com/Daily-Nerd/Scar/issues/227)
+* **stats:** render the measurement stages in the Rich output too ([#226](https://github.com/Daily-Nerd/Scar/issues/226)) ([1fba7c2](https://github.com/Daily-Nerd/Scar/commit/1fba7c2dbc63d551ef7609448d98bc3d2601e06a)), closes [#225](https://github.com/Daily-Nerd/Scar/issues/225)
+
+
+### Documentation
+
+* **ci:** correct the release.yml claim about the run-approval gate ([#234](https://github.com/Daily-Nerd/Scar/issues/234)) ([f73de3c](https://github.com/Daily-Nerd/Scar/commit/f73de3cb790c45aebdef9cc3d8d9ad5a71bf27b4)), closes [#223](https://github.com/Daily-Nerd/Scar/issues/223)
+* **skill:** state the real escaping mechanism — values reach the matcher verbatim ([#218](https://github.com/Daily-Nerd/Scar/issues/218)) ([92de859](https://github.com/Daily-Nerd/Scar/commit/92de859ac72d9a91aea28b3f5385012f1f1c2c1e)), closes [#216](https://github.com/Daily-Nerd/Scar/issues/216)
+
 ## [0.18.0](https://github.com/Daily-Nerd/Scar/compare/v0.17.0...v0.18.0) (2026-08-27)
 
 

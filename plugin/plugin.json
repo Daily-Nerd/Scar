@@ -1,6 +1,6 @@
 {
   "name": "scar",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "SCAR — version control for negative knowledge (deadends, fences, landmines)",
   "hooks": {
     "PreToolUse": [
