@@ -3176,6 +3176,180 @@ def test_stats_all_repos_json_carries_the_stage_block(repo, capsys, monkeypatch)
     assert g["demotions"] == 1
 
 
+def test_stats_flags_a_disconnected_instrument(repo, capsys, monkeypatch):
+    """#237: posttool logging while precheck logs nothing is definitionally
+    impossible in a healthy install — a scar cannot be violated without
+    having been matchable. #236 produced exactly this for a month while
+    `scar stats` reported confident numbers."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["instrument_disconnected"] is True
+
+
+def test_stats_suppresses_retrieval_when_the_instrument_is_disconnected(
+        repo, capsys, monkeypatch):
+    """The retrieval number is REFUSED, not reported, when it would be an
+    artifact of a broken install. Same discipline as injection_rate (#235):
+    a number the data cannot support is worse than no number, because it
+    gets published."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["retrieval_misses"] is None
+
+
+def test_stats_does_not_flag_a_healthy_install(repo, capsys, monkeypatch):
+    """A precheck record present alongside the violation means the instrument
+    is connected — the violation is a real enforcement signal, and retrieval
+    must still be reported."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["instrument_disconnected"] is False
+    assert data["retrieval_misses"] == 1
+
+
+def test_stats_empty_log_is_not_reported_as_disconnected(repo, capsys, monkeypatch):
+    """No records is no evidence, in either direction. The flag reports an
+    OBSERVED impossibility, never a health certificate."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["instrument_disconnected"] is False
+    assert data["last_fired_age_days"] is None
+
+
+def test_stats_plain_output_warns_loudly_when_disconnected(
+        repo, capsys, monkeypatch):
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "precheck" in out
+    assert "scar hook install" in out
+    assert "suppressed" in out
+
+
+def test_stats_reports_the_age_of_the_newest_firing(repo, capsys, monkeypatch):
+    """#237: the age of the newest firing is a signal, not a metric. It is
+    REPORTED, never thresholded — a 'stale' cutoff would be an unvalidated
+    fitted parameter of exactly the kind #54/#95 rejected."""
+    import datetime as _dt
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    old = (_dt.datetime.now() - _dt.timedelta(days=30)).isoformat(timespec="seconds")
+    _write_firing_log(repo / "state", [
+        {"ts": old, "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["last_fired_age_days"] == 30
+
+
+def test_stats_survives_a_corrupt_timestamp_when_ageing(repo, capsys, monkeypatch):
+    """scar 0012: firing-log readers need blanket guards. A garbage ts must
+    not raise out of stats."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "not-a-timestamp", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["last_fired_age_days"] is None
+
+
+def test_last_fired_ignores_records_where_nothing_fired(repo, capsys, monkeypatch):
+    """`last_fired` must mean what it says. It used to take the timestamp of
+    ANY record, including posttool violation records and zero-hit precheck
+    passes — so a repo with zero firings still reported a "last fired" date,
+    and #237's age line read "newest firing: 76 days" against 0 firing(s)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-11T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [], "count": 0},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 0
+    assert data["last_fired"] is None
+    assert data["last_fired_age_days"] is None
+
+
+def test_every_stats_surface_exposes_the_same_health_keys(repo, capsys, monkeypatch):
+    """Parity guard, mirroring the stage-key one. Health is a separate block
+    from the measurement stages — it says whether the stages can be believed
+    at all — but it reaches every surface under the same discipline."""
+    from scar.cli import HEALTH_KEYS
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    single = json.loads(capsys.readouterr().out)
+    assert HEALTH_KEYS <= single.keys(), HEALTH_KEYS - single.keys()
+
+    assert main(["stats", "--all-repos", "--json"]) == 0
+    allrepos = json.loads(capsys.readouterr().out)
+    for g in allrepos["repos"]:
+        assert HEALTH_KEYS <= g.keys(), (g["repo"], HEALTH_KEYS - g.keys())
+
+
+def test_all_repos_flags_only_the_disconnected_repo(repo, capsys, monkeypatch):
+    """Per-repo health: one broken install must not tar a healthy repo in the
+    same machine-global log."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-11T10:00:00", "repo": "/elsewhere/broken",
+         "target": "src/b.py", "violation_ids": [1]},
+    ])
+    assert main(["stats", "--all-repos", "--json"]) == 0
+    groups = {g["repo"]: g for g in json.loads(capsys.readouterr().out)["repos"]}
+    assert groups[str(repo)]["instrument_disconnected"] is False
+    assert groups["/elsewhere/broken"]["instrument_disconnected"] is True
+
+
 def test_every_stats_surface_exposes_the_same_stage_keys(repo, capsys, monkeypatch):
     """Parity guard (#227). The stage block has now been forgotten on two
     separate surfaces (#225, #227); this fails the next time a surface is

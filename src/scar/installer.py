@@ -111,6 +111,28 @@ def owns_kind(group: dict, kind: str) -> bool:
                for h in group.get("hooks", []) if isinstance(h, dict))
 
 
+def precheck_installed() -> bool | None:
+    """Is the pre-edit `precheck` hook present in the settings file?
+
+    Returns None when that cannot be determined — no settings file, or one we
+    cannot parse. Absence of evidence is NOT evidence of a broken install: a
+    user may drive scar from another harness entirely, and warning them about
+    a file they never had would be noise. #237.
+    """
+    if not SETTINGS.exists():
+        return None
+    try:
+        hooks_cfg = load_settings().get("hooks", {})
+    except (OSError, ValueError):
+        return None
+    if not isinstance(hooks_cfg, dict):
+        return None
+    groups = hooks_cfg.get("PreToolUse", [])
+    if not isinstance(groups, list):
+        return None
+    return any(owns_kind(g, "precheck") for g in groups if isinstance(g, dict))
+
+
 def _entry(spec: dict, scar_path: str) -> dict:
     hook = {"type": "command", "command": f"{scar_path} hook {spec['kind']}",
             "timeout": spec["timeout"], "statusMessage": spec["status"]}

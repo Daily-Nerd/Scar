@@ -330,6 +330,16 @@ def session_notice() -> int:
     warn = (f" WARNING: {len(broken)} unparseable scar file(s) that can never "
             f"fire: {', '.join(b.name for b in broken)} — fix their frontmatter."
             if broken else "")
+    # #237: this notice promises that scars are injected before edits. If the
+    # precheck hook is missing that promise is false, and #236 showed the
+    # failure is otherwise silent for weeks. Say so on the one surface a user
+    # sees every session. Unknown (no settings file) stays quiet.
+    from .installer import precheck_installed
+    if precheck_installed() is False:
+        warn += (" WARNING: the scar precheck hook is NOT installed, so NO "
+                 "scar will be injected before an edit in this session — the "
+                 "automatic injection described below is not actually running. "
+                 "Run `scar hook install` to restore it.")
     _emit("SessionStart", (
         f"SCAR: this repository records negative knowledge in {store.scars_dir} "
         f"({state}{pending}).{warn} Relevant scars are injected automatically "
