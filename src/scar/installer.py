@@ -587,6 +587,47 @@ _CODEX_KIND_RE = {
 }
 
 
+def codex_plugin_channels() -> list[Path]:
+    """Codex plugin hook files that register a Scar handler — a SECOND live
+    push channel alongside ~/.codex/hooks.json.
+
+    #250: #246 concluded the plugin could not deliver hooks because the
+    materialized cache carried no hooks.json. That cache was merely STALE.
+    Once Codex re-materializes it the plugin channel goes live, both files are
+    trusted independently, and one apply_patch fires Scar twice — doubling
+    every firing-log row and injecting the same scars twice.
+
+    Matched on our own handler names so another tool's plugin in the same
+    cache is never mistaken for ours.
+    """
+    root = codex_home() / "plugins"
+    if not root.is_dir():
+        return []
+    kinds = tuple(spec["kind"] for spec in CODEX_HOOKS)
+    found = []
+    for path in sorted(root.rglob("hooks.json")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if any(kind in text for kind in kinds):
+            found.append(path)
+    return found
+
+
+def _warn_duplicate_channels(paths: list[Path], config: Path) -> None:
+    if not paths:
+        return
+    print("  WARNING: Scar is wired into Codex through TWO channels. Both "
+          "fire on the same tool call, so every firing is counted twice and "
+          "each scar is injected twice (#250):")
+    print(f"    1. {config}")
+    for i, path in enumerate(paths, start=2):
+        print(f"    {i}. {path}  (Codex plugin)")
+    print("  Disable one. Either remove the Scar plugin in Codex, or run "
+          "`scar hook uninstall --runtime codex` and keep the plugin.")
+
+
 def codex_home() -> Path:
     """Codex honours $CODEX_HOME. So must we — otherwise the install lands in
     a directory the running agent never reads, and reports success."""
@@ -709,6 +750,7 @@ def codex_install(dry: bool = False) -> int:
           "definition. Open `/hooks` in Codex, review these entries, and trust "
           "them. Until then Codex skips them silently — no error is printed.")
     print("  Re-trust after every scar upgrade that changes a hook definition.")
+    _warn_duplicate_channels(codex_plugin_channels(), path)
     return 0
 
 
@@ -767,6 +809,7 @@ def codex_status() -> int:
     print("  `installed` means present in the file. Codex additionally "
           "requires the definition to be trusted in `/hooks` before it runs; "
           "an untrusted hook is skipped silently.")
+    _warn_duplicate_channels(codex_plugin_channels(), path)
     return 0
 
 
