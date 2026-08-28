@@ -330,3 +330,19 @@ def test_missing_status_field_is_error():
 def test_explicit_status_still_clean():
     assert lint_text(GOOD) == []
     assert lint_text(GOOD.replace("status: active", "status: candidate")) == []
+
+
+def test_invalid_revives_if_regex_is_an_error():
+    """revives_if is compiled and matched like any other regex, so an invalid
+    one is a dead watchdog that never fires (#205)."""
+    findings = lint_text(GOOD.replace(
+        "status: active", 'revives_if: "(unclosed"\nstatus: archived'))
+    assert any(f.level == "error" and "revives_if" in f.message for f in findings)
+
+
+def test_redos_prone_revives_if_is_an_error():
+    """Same ReDoS gate as violation (#88/#184): the predicate runs against
+    tracked content on every liveness pass."""
+    findings = lint_text(GOOD.replace(
+        "status: active", 'revives_if: "(a+)+$"\nstatus: archived'))
+    assert any(f.level == "error" and "revives_if" in f.message for f in findings)

@@ -713,3 +713,82 @@ def test_alternation_inside_a_group_is_not_split(tmp_path):
         contents={"src/live/foo.py": "import shutil\n"},
     )
     assert detect_partial_rot(store, ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# revives_if (#205): an archived scar names its resurrection condition
+# ---------------------------------------------------------------------------
+
+def _archived_scar(*, id: int, revives_if: str, path_anchors=("src/",)) -> str:
+    anchors = "".join(f"  - path: {p}\n" for p in path_anchors)
+    return (
+        f"---\nid: {id}\ntype: deadend\ntitle: archived {id}\n"
+        f"severity: medium\nconfidence: 0.8\ncreated: 2026-08-28\n"
+        f'authors: ["t"]\nanchors:\n{anchors}'
+        f'evidence:\n  - note: t\nrevives_if: "{revives_if}"\n'
+        f"status: archived\n---\n\nBody.\n"
+    )
+
+
+def test_archived_scar_whose_revives_if_matches_is_reported(tmp_path):
+    """The hazard's precondition came back — surface it for human
+    re-promotion. Never auto-rearm."""
+    from scar.orphan import detect_revivals
+    store = _make_store(tmp_path, {
+        "0001-arch.deadend.md": _archived_scar(id=1, revives_if="args.command"),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/cli.py"],
+        contents={"src/cli.py": "dispatch(args.command)\n"},
+    )
+    found = detect_revivals(store, ctx)
+    assert len(found) == 1
+    assert found[0].scar_id == 1
+    assert found[0].predicate == "args.command"
+
+
+def test_archived_scar_whose_revives_if_does_not_match_is_silent(tmp_path):
+    from scar.orphan import detect_revivals
+    store = _make_store(tmp_path, {
+        "0001-arch.deadend.md": _archived_scar(id=1, revives_if="neverappears"),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/cli.py"],
+        contents={"src/cli.py": "dispatch(args.func)\n"},
+    )
+    assert detect_revivals(store, ctx) == []
+
+
+def test_revives_if_does_not_self_match_on_the_scars_own_body(tmp_path):
+    """The predicate is written inside the scar's own file, so a naive scan
+    matches it against itself and every archived scar reports revived
+    forever — the #35 self-reference trap."""
+    from scar.orphan import detect_revivals
+    store = _make_store(tmp_path, {
+        "0001-arch.deadend.md": _archived_scar(id=1, revives_if="neverappears"),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/cli.py", ".scars/0001-arch.deadend.md"],
+        contents={
+            "src/cli.py": "clean()\n",
+            ".scars/0001-arch.deadend.md": (
+                tmp_path / ".scars" / "0001-arch.deadend.md").read_text(),
+        },
+    )
+    assert detect_revivals(store, ctx) == []
+
+
+def test_active_scar_with_revives_if_is_not_a_revival(tmp_path):
+    """revives_if only means something for an ARCHIVED scar. A firing scar
+    already protects the code; reporting it as revived is noise."""
+    from scar.orphan import detect_revivals
+    store = _make_store(tmp_path, {
+        "0001-live.deadend.md": _archived_scar(
+            id=1, revives_if="args.command").replace(
+                "status: archived", "status: active"),
+    })
+    ctx = _make_repo_context(
+        tracked_paths=["src/cli.py"],
+        contents={"src/cli.py": "dispatch(args.command)\n"},
+    )
+    assert detect_revivals(store, ctx) == []

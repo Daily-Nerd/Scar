@@ -228,6 +228,22 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
                 findings.append(Finding(
                     "error", f"pathological violation /{scar.violation}/: nested quantifier "
                     "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+    # revives_if (#205): compiled and matched against tracked content on every
+    # liveness pass, so it carries the same gates as violation. NOT checked for
+    # liveness: a revival predicate matching nothing is the HEALTHY state (the
+    # hazard has not returned) — the #156 reintroduction-guard distinction.
+    if scar.revives_if:
+        try:
+            re.compile(scar.revives_if)
+        except re.error as exc:
+            findings.append(Finding(
+                "error", f"invalid revives_if /{scar.revives_if}/: {exc}"))
+        else:
+            if _is_redos_prone(scar.revives_if):
+                findings.append(Finding(
+                    "error", f"pathological revives_if /{scar.revives_if}/: nested "
+                    "quantifier risks catastrophic backtracking (ReDoS) — simplify "
+                    "the regex"))
     # Author identity drift (#182): one handle, two casings = one human
     # credited twice. Warning, never error — two genuinely distinct people
     # whose handles differ only by case is possible, so report, don't break.

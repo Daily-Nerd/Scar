@@ -57,6 +57,7 @@ anchors:
   - path: src/module/      # file or directory this protects
   - pattern: "regex"       # optional: fires when matching code appears in ANY new/edited file
 violation: "regex"         # optional: post-edit tripwire — added code matching this on anchored files = the scar was violated
+revives_if: "regex"        # optional: for an ARCHIVED scar — what would make the hazard relevant again (reported, never auto-rearmed)
 evidence:
   - pr: 123                # at least one receipt: pr, issue, url, commit, incident, or note
   # Prefer pr/issue/url over a bare commit: SHA — feature-branch SHAs orphan on squash-merge.
