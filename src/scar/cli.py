@@ -365,9 +365,21 @@ def _stats_rich(data: dict) -> None:
     if data["never_fired"]:
         console.print(f"[yellow]never fired:[/] "
                       + ", ".join(f"#{i}" for i in data["never_fired"]))
+    # The three measurement stages (#214). These must stay in step with the
+    # plain renderer — shipping them to one branch only is how #225 happened.
+    total_violations = sum(e.get("violations", 0) for e in data["per_scar"])
+    console.print(f"[bold]enforcement:[/] {total_violations} violation(s) / "
+                  f"{data['total_firings']} firing(s)")
+    console.print(f"[bold]retrieval:[/] {data['retrieval_misses']} missed "
+                  "firing(s) — [yellow]LOWER BOUND[/]")
+    console.print(f"[bold]demotions:[/] {data['demotions']} scar(s) rendered "
+                  "as one-liners")
     for adv in data.get("advisories", []):
         console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
                       f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
+    console.print("[dim]note: retrieval is a LOWER BOUND, not a rate — it counts only "
+                  "violations with no prior firing on that target. Misses on scars "
+                  "with no violation: pattern are not observable from this log.[/]")
     console.print("[dim]note: firing + violation counts — whether the agent honored an "
                   "injected scar is unobservable from inside the hook[/]")
 
