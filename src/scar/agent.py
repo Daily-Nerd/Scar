@@ -72,11 +72,20 @@ transcript access required, so it works the same for every runtime.
 # target -> setup text; adding a runtime is one entry here, no logic change
 CONFIGS = {
     "codex": """\
-Codex-compatible setup:
+Codex native setup (recommended):
 
-1. Keep AGENTS.md committed at the repository root.
-2. Expose SCAR through MCP with command: scar mcp
-3. For direct shell use, ask the agent to run:
+1. Install and enable the Scar plugin in Codex.
+2. Open `/hooks`, review the Scar hook definitions, and trust their current
+   hash. Enabling a plugin does not automatically trust its hooks; updates
+   that change the definitions require review again.
+3. Keep AGENTS.md committed at the repository root.
+
+When active, the plugin pushes matching scars before Codex `Bash` and
+`apply_patch` calls and checks successful patches for `violation:` tripwires.
+All feedback is advisory and fail-open.
+
+For pull access as a companion or CLI-only fallback, expose SCAR through MCP
+with command `scar mcp`. For direct shell use, ask the agent to run:
    scar inject --path <path> --content <new-content>
    scar inject --diff <unified-diff>
 """,
@@ -129,6 +138,8 @@ def doctor(repo: Path) -> list[str]:
     resolved = plugin_resolve()
     findings.append(f"plugin PATH resolution: {resolved}" if resolved else
                     "plugin PATH resolution: not resolvable — plugin hooks will no-op")
+    findings.append("Codex hook trust: host-owned — run /hooks to confirm the "
+                    "Scar plugin hooks are enabled and trusted")
     findings.append("MCP command: scar mcp")
     return findings
 

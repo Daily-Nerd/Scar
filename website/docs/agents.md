@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: Agent integration
-description: Claude Code hook and plugin, Windsurf/Cascade hooks, MCP server, and the git-native path for every other runtime.
+description: Native Claude Code and Codex plugin hooks, Windsurf/Cascade hooks, MCP, and the git-native fallback.
 ---
 
 # Agent integration
@@ -28,6 +28,32 @@ How the hook behaves:
 - Everything is installed only by explicit command; `scar hook uninstall` removes it cleanly.
 
 After upgrading scar-cli, re-run `scar skill install` — the installed skill is a static copy and does not update itself.
+
+## Codex (native plugin hooks)
+
+Install and enable the Scar plugin, then open `/hooks` in Codex. Review the
+Scar hook definitions and trust their current hash. Plugin installation does
+**not** automatically trust hooks, and an update that changes those definitions
+requires review again.
+
+Once trusted, the plugin's native `hooks/hooks.json` provides push delivery:
+
+- `PreToolUse` on `Bash`: fires command-anchored scars before the command runs.
+- `PreToolUse` on `apply_patch`: parses every touched path and added line, ranks
+  across the whole patch, deduplicates matches, and emits at most three scars
+  as advisory `additionalContext`.
+- `PostToolUse` on successful `apply_patch`: reports armed `violation:` matches.
+
+The adapter never denies or rewrites a tool call. Malformed payloads, missing
+binaries, and internal errors fail open. A session-start notice is the single
+visible warning when the plugin is present but `scar-cli` cannot be resolved.
+
+`scar agent doctor` can verify the binary path used by the plugin. Hook enablement
+and trust belong to the Codex host, so verify those in `/hooks`; Scar does not
+pretend it can infer host-owned trust state.
+
+MCP and direct `scar inject` remain useful pull companions and the fallback for
+users who install only `scar-cli` without enabling the plugin.
 
 ## Windsurf / Cascade (block-once injection)
 

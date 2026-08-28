@@ -69,8 +69,14 @@ Claude Code users: the marketplace **plugin** ships the hooks and the
 scar-authoring skill together; the two commands above are the manual fallback.
 Re-run `scar skill install` after upgrading — the installed skill is a static copy.
 
+Codex users: install and enable the Scar plugin, then open `/hooks` to review
+and trust its current hook definitions. The native plugin hooks push matching
+scars before `Bash` and `apply_patch` calls and report post-patch `violation:`
+tripwires without blocking or rewriting the action. Plugin updates that change
+the hook definitions require trust review again.
+
 Full walkthrough, lifecycle commands, and agent wiring (Claude Code plugin,
-Windsurf/Cascade hooks, MCP server, `scar draft-check` for every other runtime):
+Codex native hooks, Windsurf/Cascade hooks, MCP server, `scar draft-check`):
 [quickstart](https://daily-nerd.github.io/Scar/quickstart) ·
 [agent integration](https://daily-nerd.github.io/Scar/agents).
 
