@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.0](https://github.com/Daily-Nerd/Scar/compare/v0.19.0...v0.20.0) (2026-08-28)
+
+
+### Features
+
+* **hooks:** add native Codex push runtime ([#244](https://github.com/Daily-Nerd/Scar/issues/244)) ([c1fc929](https://github.com/Daily-Nerd/Scar/commit/c1fc929516caf1c0a82b5f3d466486f2e15d3530)), closes [#243](https://github.com/Daily-Nerd/Scar/issues/243)
+* **hooks:** install Codex hooks into ~/.codex/hooks.json ([#247](https://github.com/Daily-Nerd/Scar/issues/247)) ([46fe470](https://github.com/Daily-Nerd/Scar/commit/46fe4705b50b60180070632c162f7f8c0ee77bb3))
+
+
+### Bug Fixes
+
+* **codex:** collapse duplicate firings and warn on two live hook channels ([#251](https://github.com/Daily-Nerd/Scar/issues/251)) ([efe7e37](https://github.com/Daily-Nerd/Scar/commit/efe7e37cf6dcf555edbb178027aa8914a92971a2)), closes [#250](https://github.com/Daily-Nerd/Scar/issues/250)
+
 ## [0.19.0](https://github.com/Daily-Nerd/Scar/compare/v0.18.0...v0.19.0) (2026-08-28)
 
 
