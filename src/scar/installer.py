@@ -587,6 +587,64 @@ _CODEX_KIND_RE = {
 }
 
 
+# A [hooks.state."<key>"] block and the plain `key = value` lines under it,
+# stopping at the next table header. requires-python is >=3.10, so tomllib
+# (3.11+) is unavailable and the project carries no TOML dependency — this
+# reads the one narrow shape Codex writes, nothing more.
+_HOOK_STATE_RE = re.compile(
+    r'^\[hooks\.state\."([^"]+)"\][^\n]*\n((?:(?!\[)[^\n]*\n?)*)', re.MULTILINE)
+def _codex_plugin_ref(path: Path) -> str | None:
+    """The `<plugin>@<marketplace>` ref Codex keys hook state by, derived from
+    a materialized plugin path .../plugins/cache/<marketplace>/<plugin>/<ver>/
+    hooks/hooks.json. None when the path is not that shape."""
+    parts = path.parts
+    try:
+        i = len(parts) - 1 - parts[::-1].index("cache")
+    except ValueError:
+        return None
+    rest = parts[i + 1:]
+    if len(rest) < 2:
+        return None
+    marketplace, plugin = rest[0], rest[1]
+    return f"{plugin}@{marketplace}"
+
+
+def _codex_plugin_hooks_silenced(path: Path) -> bool:
+    """Has Codex been told to stop running THIS plugin's Scar hooks?
+
+    #252: #251 detected a second channel by the plugin file merely existing,
+    so the warning survived its own remedy and became permanent noise for the
+    users who complied.
+
+    Scoped to one plugin's own `<plugin>@<marketplace>:` key prefix — scar
+    0016 again. A substring match on `hooks/hooks.json:` reads ANOTHER tool's
+    plugin state, and one unrelated enabled plugin then keeps our warning on
+    forever. That is exactly how this was first written and shipped.
+
+    Fails TOWARD the warning (#237's rule): a missing, unreadable or
+    unrecognisable config means we cannot show the channel is silent, and a
+    missed duplicate silently doubles every measurement while a spurious
+    warning is only annoying. An omitted `enabled` is Codex's default of
+    enabled, so ONLY an explicit `enabled = false` counts as silenced.
+    """
+    ref = _codex_plugin_ref(path)
+    if ref is None:
+        return False
+    try:
+        text = (codex_home() / "config.toml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    prefix = f"{ref}:"
+    seen = False
+    for key, body in _HOOK_STATE_RE.findall(text):
+        if not key.startswith(prefix):
+            continue
+        seen = True
+        if not re.search(r"^\s*enabled\s*=\s*false\s*$", body, re.MULTILINE):
+            return False
+    return seen
+
+
 def codex_plugin_channels() -> list[Path]:
     """Codex plugin hook files that register a Scar handler — a SECOND live
     push channel alongside ~/.codex/hooks.json.
@@ -610,8 +668,11 @@ def codex_plugin_channels() -> list[Path]:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if any(kind in text for kind in kinds):
-            found.append(path)
+        if not any(kind in text for kind in kinds):
+            continue
+        if _codex_plugin_hooks_silenced(path):
+            continue
+        found.append(path)
     return found
 
 
