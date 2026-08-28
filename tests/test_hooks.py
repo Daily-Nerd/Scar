@@ -705,6 +705,27 @@ def test_firing_log_never_resolves_under_the_real_home_during_tests():
         "isolation fixture in tests/conftest.py is not in effect")
 
 
+def test_no_ambient_scar_variable_reaches_a_test():
+    """#239: the suite must not inherit SCAR_* variables from the developer's
+    shell. `SCAR_LOG_ZERO_HITS=1` — the flag the docs tell users to set to
+    earn the retrieval denominator — turned
+    test_precheck_logs_nothing_when_no_scars_fire red locally while CI stayed
+    green, because CI does not set it. The developers most likely to hit that
+    red are the ones who followed the instructions.
+
+    conftest.py exports SCAR_AMBIENT_SENTINEL at session scope to stand in for
+    such a shell variable. If it is visible here, the autouse fixture is no
+    longer stripping ambient state and the suite's result depends on machine
+    configuration again."""
+    import os
+
+    leaked = sorted(k for k in os.environ
+                    if k.startswith("SCAR_") and k != "SCAR_STATE_DIR")
+    assert leaked == [], (
+        f"ambient SCAR_* variables reached a test: {leaked} — the autouse "
+        "fixture in tests/conftest.py is not stripping them")
+
+
 def test_precheck_logs_zero_hit_pass_when_opted_in(repo, monkeypatch, capsys, tmp_path):
     """The retrieval denominator (#217): without a record of edits the hook
     SAW and matched nothing, 'of edits touching anchored code, how often did
