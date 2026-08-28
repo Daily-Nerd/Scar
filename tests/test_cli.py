@@ -3123,3 +3123,30 @@ def test_lint_reports_a_revived_archived_scar(tmp_path, monkeypatch, capsys):
     assert "revives" in out.lower()
     text = (tmp_path / ".scars" / "0007-arch.deadend.md").read_text()
     assert "status: archived" in text   # never auto-rearmed
+
+
+def test_stats_rich_output_reports_all_three_stages(repo, capsys, monkeypatch):
+    """#214 added enforcement/retrieval/demotions to the PLAIN renderer only,
+    so the default interactive output showed none of it (#225). Drive the Rich
+    path explicitly — piping to a non-tty silently takes the plain branch and
+    hides the regression."""
+    from scar import output as out
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    monkeypatch.setattr(out, "is_tty", lambda: True)
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2]},
+        {"ts": "2026-06-12T08:00:00", "repo": str(repo), "target": "src/b.py",
+         "violation_ids": [1]},
+    ])
+    assert main(["stats"]) == 0
+    # Rich hard-wraps at the console width, so a two-word phrase can be split
+    # across lines. Collapse whitespace: the assertion is about content, not
+    # line breaking (scar #8).
+    text = " ".join(capsys.readouterr().out.lower().split())
+    assert "enforcement" in text
+    assert "retrieval" in text
+    assert "lower bound" in text
+    assert "demot" in text
