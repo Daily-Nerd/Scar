@@ -399,6 +399,16 @@ def test_agent_config_windsurf_points_at_the_cascade_hook_install():
     assert "mcpServers" in text
 
 
+def test_agent_config_codex_leads_with_native_plugin_and_trust():
+    from scar.agent import config
+
+    text = config("codex")
+    assert "Scar plugin" in text
+    assert "/hooks" in text
+    assert "Bash" in text and "apply_patch" in text
+    assert "scar mcp" in text
+
+
 @pytest.mark.parametrize("target", ["codex", "cursor", "opencode", "windsurf"])
 def test_agent_config_includes_draft_check_block_for_every_target(target):
     """#117: every runtime's setup text carries the reciprocal-duty +
@@ -522,6 +532,13 @@ def test_agent_doctor_reports_plugin_unresolvable(tmp_path, monkeypatch):
                for ln in agent.doctor(tmp_path))
 
 
+def test_agent_doctor_defers_codex_hook_trust_to_the_host(tmp_path):
+    from scar.agent import doctor
+
+    assert any("Codex hook trust" in line and "/hooks" in line
+               for line in doctor(tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # plugin/hooks/run.sh (#113) — the wrapper plugin.json invokes instead of a
 # bare `scar`, so a missing binary is visible (session-notice) instead of a
@@ -549,6 +566,15 @@ def test_run_sh_unresolvable_session_notice_warns(tmp_path):
     assert "uv tool install scar-cli" in ctx["additionalContext"]
 
 
+def test_run_sh_unresolvable_codex_session_notice_warns(tmp_path):
+    proc = _run_wrapper("codex-session-notice", tmp_path)
+    assert proc.returncode == 0
+    out = json.loads(proc.stdout)
+    ctx = out["hookSpecificOutput"]
+    assert ctx["hookEventName"] == "SessionStart"
+    assert "plugin hooks are inactive" in ctx["additionalContext"]
+
+
 def test_run_sh_unresolvable_precheck_is_silent(tmp_path):
     proc = _run_wrapper("precheck", tmp_path)
     assert proc.returncode == 0
@@ -563,6 +589,16 @@ def test_run_sh_resolves_from_candidate_dir_and_execs(tmp_path):
     proc = _run_wrapper("precheck", tmp_path)
     assert proc.returncode == 0
     assert proc.stdout.strip() == "invoked hook precheck"
+
+
+def test_run_sh_dispatches_codex_handler_from_candidate_dir(tmp_path):
+    fake = tmp_path / ".local" / "bin" / "scar"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\necho \"invoked hook $2\"\n")
+    fake.chmod(0o755)
+    proc = _run_wrapper("codex-pretool", tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "invoked hook codex-pretool"
 
 
 def test_why_on_parent_dir_surfaces_descendant_anchors(repo, capsys):

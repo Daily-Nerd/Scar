@@ -1,4 +1,4 @@
-"""Claude Code plugin manifest validity + skill mirror drift guard."""
+"""Claude Code and Codex plugin manifests plus skill mirror drift guards."""
 
 import json
 import re
@@ -24,6 +24,31 @@ def test_plugin_manifest_is_valid_and_declares_four_hook_events():
     manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text())
     assert manifest["name"] == "scar"
     assert set(manifest["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "Stop"}
+
+
+def test_codex_plugin_manifest_is_native_bounded_and_advisory():
+    manifest = json.loads(
+        (ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    hooks = manifest["hooks"]
+    assert set(hooks) == {"SessionStart", "PreToolUse", "PostToolUse"}
+    assert hooks["PreToolUse"][0]["matcher"] == "Bash|apply_patch"
+    assert hooks["PostToolUse"][0]["matcher"] == "apply_patch"
+    assert "Stop" not in hooks and "UserPromptSubmit" not in hooks
+
+
+def test_codex_plugin_hooks_use_plugin_root_and_codex_handlers():
+    manifest = json.loads(
+        (ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    expected = {
+        "SessionStart": "codex-session-notice",
+        "PreToolUse": "codex-pretool",
+        "PostToolUse": "codex-posttool",
+    }
+    for event, handler in expected.items():
+        commands = [hook["command"]
+                    for group in manifest["hooks"][event]
+                    for hook in group["hooks"]]
+        assert commands == [f'"${{PLUGIN_ROOT}}/hooks/run.sh" {handler}']
 
 
 def test_marketplace_manifest_lists_the_plugin():

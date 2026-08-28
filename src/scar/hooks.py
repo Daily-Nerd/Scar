@@ -1,4 +1,4 @@
-"""Claude Code hook handlers — harness payload on stdin, hook JSON on stdout.
+"""Agent hook handlers — harness payload on stdin, hook JSON on stdout.
 
 One library code path replaces three standalone scripts (which drifted within
 two days of birth — gate 0.4 findings). Contract per handler: silent no-op on
@@ -274,15 +274,9 @@ def precheck() -> int:
     return 0
 
 
-def precheck_command() -> int:
-    """PreToolUse on Bash (#175): fire command-anchored scars on the shell
-    command about to execute — the surface edit anchors structurally cannot
-    cover. Store discovery is cwd-based (a command has no file_path). Same
-    fail-open contract and 4h collapse as precheck; the firing-log target is
-    the command string itself."""
-    payload = _read_payload()
-    if payload is None:
-        return 0
+def _precheck_command_payload(payload: dict,
+                              runtime: str = "claude-code") -> int:
+    """Shared command-anchor path for harnesses that expose `command`."""
     command = str(payload.get("tool_input", {}).get("command", ""))
     if not command:
         return 0
@@ -306,8 +300,10 @@ def precheck_command() -> int:
                                     demoted=demoted)
         if context:
             _emit("PreToolUse", context)
+        edit_id = payload.get("tool_use_id")
         _log_firing(store, command, [m.scar for m in matches],
-                    demoted_ids=[s.id for s, _ in demoted])
+                    demoted_ids=[s.id for s, _ in demoted], runtime=runtime,
+                    edit_id=edit_id if isinstance(edit_id, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the
         # user's command. Fail OPEN on any unexpected error.
@@ -315,10 +311,16 @@ def precheck_command() -> int:
     return 0
 
 
-def session_notice() -> int:
+def precheck_command() -> int:
+    """PreToolUse on Bash (#175): inject command-anchored scars."""
     payload = _read_payload()
     if payload is None:
         return 0
+    return _precheck_command_payload(payload)
+
+
+def _session_notice_payload(payload: dict, verify_claude_hook: bool = True) -> int:
+    """Shared session notice with a runtime-specific installation check."""
     cwd = Path(payload.get("cwd") or os.getcwd())
     store = ScarStore.discover(cwd)
     if store is None:
@@ -330,16 +332,16 @@ def session_notice() -> int:
     warn = (f" WARNING: {len(broken)} unparseable scar file(s) that can never "
             f"fire: {', '.join(b.name for b in broken)} — fix their frontmatter."
             if broken else "")
-    # #237: this notice promises that scars are injected before edits. If the
-    # precheck hook is missing that promise is false, and #236 showed the
-    # failure is otherwise silent for weeks. Say so on the one surface a user
-    # sees every session. Unknown (no settings file) stays quiet.
-    from .installer import precheck_installed
-    if precheck_installed() is False:
-        warn += (" WARNING: the scar precheck hook is NOT installed, so NO "
-                 "scar will be injected before an edit in this session — the "
-                 "automatic injection described below is not actually running. "
-                 "Run `scar hook install` to restore it.")
+    # #237: the Claude notice promises pre-edit injection, so verify its
+    # user-settings hook. A Codex notice only runs after the plugin hook itself
+    # fired; checking Claude settings there would manufacture a false warning.
+    if verify_claude_hook:
+        from .installer import precheck_installed
+        if precheck_installed() is False:
+            warn += (" WARNING: the scar precheck hook is NOT installed, so NO "
+                     "scar will be injected before an edit in this session — the "
+                     "automatic injection described below is not actually running. "
+                     "Run `scar hook install` to restore it.")
     _emit("SessionStart", (
         f"SCAR: this repository records negative knowledge in {store.scars_dir} "
         f"({state}{pending}).{warn} Relevant scars are injected automatically "
@@ -351,6 +353,13 @@ def session_notice() -> int:
         f"{store.scars_dir}/candidates/<slug>.md with status: candidate, and "
         "never write directly into .scars/ — only a human reviewer promotes."))
     return 0
+
+
+def session_notice() -> int:
+    payload = _read_payload()
+    if payload is None:
+        return 0
+    return _session_notice_payload(payload)
 
 
 def _analyze_transcript(path: str) -> dict | None:

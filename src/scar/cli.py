@@ -2130,7 +2130,10 @@ def _cmd_mcp(args) -> int:
 def _cmd_hook(args) -> int:
     if args.kind in ("install", "uninstall", "status"):
         return _cmd_hook_lifecycle(args)
-    from .hooks import HANDLERS  # hot path: imports nothing beyond library
+    if args.kind.startswith("codex-"):
+        from .codex import HANDLERS
+    else:
+        from .hooks import HANDLERS  # hot path: imports nothing beyond library
     return HANDLERS[args.kind]()
 
 
@@ -2317,7 +2320,9 @@ def build_parser() -> argparse.ArgumentParser:
                                   "(Claude Code by default; --runtime windsurf, --git)")
     p.add_argument("kind", choices=["install", "uninstall", "status",
                                     "precheck", "precheck-command", "posttool",
-                                    "session-notice", "stop-drafter"])
+                                    "session-notice", "stop-drafter",
+                                    "codex-pretool", "codex-posttool",
+                                    "codex-session-notice"])
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
     # One invocation, one target: --git writes .git/hooks/post-commit,

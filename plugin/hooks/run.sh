@@ -31,10 +31,12 @@ if [ -n "$scar_bin" ]; then
     exit 0
 fi
 
-# Unresolvable. precheck/stop-drafter fail open silently (hot path — never
-# break or delay an edit). session-notice is the one visibility point: tell
+# Unresolvable. Edit hooks fail open silently (hot path — never break or delay
+# an edit). The Claude and Codex session notices are the visibility point: tell
 # the user once per session instead of no-oping in the dark.
-if [ "$kind" = "session-notice" ]; then
-    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"SCAR: plugin is installed but the scar-cli binary was not found on PATH or in known install locations — plugin hooks are inactive. Install with: uv tool install scar-cli"}}'
-fi
+case "$kind" in
+    session-notice|codex-session-notice)
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"SCAR: plugin is installed but the scar-cli binary was not found on PATH or in known install locations — plugin hooks are inactive. Install with: uv tool install scar-cli"}}'
+        ;;
+esac
 exit 0

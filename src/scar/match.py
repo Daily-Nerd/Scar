@@ -223,19 +223,31 @@ def rank_matches_for_command(store: ScarStore, command: str,
     return ranked[:top_k]
 
 
-def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,
-                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
-    """Best matches across several paths — one store walk, not one per path."""
-    firing = store.firing()
+def rank_matches_for_targets(store: ScarStore,
+                             targets: list[tuple[Path | str, str]],
+                             top_k: int = DEFAULT_TOP_K,
+                             firing: list | None = None) -> list[ScarMatch]:
+    """Best matches across path/content pairs with one loaded firing set."""
+    if firing is None:
+        firing = store.firing()
     lists = []
-    for path in paths:
+    for target, new_content in targets:
+        path = Path(target)
+        path = path if path.is_absolute() else store.root / path
         try:
-            rel = str((store.root / str(path)).resolve().relative_to(store.root))
+            rel = str(path.resolve().relative_to(store.root))
         except ValueError:
             continue
         lists.append(_select_top(
             _match_target(firing, store.root, rel, new_content), top_k))
     return merge_best_matches(lists, top_k)
+
+
+def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,
+                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
+    """Best matches across several paths — one store walk, not one per path."""
+    return rank_matches_for_targets(
+        store, [(path, new_content) for path in paths], top_k)
 
 
 def rank_for_edit(store: ScarStore, target: Path, new_content: str,
@@ -268,10 +280,7 @@ def _diff_targets(diff_text: str) -> list[tuple[str, str]]:
 def rank_matches_for_diff(store: ScarStore, diff_text: str,
                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Top-k firing scar matches across a unified diff (one store walk)."""
-    firing = store.firing()
-    lists = [_select_top(_match_target(firing, store.root, rel_path, added), top_k)
-             for rel_path, added in _diff_targets(diff_text)]
-    return merge_best_matches(lists, top_k)
+    return rank_matches_for_targets(store, _diff_targets(diff_text), top_k)
 
 
 @dataclass(frozen=True)
@@ -335,10 +344,22 @@ def find_violations(store: ScarStore, rel_path: str, new_content: str) -> list[V
     return _violations_for_target(store.firing(), store.root, rel_path, new_content)
 
 
-def find_violations_for_diff(store: ScarStore, diff_text: str) -> list[Violation]:
-    """Same as find_violations, scanning only added lines per diff file."""
+def find_violations_for_targets(store: ScarStore,
+                                targets: list[tuple[Path | str, str]]) -> list[Violation]:
+    """Violation matches across path/content pairs with one store walk."""
     firing = store.firing()
     out: list[Violation] = []
-    for rel_path, added in _diff_targets(diff_text):
-        out.extend(_violations_for_target(firing, store.root, rel_path, added))
+    for target, new_content in targets:
+        path = Path(target)
+        path = path if path.is_absolute() else store.root / path
+        try:
+            rel = str(path.resolve().relative_to(store.root))
+        except ValueError:
+            continue
+        out.extend(_violations_for_target(firing, store.root, rel, new_content))
     return out
+
+
+def find_violations_for_diff(store: ScarStore, diff_text: str) -> list[Violation]:
+    """Same as find_violations, scanning only added lines per diff file."""
+    return find_violations_for_targets(store, _diff_targets(diff_text))
