@@ -34,3 +34,20 @@ def test_bundled_template_is_byte_identical_to_dot_scars():
     canonical = (ROOT / ".scars" / "template.md").read_bytes()
     bundled = (SKILL / "assets" / "template.md").read_bytes()
     assert bundled == canonical
+
+
+def test_skill_does_not_claim_yaml_collapses_backslashes():
+    """The parser is NOT a YAML parser — pattern/violation values pass through
+    verbatim (#216). Teaching that backslashes "collapse" makes an author
+    write \\s to get \\\\s, producing a literal-backslash regex that matches
+    nothing: the exact dead anchor the section warns about."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert "collapse" not in text.lower()
+
+
+def test_skill_states_anchors_pass_through_verbatim():
+    """The anchor guidance must state the real mechanism, in the same terms
+    the violation: section already uses — it is the same parser."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    anti = text.split("## Anti-Over-Escape")[1].split("##")[0]
+    assert "verbatim" in anti.lower()
