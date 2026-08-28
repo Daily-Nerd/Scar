@@ -1276,7 +1276,8 @@ def _read_firing_log(log_path: Path) -> list[dict]:
 # surface cannot silently reach only some of them — that has now happened
 # twice (#225 Rich, #227 --all-repos). tests/test_cli.py asserts every stats
 # surface exposes exactly these keys.
-STAGE_KEYS = frozenset({"retrieval_misses", "demotions"})
+STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
+                        "edits_observed", "injection_rate"})
 
 
 def _stage_block(agg: dict) -> dict:
@@ -1288,9 +1289,14 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
     """The three stage lines, shared by every renderer so plain and Rich can
     never disagree about what a stage says."""
     violations = sum(e.get("violations", 0) for e in per_scar)
+    rate = block.get("injection_rate")
+    retrieval = (f"retrieval: {rate:.1%} of {block['edits_observed']} observed edit(s) "
+                 f"injected a scar; {block['retrieval_misses']} missed firing(s)"
+                 if rate is not None else
+                 f"retrieval: {block['retrieval_misses']} missed firing(s) — LOWER BOUND")
     return [
         f"enforcement: {violations} violation(s) / {total_firings} firing(s)",
-        f"retrieval: {block['retrieval_misses']} missed firing(s) — LOWER BOUND",
+        retrieval,
         f"demotions: {block['demotions']} scar(s) rendered as one-liners",
     ]
 
@@ -1312,11 +1318,17 @@ def _aggregate_firings(records: list[dict]) -> dict:
     fired_on: dict[tuple[int, str], str] = {}
     pending_violations: list[tuple[int, str, str]] = []
     demotions = 0
+    edits_observed = 0      # precheck passes recorded (#217 denominator)
+    zero_hit_edits = 0      # ...of which matched nothing
     last_fired = None
     for rec in records:
         target = rec.get("target")
         ts_rec = rec.get("ts")
         sids = rec.get("scar_ids", [])
+        if isinstance(sids, list) and "scar_ids" in rec:
+            edits_observed += 1
+            if not sids:
+                zero_hit_edits += 1
         if isinstance(sids, list):
             for sid in sids:
                 if isinstance(sid, int):
@@ -1362,9 +1374,16 @@ def _aggregate_firings(records: list[dict]) -> dict:
     per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
                        for sid in all_scar_ids),
                       key=lambda e: (-e["count"], e["id"]))
+    # A rate is only defensible once zero-hit passes are being logged. Without
+    # them the log contains ONLY edits that matched, so firings/edits is 100%
+    # by construction — a flattering number that measures nothing (#217).
+    injection_rate = (round((edits_observed - zero_hit_edits) / edits_observed, 3)
+                      if zero_hit_edits and edits_observed else None)
     return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
             "retrieval_misses": retrieval_misses,
             "demotions": demotions,
+            "edits_observed": edits_observed,
+            "injection_rate": injection_rate,
             "total": sum(counts.values())}
 
 
@@ -1395,8 +1414,6 @@ def _cmd_stats(args) -> int:
     repo_key = str(store.root)
     agg = _aggregate_firings([r for r in records if r.get("repo") == repo_key])
     counts, per_scar, last_fired = agg["counts"], agg["per_scar"], agg["last_fired"]
-    retrieval_misses = agg["retrieval_misses"]
-    demotions = agg["demotions"]
     fired_scars = [e for e in per_scar if e["count"] > 0]
     most_fired = fired_scars[0]["id"] if fired_scars else None
     firing_ids = {s.id for _f, s in store.firing() if s.id is not None}
@@ -1420,8 +1437,7 @@ def _cmd_stats(args) -> int:
         "most_fired": most_fired,
         "last_fired": last_fired,
         "never_fired": never_fired,
-        "retrieval_misses": retrieval_misses,
-        "demotions": demotions,
+        **_stage_block(agg),
         "advisories": advisories,
     }
 

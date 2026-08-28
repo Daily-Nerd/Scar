@@ -3195,3 +3195,41 @@ def test_every_stats_surface_exposes_the_same_stage_keys(repo, capsys, monkeypat
     allrepos = json.loads(capsys.readouterr().out)
     for g in allrepos["repos"]:
         assert STAGE_KEYS <= g.keys(), (g["repo"], STAGE_KEYS - g.keys())
+
+
+def test_stats_reports_injection_rate_when_zero_hit_records_exist(
+        repo, capsys, monkeypatch):
+    """With zero-hit passes logged, 'edits the hook saw' becomes a real
+    denominator and a rate is defensible (#217)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-06-10T10:00:01", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [], "count": 0},
+        {"ts": "2026-06-10T10:00:02", "repo": str(repo), "target": "src/c.py",
+         "scar_ids": [], "count": 0},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["edits_observed"] == 3
+    assert data["injection_rate"] == round(1 / 3, 3)
+
+
+def test_stats_injection_rate_is_null_without_zero_hit_records(
+        repo, capsys, monkeypatch):
+    """Without zero-hit logging the log only contains edits that DID match, so
+    a rate computed from it would be 100% by construction. Report null, not a
+    flattering number."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["injection_rate"] is None
