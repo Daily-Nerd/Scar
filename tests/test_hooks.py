@@ -630,3 +630,20 @@ def test_precheck_parses_each_scar_file_once(repo, monkeypatch, capsys):
                                       "new_string": "pass"}})
     assert main(["hook", "precheck"]) == 0
     assert len(calls) == 1, f"1 scar file parsed {len(calls)} times"
+
+
+def test_firing_log_never_resolves_under_the_real_home_during_tests():
+    """The guard on the guard (#228): if the autouse isolation fixture in
+    conftest.py is ever removed or renamed, this fails instead of the suite
+    silently writing into the developer's real firing log at
+    ~/.claude/scar-state/firing-log.jsonl."""
+    import os
+    from pathlib import Path
+
+    from scar.hooks import firing_log_path
+
+    resolved = firing_log_path().resolve()
+    real_home = Path(os.path.expanduser("~")).resolve()
+    assert not resolved.is_relative_to(real_home), (
+        f"firing log resolved inside the real home: {resolved} — the autouse "
+        "isolation fixture in tests/conftest.py is not in effect")
