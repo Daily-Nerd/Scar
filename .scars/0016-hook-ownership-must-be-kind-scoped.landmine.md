@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 16
 type: landmine
 title: Two hook specs share PreToolUse — ownership matching must be kind-exact, never event-wide or substring
 severity: critical
 confidence: 0.95
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/installer.py
   - pattern: "for spec in HOOKS"
-violation: "if is_ours\(g\)\]"
 evidence:
   - issue: 236
   - pr: 238
 expires:
   condition: "no two entries in HOOKS share the same event value"
   review_after: 2027-08-28
-status: candidate
+violation: "if is_ours\(g\)\]"
+status: active
 ---
 
 `HOOKS` is not one spec per event. `precheck` (matcher `Edit|Write|MultiEdit|
