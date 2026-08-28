@@ -9,14 +9,25 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Tests + scar lint
+  matrix-tests:
+    name: tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the declared floor (requires-python); 3.13 is latest stable.
+        # Running one interpreter meant the advertised floor was never tested
+        # — a published compatibility claim with no measurement behind it (#228).
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       # --locked, not --frozen: --frozen uses the lockfile as-is without checking
       # it against pyproject.toml, so a version bump that never reached uv.lock
@@ -24,14 +35,40 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked
 
+      # HOME is redirected so any test that escapes the autouse isolation
+      # fixture (tests/conftest.py) fails loudly here instead of silently
+      # writing into a real ~/.claude/scar-state firing log. 92 of 105 records
+      # were once pytest artifacts — see website/docs/methodology.md (#228).
       - name: Run tests
-        run: uv run pytest -q
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-home"
+          HOME="$RUNNER_TEMP/fake-home" uv run pytest -q
 
       - name: Run tests (with symbols extra)
-        run: uv run --extra symbols pytest -q
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-home"
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra symbols pytest -q
 
       # Dogfood: the repo's own scar graph must always parse and lint clean.
       # A malformed scar silently never fires (the daimon 0004 incident) —
       # this gate makes that class of rot unmergeable.
       - name: scar lint
         run: uv run scar lint
+
+  # Aggregator. Branch protection requires the context "Tests + scar lint", so
+  # that name must survive: renaming it would leave every PR waiting on a check
+  # that no longer exists, and giving both matrix legs the same name would let a
+  # failing 3.10 be masked by a passing 3.13. always() + an explicit result test
+  # is deliberate — a `needs:` failure SKIPS a dependent job, and a skipped
+  # required check can be treated as satisfied.
+  test:
+    name: Tests + scar lint
+    needs: matrix-tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every matrix leg to have passed
+        run: |
+          result="${{ needs.matrix-tests.result }}"
+          echo "matrix-tests result: $result"
+          [ "$result" = "success" ] || exit 1
