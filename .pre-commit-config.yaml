@@ -1,0 +1,17 @@
+# Local commit-time mirror of the CI lint gate. Install once after cloning:
+#
+#     uvx pre-commit install
+#
+# Check-only by design: no autofix hook. A surprising rewrite at commit time is
+# worse than a red hook that names exactly what to fix.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to the exact ruff version in pyproject.toml's dev group
+    # (ruff==0.16.5). A skew between this hook and CI would produce
+    # contradictory verdicts on the same code. Bump both together.
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+        # Same paths the CI lint job checks (.github/workflows/ci.yml) —
+        # keep the two in sync.
+        files: ^(src/scar|tests)/

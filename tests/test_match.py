@@ -226,7 +226,7 @@ def test_symbol_match_reflects_file_edits_within_process(tmp_path):
     store = ScarStore.discover(tmp_path)
     assert rank_matches_for_edit(store, f, "")  # matches while symbol present
     # rewrite so the symbol is gone; mtime advances
-    import os, time
+    import os
     later = os.stat(f).st_mtime_ns + 1_000_000
     f.write_text("def unrelated():\n    return 0\n")
     os.utime(f, ns=(later, later))

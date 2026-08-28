@@ -28,7 +28,17 @@ build-backend = "hatchling.build"
 packages = ["src/scar"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# ruff is pinned, not floated: a version skew between CI and a contributor's
+# machine produces contradictory verdicts on the same code. Bump it here and
+# in .pre-commit-config.yaml together.
+dev = ["pytest>=8.0", "ruff==0.16.5"]
+
+[tool.ruff.lint]
+# The classic default rule set, stated EXPLICITLY. Ruff's built-in default has
+# widened over releases (0.16.5 reports 105 findings here with no config vs 31
+# under this set), so relying on the implicit default means a ruff upgrade
+# silently changes what CI enforces. Widening is a deliberate, reviewable diff.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,7 +8,7 @@ import pytest
 
 from scar import symbols
 from scar.cli import main
-from scar.store import ScarStore, init_scars
+from scar.store import init_scars
 
 symbols_extra = pytest.mark.skipif(
     not symbols.symbols_available(), reason="tree-sitter extra not installed")
@@ -1730,21 +1730,26 @@ def test_lint_json_includes_symbol_drift(repo, capsys):
     def git(*a):
         subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
 
-    git("config", "user.email", "t@t.t"); git("config", "user.name", "t")
+    git("config", "user.email", "t@t.t")
+    git("config", "user.name", "t")
     src = repo / "store.py"
     src.write_text("class SessionStore:\n    def save(self):\n        x = 1\n        return x\n")
-    git("add", "-A"); git("commit", "-q", "-m", "base")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
     sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
                          capture_output=True, text=True, check=True).stdout.strip()
 
-    scars = repo / ".scars"; scars.mkdir()
+    scars = repo / ".scars"
+    scars.mkdir()
     (scars / "s.md").write_text(
         "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
         "anchors:\n  - path: store.py\n  - symbol: SessionStore.save\n"
         f"evidence:\n  - commit: {sha}\nstatus: active\n---\nbody\n")
-    git("add", "-A"); git("commit", "-q", "-m", "add scar")
+    git("add", "-A")
+    git("commit", "-q", "-m", "add scar")
     src.write_text("class SessionStore:\n    def save(self):\n        return compute(other())\n")
-    git("add", "-A"); git("commit", "-q", "-m", "rewrite save")
+    git("add", "-A")
+    git("commit", "-q", "-m", "rewrite save")
 
     capsys.readouterr()  # flush
     rc = main(["lint", "--json"])

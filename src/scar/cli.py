@@ -255,8 +255,10 @@ def _status_rich(data: dict) -> None:
 
     if data["active"]:
         t = Table(title="Active scars", show_edge=False, expand=False)
-        t.add_column("type"); t.add_column("id", justify="right")
-        t.add_column("severity"); t.add_column("title")
+        t.add_column("type")
+        t.add_column("id", justify="right")
+        t.add_column("severity")
+        t.add_column("title")
         for s in data["active"]:
             t.add_row(_type_label(s["type"]), f"#{s['id']}", s["severity"], s["title"])
         console.print(t)
@@ -288,7 +290,9 @@ def _lint_rich(data: dict) -> None:
     console = output.console
     if data["findings"]:
         t = Table(title="Lint findings", show_edge=False)
-        t.add_column("file"); t.add_column("level"); t.add_column("message")
+        t.add_column("file")
+        t.add_column("level")
+        t.add_column("message")
         for f in data["findings"]:
             style = "red" if f["level"] == "error" else "yellow"
             t.add_row(f["file"], f"[{style}]{f['level']}[/]", f["message"])
@@ -355,7 +359,8 @@ def _stats_rich(data: dict) -> None:
         title="scar stats"))
     if data["per_scar"]:
         t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
-        t.add_column("id", justify="right"); t.add_column("firings", justify="right")
+        t.add_column("id", justify="right")
+        t.add_column("firings", justify="right")
         for e in data["per_scar"]:
             row = f"#{e['id']}", str(e["count"])
             if e.get("violations", 0) > 0:
@@ -363,7 +368,7 @@ def _stats_rich(data: dict) -> None:
             t.add_row(*row)
         console.print(t)
     if data["never_fired"]:
-        console.print(f"[yellow]never fired:[/] "
+        console.print("[yellow]never fired:[/] "
                       + ", ".join(f"#{i}" for i in data["never_fired"]))
     # The three measurement stages (#214). These must stay in step with the
     # plain renderer — shipping them to one branch only is how #225 happened.
@@ -395,7 +400,8 @@ def _stats_all_repos_rich(data: dict, log_path: Path) -> None:
     for g in data["repos"]:
         t = Table(title=f"{g['repo']} — {g['total_firings']} firing(s)",
                   show_edge=False, expand=False)
-        t.add_column("id", justify="right"); t.add_column("firings", justify="right")
+        t.add_column("id", justify="right")
+        t.add_column("firings", justify="right")
         for e in g["per_scar"]:
             row = f"#{e['id']}", str(e["count"])
             if e.get("violations", 0) > 0:
@@ -422,7 +428,8 @@ def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> Non
     if candidates:
         t = Table(title="Candidates pending review (oldest first)",
                   show_edge=False, expand=False)
-        t.add_column("name"); t.add_column("age (days)", justify="right")
+        t.add_column("name")
+        t.add_column("age (days)", justify="right")
         for c in candidates:
             t.add_row(c["name"], str(c["age_days"]))
         console.print(t)
