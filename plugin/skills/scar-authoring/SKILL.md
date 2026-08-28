@@ -51,9 +51,10 @@ hooks bind to a stable `scar` on PATH, not a venv shim that disappears. Anchor
 `shutil.which`."
 
 **`landmine` — touching A breaks B.** Anchor the trigger site; the body names
-the blast radius. *Example (scar #6):* a regex in a scar's `pattern:` field is
-double-quoted YAML, so `\b` collapses and the anchor silently self-matches only
-its own `.scars/` body — the protection is dead but the gauge reads green.
+the blast radius. *Example (scar #6):* a regex in a scar's `pattern:` field passes through the
+parser verbatim, so a doubled `\\b` stays two characters and matches nothing
+real — the anchor silently self-matches only its own `.scars/` body, and the
+protection is dead while the gauge reads green.
 
 ## The Write Contract (non-negotiable)
 
@@ -77,11 +78,16 @@ fires. Minimum valid block: `type`, `title`, `severity`, `confidence`,
 ## Anti-Over-Escape (the #1 silent failure)
 
 Prefer a `path:` anchor — it cannot self-match and needs no escaping. If you
-must use a `pattern:` regex: backslashes in double-quoted YAML collapse (`\b`
-dies), and the pattern is matched against all tracked content **including the
-scar's own body**, so a broken pattern keeps itself alive by self-reference.
-Run `scar lint` and confirm the scar does NOT appear under partial-rot
-(self-match only).
+must use a `pattern:` regex, know that the value reaches the matcher
+**verbatim** — this reader is not a YAML parser and nothing un-escapes. Write
+the regex exactly as it must execute: `\b` stays `\b`, `\(` stays `\(`.
+Doubling backslashes "for YAML" yields a literal backslash and a dead anchor.
+
+The pattern is also matched against all tracked content **including the scar's
+own body**, so a broken pattern keeps itself alive by self-reference. Run
+`scar lint` and confirm the scar does NOT appear under partial-rot — which
+also reports a dead branch inside an alternation, where a live branch would
+otherwise mask it.
 
 Wrong: `pattern: "\\bwiden\\b"`  →  Right: `path: src/widen/` (no escaping, no
 self-match).
