@@ -70,6 +70,18 @@ class SymbolDriftFinding:
 
 
 @dataclass
+class RevivalFinding:
+    """An ARCHIVED scar whose revives_if predicate matches the tree again (#205).
+
+    Advisory and human-gated by construction: the hazard's precondition came
+    back, so the scar is surfaced for re-promotion. Never auto-rearms — the
+    same rule that keeps promotion human keeps resurrection human.
+    """
+    scar_id: int | None
+    predicate: str
+
+
+@dataclass
 class PartialRotFinding:
     """A firing scar with ≥1 dead anchor but ≥1 live anchor (#35).
 
@@ -280,6 +292,30 @@ def _dead_anchors(scar: Scar, ctx: RepoContext,
         if not _pattern_anchor_live(p, ctx, exclude_path=self_path)
     ]
     return dead_paths, dead_patterns
+
+
+def detect_revivals(store: ScarStore, ctx: RepoContext) -> list[RevivalFinding]:
+    """Archived scars whose `revives_if:` predicate matches the tree again (#205).
+
+    Only ARCHIVED scars are checked: a firing scar already protects the code,
+    so reporting it as revived is noise. The predicate is matched with the
+    scar's OWN file excluded — it is written inside that file, so a naive scan
+    self-matches and every archived scar reports revived forever (#35).
+
+    Read-only and advisory. Never flips status; re-promotion stays human.
+    """
+    findings: list[RevivalFinding] = []
+    for source, scar in store.parsed():
+        if scar.status != "archived" or not scar.revives_if:
+            continue
+        try:
+            self_path = _self_rel(store, source)
+            if _pattern_anchor_live(scar.revives_if, ctx, exclude_path=self_path):
+                findings.append(RevivalFinding(scar_id=scar.id,
+                                               predicate=scar.revives_if))
+        except Exception:
+            continue
+    return findings
 
 
 def detect_orphans(store: ScarStore, ctx: RepoContext,

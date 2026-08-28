@@ -8,7 +8,7 @@ created: 2026-06-11
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: hook/scar-hooks.py
-  - pattern: "shutil\\.which\\([\"']scar[\"']\\)"
+  - pattern: "shutil\.which\("
 evidence:
   - note: 2026-06-11 session: user ran `source .venv/bin/activate` then `python3 fabcap/hook/scar-hooks.py install` intending to rebind global hooks to ~/.local/bin/scar; installer reported 'up-to-date' and left all 3 hooks on fabcap/.venv/bin/scar
   - note: archived 2026-06-11: fix shipped in #8 with 4 installer tests guarding regression

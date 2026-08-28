@@ -499,3 +499,24 @@ def test_quoted_fields_roundtrip_property():
         assert again.command_anchors == [value], value
         assert again.expires_condition == value, value
         assert again.violation == value, value
+
+
+# --- #205: revives_if — an archived scar names its resurrection condition.
+
+
+def test_revives_if_roundtrips_through_the_nasty_corpus():
+    """Same raw-regex contract as violation/pattern: wrapper quotes removed,
+    nothing un-escaped. Scar #4 is exactly this class of bug — a field the
+    serializer writes that the parser cannot read back."""
+    for value in NASTY:
+        scar = Scar(title="t", path_anchors=["src/"], revives_if=value)
+        again = parse_scar_text(scar.to_text())
+        assert again.revives_if == value, value
+
+
+def test_revives_if_absent_emits_no_key():
+    """An empty predicate must not write a bare `revives_if:` line — the
+    parser would read it back as the empty string, but every existing scar
+    would grow a meaningless field on any promote round-trip."""
+    text = Scar(title="t", path_anchors=["src/"]).to_text()
+    assert "revives_if" not in text

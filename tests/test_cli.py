@@ -3092,3 +3092,34 @@ def test_lint_names_the_dead_alternation_branch(tmp_path, monkeypatch, capsys):
     assert "#7" in out
     assert "neverappearsanywhere" in out   # the dead branch is named
     assert "partial" in out.lower()
+
+
+def _git_repo_with_revived_archived_scar(tmp_path):
+    """Archived scar whose revives_if predicate matches the tree again."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    init_scars(tmp_path)
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "cli.py").write_text("dispatch(args.command)\n")
+    (tmp_path / ".scars" / "0007-arch.deadend.md").write_text(
+        "---\nid: 7\ntype: deadend\ntitle: archived dispatch trap\n"
+        "severity: medium\nconfidence: 0.8\ncreated: 2026-08-28\n"
+        'authors: ["t"]\nanchors:\n  - path: src/\n'
+        'evidence:\n  - note: t\nrevives_if: "args.command"\n'
+        "status: archived\n---\n\nBody.\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+
+def test_lint_reports_a_revived_archived_scar(tmp_path, monkeypatch, capsys):
+    """The precondition returned — surface it for human re-promotion. Advisory
+    only: lint must still exit 0 and the scar must stay archived."""
+    _git_repo_with_revived_archived_scar(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "#7" in out
+    assert "revives" in out.lower()
+    text = (tmp_path / ".scars" / "0007-arch.deadend.md").read_text()
+    assert "status: archived" in text   # never auto-rearmed

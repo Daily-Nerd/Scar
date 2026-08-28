@@ -1,5 +1,7 @@
 """ScarStore: discovery, listing, id assignment, promote, init."""
 
+from pathlib import Path
+
 import pytest
 
 from scar.store import ScarStore, init_scars
@@ -160,3 +162,12 @@ def test_promote_still_appends_genuinely_new_reviewer(repo):
     store = ScarStore.discover(repo)
     new_path = store.promote(cand, reviewer="mara")
     assert 'authors: ["claude-code", "kibukx", "mara"]' in new_path.read_text()
+
+
+def test_template_documents_revives_if():
+    """revives_if (#205) must be discoverable where authors actually look —
+    the template — or the field ships unused."""
+    from scar.store import TEMPLATE
+    root = Path(__file__).parent.parent
+    assert "revives_if" in TEMPLATE
+    assert "revives_if" in (root / ".scars" / "template.md").read_text()

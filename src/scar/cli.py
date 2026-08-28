@@ -32,6 +32,7 @@ from .orphan import (
     build_repo_context,
     detect_orphans,
     detect_partial_rot,
+    detect_revivals,
     detect_symbol_drift,
 )
 from .reanchor import (
@@ -494,10 +495,11 @@ def _cmd_lint(args) -> int:
 
     ctx = _repo_context(store)
     if ctx is None:
-        orphans, partial, reverse_hints, drift = [], [], [], []
+        orphans, partial, reverse_hints, drift, revivals = [], [], [], [], []
     else:
         orphans = detect_orphans(store, ctx, repo=store.root)
         partial = detect_partial_rot(store, ctx, repo=store.root)
+        revivals = detect_revivals(store, ctx)
         reverse_hints = [s for _f, s in store.parsed()
                          if s.status == "orphaned" and not anchors_all_dead(s, ctx)]
         drift = detect_symbol_drift(store, store.root)
@@ -545,6 +547,7 @@ def _cmd_lint(args) -> int:
         "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
         "symbol_drift": [{"scar_id": d.scar_id, "symbol": d.symbol,
                           "sha": d.sha, "similarity": d.similarity} for d in drift],
+        "revivals": [{"scar_id": r.scar_id, "predicate": r.predicate} for r in revivals],
         "reverse_hints": [{"id": s.id} for s in reverse_hints],
         "shallow_clone": shallow,
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
@@ -563,6 +566,13 @@ def _cmd_lint(args) -> int:
         for pr in partial:
             print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
                   "— re-anchor to restore full coverage")
+        # revives_if (#205): an ARCHIVED scar whose resurrection condition
+        # matches the tree again. Advisory and human-gated — lint reports it
+        # and never re-arms the scar itself.
+        for r in revivals:
+            print(f"HINT revives-if: scar #{r.scar_id} is archived but its "
+                  f"revives_if predicate /{r.predicate}/ matches the tree again "
+                  "— review for re-promotion")
         # symbol drift (#99): a symbol anchor that still resolves by name but
         # whose body shape changed since the evidence commit. Advisory only.
         for d in drift:

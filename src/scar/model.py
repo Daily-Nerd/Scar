@@ -46,6 +46,7 @@ class Scar:
     expires_condition: str = ""
     review_after: str = ""
     violation: str = ""
+    revives_if: str = ""
     status: str = "active"
     body: str = ""
 
@@ -75,6 +76,8 @@ class Scar:
                 lines.append(f"  review_after: {self.review_after}")
         if self.violation:
             lines.append(f"violation: {_quote(self.violation)}")
+        if self.revives_if:
+            lines.append(f"revives_if: {_quote(self.revives_if)}")
         lines += [f"status: {self.status}", "---", "", self.body.strip(), ""]
         return "\n".join(lines)
 
@@ -188,6 +191,10 @@ def parse_scar_text(text: str) -> Scar:
         # (silently-dead tripwire, #200), and a value with edge quotes of its
         # own must not lose them.
         violation=_unquote(_field(front, "violation")),
+        # Same raw-regex contract as violation (#205): wrapper quotes removed,
+        # nothing un-escaped. Only meaningful on archived scars, but parsed
+        # unconditionally so a promote/archive round-trip cannot drop it (#4).
+        revives_if=_unquote(_field(front, "revives_if")),
         status=_field(front, "status", "active"),
         body=body.strip(),
     )
