@@ -34,8 +34,14 @@ jobs:
       # lock kept drifting until some unrelated PR happened to re-lock it (#220).
       # The branch name is a release-please convention, derived rather than
       # parsed out of the action's JSON output so this does not break if that
-      # output schema changes. A GITHUB_TOKEN push does not re-trigger
-      # workflows, so this does not re-arm the run-approval gate (scar 0015).
+      # output schema changes.
+      #
+      # This push DOES create a new head SHA, so the release PR's checks
+      # re-arm behind the run-approval gate (scar 0015) and need another
+      # approve-click. That is not a cost this step adds: release-please's own
+      # commit parks the same way, so the gate fires with or without the sync
+      # and the net remains one click on the final SHA. Observed 2026-08-28 —
+      # sync commit a65c956 produced three runs at conclusion action_required.
       - name: Sync uv.lock on the release PR branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
