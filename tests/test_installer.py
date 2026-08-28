@@ -533,3 +533,58 @@ def test_codex_install_verifies_against_the_written_file(codex_home, monkeypatch
     monkeypatch.setattr(installer, "_save_codex_config", drop_one)
     assert main(["hook", "install", "--runtime", "codex"]) == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+# --- #250: the plugin is a SECOND live Codex channel ------------------------
+# #246 concluded the plugin could not deliver hooks because the cache carried
+# no hooks.json. That cache was merely STALE — once re-materialized the plugin
+# channel goes live, and Scar fires twice per tool call.
+
+
+def _codex_plugin(home: Path, *, handler: str = "codex-pretool") -> Path:
+    p = home / "plugins" / "cache" / "scar" / "scar" / "local" / "hooks"
+    p.mkdir(parents=True, exist_ok=True)
+    cfg = p / "hooks.json"
+    cfg.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+        {"type": "command",
+         "command": f'"${{PLUGIN_ROOT}}/hooks/run.sh" {handler}'}]}]}}),
+        encoding="utf-8")
+    return cfg
+
+
+def test_codex_install_warns_when_the_plugin_is_a_second_channel(codex_home,
+                                                                 capsys):
+    plugin = _codex_plugin(codex_home)
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "TWO" in out or "two" in out
+    assert str(plugin) in out
+
+
+def test_codex_install_is_quiet_when_no_plugin_channel_exists(codex_home,
+                                                              capsys):
+    """The warning has to stay rare or it becomes wallpaper."""
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert "second" not in capsys.readouterr().out.lower()
+
+
+def test_codex_install_ignores_a_plugin_that_registers_no_scar_handler(
+        codex_home, capsys):
+    """Another tool's plugin in the same cache is not our duplicate."""
+    _codex_plugin(codex_home, handler="someone-elses-hook")
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert "second" not in capsys.readouterr().out.lower()
+
+
+def test_codex_install_still_succeeds_with_a_duplicate_channel(codex_home):
+    """Warn, never refuse: the plugin may be present but stale or untrusted —
+    exactly the #246 state, where the installer still has to work."""
+    _codex_plugin(codex_home)
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert (codex_home / "hooks.json").exists()
+
+
+def test_codex_status_reports_the_plugin_channel(codex_home, capsys):
+    plugin = _codex_plugin(codex_home)
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert str(plugin) in capsys.readouterr().out

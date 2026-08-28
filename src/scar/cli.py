@@ -1260,23 +1260,69 @@ def _cmd_why(args) -> int:
     return 0
 
 
+def _dedup_key(rec: dict) -> tuple | None:
+    """Identity of one recorded tool call, or None when the record cannot be
+    identified and must therefore never be merged.
+
+    #250: Scar can be wired into Codex through BOTH ~/.codex/hooks.json and
+    the plugin's hooks/hooks.json. Both are separate processes appending to
+    the same log, so one apply_patch writes two rows sharing an `edit_id` and
+    every Codex firing is counted twice. Write-time dedup cannot work across
+    two racing processes; collapsing on read also repairs data already on
+    disk.
+
+    `ts` is deliberately NOT in the key — the two channels can land in
+    different seconds. The id lists ARE, so a PreToolUse firing and its
+    PostToolUse violation row (same edit_id, different ids) stay distinct.
+
+    Bails out to None unless `edit_id` is a non-empty string: rows written
+    before that field existed carry no call identity, and merging them would
+    silently delete real independent firings.
+    """
+    edit_id = rec.get("edit_id")
+    if not isinstance(edit_id, str) or not edit_id:
+        return None
+    try:
+        # scar 0012: any shape can appear here. repr never raises for
+        # JSON-derived values, so the key cannot become a new crash site on
+        # a path that must stay fail-open.
+        return (edit_id, repr(rec.get("repo")), repr(rec.get("target")),
+                repr(rec.get("scar_ids")), repr(rec.get("demoted_ids")),
+                repr(rec.get("violation_ids")))
+    except Exception:
+        return None
+
+
 def _read_firing_log(log_path: Path) -> list[dict]:
     """Read the machine-global firing log, keeping only dict records. The log
     is written best-effort from a fail-open hook, so ANY JSON shape can appear
     on a line (landmine #12) — `null`, `[]`, numbers all parse fine and then
-    crash at rec.get(); skip everything that isn't a dict."""
+    crash at rec.get(); skip everything that isn't a dict.
+
+    Rows describing the same tool call are collapsed (#250) — see _dedup_key.
+    """
     records = []
+    seen: set[tuple] = set()
     if log_path.exists():
         for line in log_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
+                # scar 0012 prescribes a BLANKET per-line guard, not a narrow
+                # except tuple: a reader that escapes into precheck's outer
+                # fail-open kills injection permanently.
                 rec = json.loads(line)
-            except json.JSONDecodeError:
+            except Exception:
                 continue
-            if isinstance(rec, dict):
-                records.append(rec)
+            if not isinstance(rec, dict):
+                continue
+            key = _dedup_key(rec)
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            records.append(rec)
     return records
 
 

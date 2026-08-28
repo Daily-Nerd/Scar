@@ -3448,3 +3448,93 @@ def test_stats_injection_rate_is_null_without_zero_hit_records(
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["injection_rate"] is None
+
+
+# --- #250: duplicate Codex hook channels -----------------------------------
+# Scar can be wired into Codex through BOTH ~/.codex/hooks.json (#247) and the
+# plugin's hooks/hooks.json (#244). Both fire on one apply_patch, producing two
+# firing-log rows that share an edit_id — every Codex firing counted twice.
+
+
+def _firing_log(tmp_path, rows):
+    import json as _json
+    p = tmp_path / "firing-log.jsonl"
+    p.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return p
+
+
+def _row(**kw):
+    base = {"ts": "2026-08-28T14:27:59", "repo": "/r", "target": "/r/src/a.py",
+            "scar_ids": [1], "count": 1, "runtime": "codex",
+            "edit_id": "exec-abc"}
+    base.update(kw)
+    return base
+
+
+def test_firing_log_collapses_rows_from_two_hook_channels(tmp_path):
+    """Two live channels write byte-identical rows for one tool call."""
+    from scar.cli import _read_firing_log
+
+    log = _firing_log(tmp_path, [_row(), _row()])
+    assert len(_read_firing_log(log)) == 1
+
+
+def test_firing_log_never_merges_rows_without_an_edit_id(tmp_path):
+    """Rows predating the edit_id field carry no call identity — merging them
+    would silently delete real, independent firings."""
+    from scar.cli import _read_firing_log
+
+    a, b = _row(), _row()
+    a.pop("edit_id")
+    b.pop("edit_id")
+    assert len(_read_firing_log(_firing_log(tmp_path, [a, b]))) == 2
+
+
+def test_firing_log_never_merges_on_an_empty_edit_id(tmp_path):
+    from scar.cli import _read_firing_log
+
+    rows = [_row(edit_id=""), _row(edit_id=""), _row(edit_id=None)]
+    assert len(_read_firing_log(_firing_log(tmp_path, rows))) == 3
+
+
+def test_firing_log_keeps_distinct_targets_of_one_multi_file_patch(tmp_path):
+    """One apply_patch touching two files logs one row per path, same edit_id.
+    Those are different firings, not duplicates."""
+    from scar.cli import _read_firing_log
+
+    rows = [_row(target="/r/src/a.py"), _row(target="/r/src/b.py")]
+    assert len(_read_firing_log(_firing_log(tmp_path, rows))) == 2
+
+
+def test_firing_log_keeps_the_violation_row_beside_its_firing(tmp_path):
+    """PreToolUse and PostToolUse share an edit_id but record different ids."""
+    from scar.cli import _read_firing_log
+
+    rows = [_row(), _row(scar_ids=[], violation_ids=[1])]
+    assert len(_read_firing_log(_firing_log(tmp_path, rows))) == 2
+
+
+def test_firing_log_dedup_survives_garbage_lines(tmp_path):
+    """scar 0012: any shape can appear. Dedup must not become a new crash
+    site on the fail-open hot path."""
+    from scar.cli import _read_firing_log
+
+    p = tmp_path / "firing-log.jsonl"
+    p.write_text("\n".join([
+        "null", "[]", "42", '"str"', "{not json",
+        json.dumps(_row(scar_ids="nope")), json.dumps(_row(scar_ids="nope")),
+        json.dumps(_row(demoted_ids={"a": 1})),
+        json.dumps(_row()), json.dumps(_row()),
+    ]) + "\n", encoding="utf-8")
+    records = _read_firing_log(p)
+    assert all(isinstance(r, dict) for r in records)
+    assert len(records) == 3
+
+
+def test_stats_counts_a_doubly_hooked_firing_once(tmp_path):
+    """End-to-end: the inflated count must not reach the reported number."""
+    from scar.cli import _aggregate_firings, _read_firing_log
+
+    log = _firing_log(tmp_path, [_row(), _row()])
+    agg = _aggregate_firings(_read_firing_log(log))
+    assert agg["counts"][1] == 1
