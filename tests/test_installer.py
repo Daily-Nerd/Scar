@@ -588,3 +588,99 @@ def test_codex_status_reports_the_plugin_channel(codex_home, capsys):
     plugin = _codex_plugin(codex_home)
     assert main(["hook", "status", "--runtime", "codex"]) == 0
     assert str(plugin) in capsys.readouterr().out
+
+
+# --- #252: the warning must be silenceable ---------------------------------
+# #251 detected a plugin channel by file existence alone, so the warning
+# survived its own remedy. A warning that cannot be silenced stops being
+# signal.
+
+
+def _codex_hook_state(home: Path, entries: dict[str, bool | None]) -> Path:
+    """Write ~/.codex/config.toml hooks.state blocks. None = omit `enabled`,
+    which Codex treats as enabled."""
+    home.mkdir(parents=True, exist_ok=True)
+    cfg = home / "config.toml"
+    out = ['model = "gpt-5"', ""]
+    for key, enabled in entries.items():
+        out.append(f'[hooks.state."{key}"]')
+        out.append('trusted_hash = "sha256:deadbeef"')
+        if enabled is not None:
+            out.append(f"enabled = {'true' if enabled else 'false'}")
+        out.append("")
+    cfg.write_text("\n".join(out), encoding="utf-8")
+    return cfg
+
+
+_PLUGIN_KEYS = ["scar@scar:hooks/hooks.json:pre_tool_use:0:0",
+                "scar@scar:hooks/hooks.json:post_tool_use:0:0",
+                "scar@scar:hooks/hooks.json:session_start:0:0"]
+
+
+def test_codex_no_warning_once_every_plugin_entry_is_disabled(codex_home, capsys):
+    _codex_plugin(codex_home)
+    _codex_hook_state(codex_home, {k: False for k in _PLUGIN_KEYS})
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert "TWO channels" not in capsys.readouterr().out
+
+
+def test_codex_still_warns_when_one_plugin_entry_is_left_enabled(codex_home,
+                                                                 capsys):
+    _codex_plugin(codex_home)
+    state = {k: False for k in _PLUGIN_KEYS}
+    state[_PLUGIN_KEYS[0]] = True
+    _codex_hook_state(codex_home, state)
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert "TWO channels" in capsys.readouterr().out
+
+
+def test_codex_treats_an_omitted_enabled_flag_as_enabled(codex_home, capsys):
+    """Codex's default is enabled, so only an explicit false silences us."""
+    _codex_plugin(codex_home)
+    state = {k: False for k in _PLUGIN_KEYS}
+    state[_PLUGIN_KEYS[1]] = None
+    _codex_hook_state(codex_home, state)
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert "TWO channels" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("content", [None, "{ not toml at all", ""])
+def test_codex_warns_when_the_config_cannot_be_trusted(codex_home, capsys,
+                                                       content):
+    """Fail TOWARD the warning. A missed duplicate silently doubles every
+    measurement; a spurious warning is merely annoying (#237's rule)."""
+    _codex_plugin(codex_home)
+    if content is not None:
+        codex_home.mkdir(parents=True, exist_ok=True)
+        (codex_home / "config.toml").write_text(content, encoding="utf-8")
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert "TWO channels" in capsys.readouterr().out
+
+
+def test_codex_install_agrees_with_status_about_a_disabled_plugin(codex_home,
+                                                                  capsys):
+    _codex_plugin(codex_home)
+    _codex_hook_state(codex_home, {k: False for k in _PLUGIN_KEYS})
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert "TWO channels" not in capsys.readouterr().out
+
+
+def test_codex_ignores_another_tools_plugin_hook_state(codex_home, capsys):
+    """scar 0016, third time: the first version of this check matched any key
+    containing `hooks/hooks.json:`, so ANOTHER tool's enabled plugin kept our
+    warning on forever — the warning survived its own remedy on a real
+    machine. State must be scoped to our own <plugin>@<marketplace> prefix."""
+    _codex_plugin(codex_home)
+    state = {k: False for k in _PLUGIN_KEYS}
+    state["daimon@daimon:hooks/hooks.json:session_start:0:0"] = True
+    _codex_hook_state(codex_home, state)
+    assert main(["hook", "status", "--runtime", "codex"]) == 0
+    assert "TWO channels" not in capsys.readouterr().out
+
+
+def test_codex_plugin_ref_is_derived_from_the_cache_path(codex_home):
+    from scar.installer import _codex_plugin_ref
+
+    plugin = _codex_plugin(codex_home)
+    assert _codex_plugin_ref(plugin) == "scar@scar"
+    assert _codex_plugin_ref(Path("/nowhere/hooks.json")) is None
