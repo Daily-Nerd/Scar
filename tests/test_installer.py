@@ -79,15 +79,108 @@ def isolated_settings(tmp_path, monkeypatch):
     return claude / "settings.json"
 
 
+def _commands(settings_path, event):
+    import json
+    cfg = json.loads(settings_path.read_text(encoding="utf-8"))["hooks"]
+    return [h.get("command", "")
+            for group in cfg.get(event, []) for h in group.get("hooks", [])]
+
+
 def test_cli_hook_install_then_uninstall(isolated_settings, capsys):
     assert main(["hook", "install"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
-    assert settings.count("/stable/bin/scar hook") == 4
+    assert settings.count("/stable/bin/scar hook") == len(installer.HOOKS)
 
     assert main(["hook", "uninstall"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
     assert "/stable/bin/scar hook" not in settings
     assert "Scars themselves (.scars/ in repos) are untouched" in capsys.readouterr().out
+
+
+def test_install_keeps_every_spec_that_shares_an_event(isolated_settings):
+    # Scar #236: `precheck` and `precheck-command` both live on PreToolUse.
+    # Ownership used to be event-scoped, so installing the second spec stripped
+    # the first and left the tool with no pre-edit injection at all. Both must
+    # survive an install into an empty settings file.
+    assert main(["hook", "install"]) == 0
+    commands = _commands(isolated_settings, "PreToolUse")
+    assert "/stable/bin/scar hook precheck" in commands
+    assert "/stable/bin/scar hook precheck-command" in commands
+
+
+def test_install_is_idempotent_on_a_shared_event(isolated_settings, capsys):
+    assert main(["hook", "install"]) == 0
+    capsys.readouterr()
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("up-to-date") == len(installer.HOOKS)
+    commands = _commands(isolated_settings, "PreToolUse")
+    assert sorted(commands) == ["/stable/bin/scar hook precheck",
+                                "/stable/bin/scar hook precheck-command"]
+
+
+def test_install_migrates_a_legacy_precheck_without_eating_its_neighbour(
+        isolated_settings, capsys):
+    # A legacy script entry belongs to `precheck` alone. Migrating it must not
+    # disturb the `precheck-command` entry sharing the same event.
+    import json
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+    isolated_settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+         "hooks": [{"type": "command",
+                    "command": "python3 ~/.claude/hooks/scar-precheck.py"}]},
+    ]}}), encoding="utf-8")
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "[precheck] settings: migrate legacy entry" in out
+    commands = _commands(isolated_settings, "PreToolUse")
+    assert sorted(commands) == ["/stable/bin/scar hook precheck",
+                                "/stable/bin/scar hook precheck-command"]
+
+
+def test_install_preserves_foreign_hooks_on_a_shared_event(isolated_settings):
+    import json
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+    isolated_settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": "/usr/local/bin/other-tool guard"}]},
+    ]}}), encoding="utf-8")
+    assert main(["hook", "install"]) == 0
+    assert "/usr/local/bin/other-tool guard" in _commands(isolated_settings, "PreToolUse")
+
+
+def test_status_distinguishes_kinds_sharing_one_event(isolated_settings, capsys):
+    # Only `precheck-command` is present. Status must not report `precheck`
+    # as installed just because a sibling kind occupies the same event.
+    import json
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+    isolated_settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": "/stable/bin/scar hook precheck-command"}]},
+    ]}}), encoding="utf-8")
+    assert main(["hook", "status"]) == 0
+    lines = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()
+             if line.startswith(("precheck", "posttool", "session", "stop"))}
+    assert "not installed" in lines["precheck"]
+    assert lines["precheck-command"].endswith("installed")
+
+
+def test_install_fails_loudly_when_the_written_file_lost_a_hook(
+        isolated_settings, monkeypatch, capsys):
+    # Scar #236 reported success while dropping an entry. Install verifies its
+    # own result against what actually landed on disk.
+    real_save = installer.save_settings
+
+    def lossy_save(settings, dry):
+        groups = settings["hooks"]["PreToolUse"]
+        settings["hooks"]["PreToolUse"] = [
+            g for g in groups
+            if not installer.owns_kind(g, "precheck")]
+        real_save(settings, dry)
+
+    monkeypatch.setattr(installer, "save_settings", lossy_save)
+    assert main(["hook", "install"]) == 1
+    assert "precheck" in capsys.readouterr().out
 
 
 def test_cli_hook_dry_run_does_not_create_settings(isolated_settings):

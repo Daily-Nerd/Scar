@@ -20,7 +20,15 @@ SETTINGS = CLAUDE_DIR / "settings.json"
 SKILLS_DIR = CLAUDE_DIR / "skills"
 SKILL_NAME = "scar-authoring"
 
-LEGACY_SCRIPTS = ("scar-precheck.py", "scar-session-notice.py", "scar-stop-drafter.py")
+# The pre-command-anchor script each kind was migrated from. Only these three
+# kinds ever had one; the mapping is per-kind so a legacy `precheck` script is
+# never mistaken for ownership of a different kind on the same event.
+LEGACY_SCRIPT_FOR_KIND = {
+    "precheck": "scar-precheck.py",
+    "session-notice": "scar-session-notice.py",
+    "stop-drafter": "scar-stop-drafter.py",
+}
+LEGACY_SCRIPTS = tuple(LEGACY_SCRIPT_FOR_KIND.values())
 OURS_RE = re.compile(r"(scar[^ ]*) hook (precheck|posttool|session-notice|stop-drafter)"
                      r"|" + "|".join(re.escape(s) for s in LEGACY_SCRIPTS))
 
@@ -71,7 +79,35 @@ def save_settings(settings: dict, dry: bool) -> None:
 
 
 def is_ours(group: dict) -> bool:
+    """Any scar-owned entry, regardless of kind. Used by uninstall, which
+    clears every kind off an event at once."""
     return any(OURS_RE.search(h.get("command", ""))
+               for h in group.get("hooks", []) if isinstance(h, dict))
+
+
+def _kind_pattern(kind: str) -> re.Pattern[str]:
+    # scar 0016: `precheck` is a string PREFIX of `precheck-command`, so the
+    # kind must be matched exactly — the trailing (?!\S) is what stops one
+    # kind from claiming the other's entry.
+    alternatives = [rf"scar[^ ]* hook {re.escape(kind)}(?!\S)"]
+    legacy = LEGACY_SCRIPT_FOR_KIND.get(kind)
+    if legacy:
+        alternatives.append(re.escape(legacy))
+    return re.compile("|".join(alternatives))
+
+
+_KIND_RE = {spec["kind"]: _kind_pattern(spec["kind"]) for spec in HOOKS}
+
+
+def owns_kind(group: dict, kind: str) -> bool:
+    """Ownership scoped to one hook kind.
+
+    Scar #236: `precheck` and `precheck-command` share the PreToolUse event.
+    Stripping by event dropped whichever spec was installed first, leaving no
+    pre-edit injection at all while still printing success.
+    """
+    pattern = _KIND_RE[kind]
+    return any(pattern.search(h.get("command", ""))
                for h in group.get("hooks", []) if isinstance(h, dict))
 
 
@@ -106,25 +142,45 @@ def install(dry: bool = False) -> int:
     hooks_cfg = settings.setdefault("hooks", {})
     changed = False
     for spec in HOOKS:
+        kind = spec["kind"]
         groups = hooks_cfg.setdefault(spec["event"], [])
-        ours = [g for g in groups if is_ours(g)]
+        ours = [g for g in groups if owns_kind(g, kind)]
         desired = _entry(spec, scar_path)
         if ours == [desired]:
-            print(f"[{spec['kind']}] settings: up-to-date ({spec['event']})")
+            print(f"[{kind}] settings: up-to-date ({spec['event']})")
             continue
         if ours:
-            print(f"[{spec['kind']}] settings: migrate legacy entry -> scar hook {spec['kind']}")
-            hooks_cfg[spec["event"]] = [g for g in groups if not is_ours(g)]
+            print(f"[{kind}] settings: migrate legacy entry -> scar hook {kind}")
+            hooks_cfg[spec["event"]] = [g for g in groups if not owns_kind(g, kind)]
         else:
-            print(f"[{spec['kind']}] settings: register under {spec['event']}")
+            print(f"[{kind}] settings: register under {spec['event']}")
         hooks_cfg[spec["event"]].append(desired)
         changed = True
     _remove_legacy_scripts(dry)
     if changed:
         save_settings(settings, dry)
+    if not dry:
+        missing = _missing_after_write()
+        if missing:
+            print("install: FAILED — these hooks are not in the written "
+                  f"settings: {', '.join(missing)}")
+            return 1
     print("install: done" + (" (dry-run, nothing written)" if dry else
           f". All hooks route through {scar_path}."))
     return 0
+
+
+def _missing_after_write() -> list[str]:
+    """Read back what actually landed on disk.
+
+    Scar #236 printed `register` for a hook it then deleted, so the install
+    was reported as a success for a month while the tool's core feature was
+    off. Success is now asserted against the file, not against intent.
+    """
+    hooks_cfg = load_settings().get("hooks", {})
+    return [spec["kind"] for spec in HOOKS
+            if not any(owns_kind(g, spec["kind"])
+                       for g in hooks_cfg.get(spec["event"], []))]
 
 
 def uninstall(dry: bool = False) -> int:
@@ -153,10 +209,12 @@ def status() -> int:
     print(f"scar binary: {scar_path or 'NOT FOUND (uv tool install scar-cli)'}")
     hooks_cfg = load_settings().get("hooks", {})
     for spec in HOOKS:
-        ours = [g for g in hooks_cfg.get(spec["event"], []) if is_ours(g)]
+        ours = [g for g in hooks_cfg.get(spec["event"], [])
+                if owns_kind(g, spec["kind"])]
         commands = [h.get("command", "") for g in ours for h in g.get("hooks", [])]
-        legacy = any(any(script in command for script in LEGACY_SCRIPTS)
-                     for command in commands)
+        legacy_script = LEGACY_SCRIPT_FOR_KIND.get(spec["kind"])
+        legacy = bool(legacy_script) and any(legacy_script in command
+                                             for command in commands)
         state = ("legacy (run install to migrate)" if legacy
                  else "installed" if ours else "not installed")
         print(f"{spec['kind']:16} {spec['event']:13} {state}")
