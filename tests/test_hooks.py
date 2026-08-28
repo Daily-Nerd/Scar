@@ -6,7 +6,9 @@ contract, single library code path is the point.
 
 import io
 import json
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -214,6 +216,17 @@ def test_session_notice_on_tty_hints_and_emits_nothing(repo, monkeypatch, capsys
 
 # --- session-notice (SessionStart) ---
 
+def tmp_settings(monkeypatch, payload):
+    """Point installer.SETTINGS at a throwaway settings.json. scar #2: the
+    agent never reads or writes the real ~/.claude/settings.json in tests."""
+    import json as _json
+    from scar import installer
+    path = Path(tempfile.mkdtemp()) / "settings.json"
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(installer, "SETTINGS", path)
+    return path
+
+
 def test_session_notice_announces_convention_with_counts(repo, monkeypatch, capsys):
     feed(monkeypatch, {"cwd": str(repo)})
     assert main(["hook", "session-notice"]) == 0
@@ -221,6 +234,49 @@ def test_session_notice_announces_convention_with_counts(repo, monkeypatch, caps
     assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     ctx = payload["hookSpecificOutput"]["additionalContext"]
     assert "1 active" in ctx and "template.md" in ctx and "candidates/" in ctx
+
+
+def test_session_notice_warns_when_precheck_hook_is_missing(
+        repo, monkeypatch, capsys):
+    """#237 item 4: the surface a user actually sees every day. #236 left
+    precheck uninstalled for a month and nothing said so — session-notice
+    announces the convention, so it must not announce a contract the tool
+    cannot keep."""
+    from scar import installer
+    settings = tmp_settings(monkeypatch, {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": "/bin/scar hook precheck-command"}]},
+    ]}})
+    assert settings.exists() and installer.SETTINGS == settings
+    feed(monkeypatch, {"cwd": str(repo)})
+    assert main(["hook", "session-notice"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "precheck" in ctx
+    assert "scar hook install" in ctx
+
+
+def test_session_notice_silent_about_hooks_when_precheck_present(
+        repo, monkeypatch, capsys):
+    tmp_settings(monkeypatch, {"hooks": {"PreToolUse": [
+        {"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+         "hooks": [{"type": "command", "command": "/bin/scar hook precheck"}]},
+    ]}})
+    feed(monkeypatch, {"cwd": str(repo)})
+    assert main(["hook", "session-notice"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "scar hook install" not in ctx
+
+
+def test_session_notice_says_nothing_about_hooks_without_a_settings_file(
+        repo, monkeypatch, capsys):
+    """No settings file is not evidence of a broken install — the user may
+    drive scar from another harness entirely. Absence stays silent."""
+    from scar import installer
+    monkeypatch.setattr(installer, "SETTINGS", repo / "nonexistent.json")
+    feed(monkeypatch, {"cwd": str(repo)})
+    assert main(["hook", "session-notice"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "scar hook install" not in ctx
 
 
 def test_session_notice_silent_without_scars_dir(tmp_path, monkeypatch, capsys):

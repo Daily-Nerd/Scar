@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
 
@@ -370,6 +371,10 @@ def _stats_rich(data: dict) -> None:
     if data["never_fired"]:
         console.print("[yellow]never fired:[/] "
                       + ", ".join(f"#{i}" for i in data["never_fired"]))
+    # Health first (#237): if the instrument is disconnected the stages below
+    # cannot be believed, so the reader must meet that before the numbers.
+    for line in _health_lines(data):
+        console.print(f"[red]{line}[/]" if data["instrument_disconnected"] else line)
     # The three measurement stages (#214). These must stay in step with the
     # plain renderer — shipping them to one branch only is how #225 happened.
     for line in _stage_lines(data, data["per_scar"], data["total_firings"]):
@@ -401,6 +406,9 @@ def _stats_all_repos_rich(data: dict, log_path: Path) -> None:
                 row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
             t.add_row(*row)
         console.print(t)
+        for line in _health_lines(g):
+            console.print(f"  [red]{line}[/]" if g["instrument_disconnected"]
+                          else f"  {line}")
         for line in _stage_lines(g, g["per_scar"], g["total_firings"]):
             console.print(f"  {line}")
     console.print("[dim]note: ids are per-repo — the same number in two repos "
@@ -1285,15 +1293,55 @@ def _stage_block(agg: dict) -> dict:
     return {k: agg[k] for k in STAGE_KEYS}
 
 
+# Instrument health (#237). Separate from STAGE_KEYS on purpose: the stages
+# are measurements, these say whether the measurements can be believed at
+# all. Same parity discipline — one definition, every surface.
+HEALTH_KEYS = frozenset({"instrument_disconnected", "last_fired_age_days"})
+
+
+def _health_block(agg: dict) -> dict:
+    """The health fields for one aggregated repo, keyed by HEALTH_KEYS."""
+    return {k: agg[k] for k in HEALTH_KEYS}
+
+
+INSTRUMENT_WARNING = (
+    "WARNING: violations recorded but NO precheck records — the precheck hook "
+    "is almost certainly not installed, so no scar can ever have fired. This "
+    "is a broken install, not a measurement. Run `scar hook install`, then "
+    "`scar hook status` to confirm all hooks are present."
+)
+
+
+def _health_lines(block: dict) -> list[str]:
+    """Health lines, shared by every renderer. The firing age is REPORTED and
+    never thresholded: a 'stale' cutoff would be an unvalidated fitted
+    parameter, which this metric set has refused since #54/#95."""
+    lines = []
+    if block["instrument_disconnected"]:
+        lines.append(INSTRUMENT_WARNING)
+    age = block["last_fired_age_days"]
+    if age is not None:
+        lines.append(f"newest firing: {age} day(s) old")
+    return lines
+
+
 def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[str]:
     """The three stage lines, shared by every renderer so plain and Rich can
     never disagree about what a stage says."""
     violations = sum(e.get("violations", 0) for e in per_scar)
     rate = block.get("injection_rate")
-    retrieval = (f"retrieval: {rate:.1%} of {block['edits_observed']} observed edit(s) "
-                 f"injected a scar; {block['retrieval_misses']} missed firing(s)"
-                 if rate is not None else
-                 f"retrieval: {block['retrieval_misses']} missed firing(s) — LOWER BOUND")
+    misses = block["retrieval_misses"]
+    if misses is None:
+        # Refused, not zero. Every violation in a disconnected window looks
+        # like a retrieval miss by construction (#236) — reporting the count
+        # would publish an artifact of the broken install as a finding.
+        retrieval = ("retrieval: SUPPRESSED — the instrument is disconnected, "
+                     "so this window cannot measure retrieval")
+    elif rate is not None:
+        retrieval = (f"retrieval: {rate:.1%} of {block['edits_observed']} observed "
+                     f"edit(s) injected a scar; {misses} missed firing(s)")
+    else:
+        retrieval = f"retrieval: {misses} missed firing(s) — LOWER BOUND"
     return [
         f"enforcement: {violations} violation(s) / {total_firings} firing(s)",
         retrieval,
@@ -1353,9 +1401,15 @@ def _aggregate_firings(records: list[dict]) -> dict:
             for vid in vids:
                 if isinstance(vid, int):
                     violations[vid] = violations.get(vid, 0) + 1
-        ts = rec.get("ts")
-        if isinstance(ts, str) and (last_fired is None or ts > last_fired):
-            last_fired = ts
+        # `last_fired` means LAST FIRED. Only records where a scar actually
+        # fired may move it — not posttool violation records, not zero-hit
+        # precheck passes. Otherwise a repo with zero firings still reports a
+        # "last fired" date, and #237's age line contradicts the count above
+        # it on the very output that is meant to expose a dead instrument.
+        fired_here = isinstance(sids, list) and any(isinstance(x, int) for x in sids)
+        if fired_here and isinstance(ts_rec, str) and (last_fired is None
+                                                       or ts_rec > last_fired):
+            last_fired = ts_rec
     # A violation whose scar never fired on that target BEFORE the violation
     # was recorded is a RETRIEVAL miss: the hazard was hit but the scar was
     # never surfaced for that file. Deliberately window-free — "any earlier
@@ -1379,12 +1433,44 @@ def _aggregate_firings(records: list[dict]) -> dict:
     # by construction — a flattering number that measures nothing (#217).
     injection_rate = (round((edits_observed - zero_hit_edits) / edits_observed, 3)
                       if zero_hit_edits and edits_observed else None)
+
+    # #237: posttool recording violations while precheck records NOTHING is
+    # impossible in a healthy install — a scar cannot be violated on a file
+    # without having been matchable on that same file a moment earlier. When
+    # we see it, the instrument is disconnected (#236 held this state for a
+    # month). This reports an OBSERVED impossibility; it is never a clean
+    # bill of health, so an empty log is not "disconnected", it is silent.
+    instrument_disconnected = bool(violations) and edits_observed == 0
+    if instrument_disconnected:
+        # Every violation in such a window has no prior firing BY
+        # CONSTRUCTION, so the miss count measures the broken install, not
+        # retrieval. Refuse it, the way injection_rate is refused (#235).
+        retrieval_misses = None
+
     return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
             "retrieval_misses": retrieval_misses,
             "demotions": demotions,
             "edits_observed": edits_observed,
             "injection_rate": injection_rate,
+            "instrument_disconnected": instrument_disconnected,
+            "last_fired_age_days": _age_in_days(last_fired),
             "total": sum(counts.values())}
+
+
+def _age_in_days(ts: str | None) -> int | None:
+    """Whole days between a firing-log timestamp and now, or None if it can't
+    be read. scar 0012: firing-log readers need blanket guards — a corrupt ts
+    must never raise out of a reporting command."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        when = datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+    try:
+        return max(0, (datetime.now(tz=when.tzinfo) - when).days)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _cmd_stats(args) -> int:
@@ -1438,6 +1524,7 @@ def _cmd_stats(args) -> int:
         "last_fired": last_fired,
         "never_fired": never_fired,
         **_stage_block(agg),
+        **_health_block(agg),
         "advisories": advisories,
     }
 
@@ -1455,6 +1542,8 @@ def _cmd_stats(args) -> int:
             print(f"  last fired: {last_fired}")
         if never_fired:
             print("  never fired: " + ", ".join(f"#{i}" for i in never_fired))
+        for line in _health_lines(data):
+            print(f"  {line}")
         for line in _stage_lines(data, per_scar, data["total_firings"]):
             print(f"  {line}")
         for adv in data["advisories"]:
@@ -1487,7 +1576,7 @@ def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
         groups.append({"repo": repo_key, "total_firings": agg["total"],
                        "per_scar": agg["per_scar"],
                        "last_fired": agg["last_fired"],
-                       **_stage_block(agg)})
+                       **_stage_block(agg), **_health_block(agg)})
     groups.sort(key=lambda g: (-g["total_firings"], g["repo"]))
     data = {"all_repos": True, "repos": groups}
 
@@ -1500,6 +1589,8 @@ def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
                 if e.get("violations", 0) > 0:
                     line += f", violations: x{e['violations']}"
                 print(line)
+            for line in _health_lines(g):
+                print(f"    {line}")
             for line in _stage_lines(g, g["per_scar"], g["total_firings"]):
                 print(f"    {line}")
         print("  note: ids are per-repo — the same number in two repos is "

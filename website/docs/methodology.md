@@ -48,7 +48,7 @@ Two repositories dogfooded the instrument: SCAR's own repo and a sibling CLI pro
 
 Post-window disclosure: two violation records were logged **after** the window closed (Jul 27 and Jul 29), both from one scar tripping on files that *describe* the forbidden pattern — the same self-referential class as measurement error №4 below. They are outside the window and disclosed here regardless.
 
-## Four times the numbers tried to lie
+## Five times the numbers tried to lie
 
 Every metric we published or nearly published contained a measurement error we caught ourselves. An instrument that has survived its own audits is more credible than a bigger number from a tool that never checked.
 
@@ -56,6 +56,7 @@ Every metric we published or nearly published contained a measurement error we c
 2. **The stats double-count.** Scar IDs are per-repo sequential integers; `scar stats` summed them across repos, reporting 54 firings that were really ~31 + ~32 in two different repos. Fixed with repo scoping (#137).
 3. **The test contamination.** 92 of 105 firing-log records were pytest tmpdir artifacts — the test suite was dogfooding into the production log. Isolated via a state-dir fixture; the log was garbage-collected.
 4. **The self-match violations.** The first two violation records ever logged were the tool flagging its own documentation: a scar's body quotes the forbidden construct by design. Fixed same day (#148/#149), false records pruned, baseline zeroed 2026-07-03 — which is why the window starts there.
+5. **The disconnected instrument.** `scar hook install` wrote the `precheck` hook and then deleted it — two hook kinds share one event, and ownership was matched by event rather than by kind, so the second install stripped the first. Pre-edit injection had been off for a month on every install since command anchors, while `posttool` kept recording violations and `hook status` reported everything installed. Every violation in that period therefore had no prior firing *by construction*, and was counted as a retrieval miss: a "retrieval floor" of 14 of 16 that measured the broken install, not retrieval. Found before publication, the finding was withdrawn, and the fix (#236) shipped with the detector that would have caught it in a day (#237). **The window below predates the break and is unaffected** — it ran entirely inside the period when `precheck` still worked.
 
 ## Caveats
 
