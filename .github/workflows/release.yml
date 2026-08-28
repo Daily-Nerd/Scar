@@ -16,6 +16,10 @@ jobs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - id: rp
         uses: googleapis/release-please-action@v4
         with:
@@ -23,6 +27,36 @@ jobs:
           # can keep plugin/plugin.json's version in lock-step with pyproject (#62).
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - uses: astral-sh/setup-uv@v5
+
+      # release-please bumps pyproject.toml but has no uv.lock updater, so the
+      # lock kept drifting until some unrelated PR happened to re-lock it (#220).
+      # The branch name is a release-please convention, derived rather than
+      # parsed out of the action's JSON output so this does not break if that
+      # output schema changes. A GITHUB_TOKEN push does not re-trigger
+      # workflows, so this does not re-arm the run-approval gate (scar 0015).
+      - name: Sync uv.lock on the release PR branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=release-please--branches--main
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "No open release branch — nothing to sync."
+            exit 0
+          fi
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH"
+          uv lock
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already in step with pyproject.toml."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: sync uv.lock with the release version"
+          git push origin "$BRANCH"
 
   publish:
     needs: release-please
