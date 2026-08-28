@@ -55,6 +55,26 @@ jobs:
       - name: scar lint
         run: uv run scar lint
 
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      # Same paths as .pre-commit-config.yaml — keep the two in sync, or the
+      # local hook and CI disagree about what is clean.
+      - name: ruff check
+        run: uv run ruff check src/scar tests
+
   # Aggregator. Branch protection requires the context "Tests + scar lint", so
   # that name must survive: renaming it would leave every PR waiting on a check
   # that no longer exists, and giving both matrix legs the same name would let a
@@ -63,12 +83,13 @@ jobs:
   # required check can be treated as satisfied.
   test:
     name: Tests + scar lint
-    needs: matrix-tests
+    needs: [matrix-tests, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require every matrix leg to have passed
         run: |
-          result="${{ needs.matrix-tests.result }}"
-          echo "matrix-tests result: $result"
-          [ "$result" = "success" ] || exit 1
+          tests="${{ needs.matrix-tests.result }}"
+          lint="${{ needs.lint.result }}"
+          echo "matrix-tests: $tests / lint: $lint"
+          [ "$tests" = "success" ] && [ "$lint" = "success" ] || exit 1

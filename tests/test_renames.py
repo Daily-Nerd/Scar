@@ -10,7 +10,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
 
 
 def _git(repo: Path, *args: str) -> None:

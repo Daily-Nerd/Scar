@@ -1,5 +1,6 @@
 """MCP tool dispatch."""
 
+from scar.mcp import TOOLS
 import json
 
 from scar.mcp import _handle
@@ -91,8 +92,6 @@ def test_scar_draft_writes_candidate_only(tmp_path):
     assert data["candidate"].startswith(".scars/candidates/")
     assert not list((tmp_path / ".scars").glob("*.deadend.md"))
 
-
-from scar.mcp import TOOLS
 
 
 def test_scar_draft_description_carries_authoring_digest():
