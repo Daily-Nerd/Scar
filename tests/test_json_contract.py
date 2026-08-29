@@ -216,6 +216,19 @@ def test_draft_check_message_is_conditional_on_triggered(repo, capsys):
         assert "message" not in data
 
 
+def test_stats_window_key_is_conditional_on_the_window_flags(repo, capsys):
+    """SPEC §9.3. `window` appears only when --since/--until is given.
+
+    Same shape as draft-check.message: a key that exists only when there is
+    something for it to say. Pinned so it is never promoted to unconditional,
+    which would make an unwindowed run look windowed.
+    """
+    assert "window" not in _payload("stats", capsys)
+    assert main(["stats", "--since", "2020-01-01", "--json"]) == 0
+    windowed = json.loads(capsys.readouterr().out)
+    assert set(windowed["window"]) >= {"since", "until", "excluded_undated"}
+
+
 def test_gc_dry_run_echoes_the_mode_it_ran_in(repo, capsys):
     """SPEC §9.3. `gc` mutates; an observer passes --dry-run and needs the
     payload to confirm which mode actually ran.

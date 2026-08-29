@@ -1326,6 +1326,59 @@ def _read_firing_log(log_path: Path) -> list[dict]:
     return records
 
 
+def _parse_window_bound(text: str, *, end_of_day: bool):
+    """Parse an ISO date or datetime for --since/--until. None if unparseable.
+
+    A BARE DATE is asymmetric on purpose: as --since it means 00:00:00 that
+    day, as --until it means the end of that day. `--since D --until D` is
+    therefore the whole of day D, which is what someone naming two dates means.
+    An explicit time is used verbatim in both directions.
+    """
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(text.strip())
+    except Exception:
+        return None
+    if end_of_day and len(text.strip()) == 10:  # 'YYYY-MM-DD', no time given
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
+
+
+def _filter_window(records: list[dict], lo, hi) -> tuple[list[dict], int]:
+    """Keep records whose `ts` falls within [lo, hi]; both bounds optional.
+
+    Returns (kept, excluded_undated). A record whose `ts` is missing, not a
+    string, unparseable, or not comparable to the bounds (naive vs aware) is
+    EXCLUDED and counted — never silently kept, and never silently dropped
+    either: the caller reports the count so a window states what it could not
+    place. Per landmine #12 every line is guarded blanket-style, because the
+    log is written best-effort and any shape can appear.
+    """
+    from datetime import datetime
+    if lo is None and hi is None:
+        return records, 0
+    kept, undated = [], 0
+    for rec in records:
+        ts = rec.get("ts")
+        dt = None
+        if isinstance(ts, str):
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                dt = None
+        if dt is None:
+            undated += 1
+            continue
+        try:
+            if (lo is not None and dt < lo) or (hi is not None and dt > hi):
+                continue
+        except Exception:
+            undated += 1  # naive vs aware, or anything else uncomparable
+            continue
+        kept.append(rec)
+    return kept, undated
+
+
 # The measurement stages (#214). ONE definition, so a new stage or a new
 # surface cannot silently reach only some of them — that has now happened
 # twice (#225 Rich, #227 --all-repos). tests/test_cli.py asserts every stats
@@ -1533,6 +1586,31 @@ def _cmd_stats(args) -> int:
     log_path = firing_log_path()
     records = _read_firing_log(log_path)
 
+    # Window BEFORE any metric runs, so injection_rate and retrieval_misses are
+    # computed by the same code that computes them unwindowed (#258). A bad
+    # bound is an error, never a silently ignored filter — a typo'd date that
+    # quietly widened the window would corrupt a pre-registered measurement.
+    lo = hi = None
+    since, until = getattr(args, "since", None), getattr(args, "until", None)
+    for text, end_of_day, flag in ((since, False, "--since"), (until, True, "--until")):
+        if text is None:
+            continue
+        parsed = _parse_window_bound(text, end_of_day=end_of_day)
+        if parsed is None:
+            print(f"{flag}: not an ISO date or datetime: {text!r}", file=sys.stderr)
+            return 1
+        if flag == "--since":
+            lo = parsed
+        else:
+            hi = parsed
+    if lo is not None and hi is not None and lo > hi:
+        print(f"--since ({since}) is after --until ({until})", file=sys.stderr)
+        return 1
+    records, excluded_undated = _filter_window(records, lo, hi)
+    window = ({"since": since, "until": until,
+               "excluded_undated": excluded_undated}
+              if (lo is not None or hi is not None) else None)
+
     if getattr(args, "all_repos", False):
         return _stats_all_repos(records, log_path, args)
 
@@ -1573,8 +1651,16 @@ def _cmd_stats(args) -> int:
         **_health_block(agg),
         "advisories": advisories,
     }
+    if window is not None:
+        data["window"] = window
 
     def plain():
+        if window is not None:
+            print(f"scar stats: window {window['since'] or 'start'} .. "
+                  f"{window['until'] or 'now'}"
+                  + (f" ({window['excluded_undated']} record(s) excluded: "
+                     "no usable timestamp)"
+                     if window["excluded_undated"] else ""))
         print(f"scar stats: {data['total_firings']} firing(s) recorded "
               f"for {repo_key} ({log_path})")
         for e in per_scar:
@@ -2302,6 +2388,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all-repos", action="store_true",
                    help="show the whole machine-global log grouped per repo "
                         "(default: only the current repo's records)")
+    p.add_argument("--since", metavar="WHEN",
+                   help="only records at or after this ISO date/datetime "
+                        "(a bare date means 00:00:00 that day)")
+    p.add_argument("--until", metavar="WHEN",
+                   help="only records at or before this ISO date/datetime "
+                        "(a bare date means the END of that day, so the day is "
+                        "included)")
 
     p = _add(sub, "gc", _cmd_gc, help="clean machine state (markers, firing log); "
                              "report .scars/ hygiene (never touches .scars/)")
