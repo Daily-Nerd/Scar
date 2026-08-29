@@ -1,0 +1,112 @@
+name: Bug report
+description: Something broke — anchoring, hooks, injection, CLI, lint, or stats
+title: "fix: "
+labels: ["bug", "type:fix"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Scar is entirely local — no service, no accounts, no telemetry. That means
+        nothing about your setup reaches us unless you paste it, and the diagnostics
+        below answer most questions in one round-trip.
+
+        **A maintainer must add `status:approved` to this issue before a PR can be
+        opened against it.** CI enforces that, so please wait for the label rather
+        than opening a PR alongside the report.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did and what broke. Quote error text exactly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. scar init
+        2. scar hook install
+        3. edit a file matching an anchor
+        4. ...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Agent runtime
+      description: Where Scar was running when this happened.
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - opencode
+        - Windsurf / Cascade
+        - An MCP client (scar mcp)
+        - No agent — scar CLI directly
+        - Other (say which in "What happened")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is scar installed?
+      description: Matters more than it looks — a local editable install never upgrades.
+      options:
+        - uv tool install
+        - pipx
+        - pip
+        - editable / from source
+        - don't know
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste the output of these. All local; nothing is transmitted by running them.
+
+            scar --version
+            scar status
+            scar hook status
+            scar lint
+
+        If the symbol/tree-sitter extra is involved, add whether you installed
+        `scar-cli[symbols]` — `--force` reinstalls have been known to drop extras.
+      render: text
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ Before you paste anything else
+
+        **Do not paste `scar stats --all-repos` or the raw firing log.** Both are
+        machine-global: they name **every repository on your machine**, including
+        private ones. Plain `scar stats` is scoped to the current repo and is safe.
+
+        If a machine-global number is genuinely relevant, redact the repo names and
+        keep only the counts.
+
+  - type: textarea
+    id: stats
+    attributes:
+      label: "`scar stats` (optional)"
+      description: Current repo only. Useful for injection, retrieval or firing-log bugs.
+      render: text
+    validations:
+      required: false

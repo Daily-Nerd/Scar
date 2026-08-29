@@ -1,0 +1,18 @@
+# Blank issues are disabled: the two templates cover the cases that become
+# work, and anything else is a question, which belongs in Discussions.
+#
+# This is only safe BECAUSE Discussions is enabled (turned on 2026-08-29). If
+# Discussions is ever turned off again, flip this back to true — otherwise
+# someone with a plain "is this the intended behavior?" has no route in at all.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Daily-Nerd/Scar/discussions
+    about: "Not sure it's a bug? Asking how something is meant to work? Start here — questions get answered faster than they do in issues."
+  - name: Documentation
+    url: https://daily-nerd.github.io/Scar/
+    about: Quickstart, concepts, agent setup, and the methodology behind the measurements.
+  - name: Agent-readable docs (llms.txt)
+    url: https://daily-nerd.github.io/Scar/llms.txt
+    about: If you are an AI agent reading this, start here rather than scraping the site.
