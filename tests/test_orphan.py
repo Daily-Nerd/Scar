@@ -625,18 +625,34 @@ def test_pattern_anchor_live_beyond_old_head(tmp_path):
     assert _pattern_anchor_live("GROUNDING_MARKER", ctx)
 
 
-def test_pattern_liveness_bound_is_max_anchor_scan(tmp_path):
-    # The honest residual (#156): content loads in full, but matching runs
-    # through the shared primitive's MAX_ANCHOR_SCAN (64 KiB) cap — the ReDoS
-    # bound (landmine #11). A match past that horizon stays dead ON PURPOSE;
-    # do not "fix" this without replacing the bound.
+def test_pattern_liveness_scans_the_whole_body(tmp_path):
+    """Liveness scans the ENTIRE loaded body — no MAX_ANCHOR_SCAN horizon (#259).
+
+    This reverses a deliberate earlier decision, so the reasoning matters.
+    #156 lifted the old 8 KB read-head because a match past byte 8192 reported
+    dead, then left the 64 KiB match bound in place and pinned it here as "dead
+    ON PURPOSE ... do not fix without replacing the bound". That moved the
+    horizon rather than removing it, and the same bug came back one order of
+    magnitude up: `_add\\(\\s*sub,` matches 21 times in src/scar/cli.py, all
+    past byte 100k of 112k, and was reported as a dead anchor.
+
+    The bound was credited with capping the ReDoS surface. It does not do that.
+    Per landmine #11 a pathological anchor backtracks catastrophically on ~40
+    characters — four orders of magnitude inside the cap — so the cap never
+    prevented the hang it was cited for. The real defense is the GATE,
+    lint._is_redos_prone(). What the cap actually bounded here was LINEAR scan
+    work, and this path is offline with input already capped at
+    MAX_CONTENT_BYTES (1 MB).
+
+    The read hot path keeps the default bound; that is pinned in test_match.py.
+    """
     from scar.match import MAX_ANCHOR_SCAN
     from scar.orphan import _pattern_anchor_live, build_repo_context
     deep = "x = 0\n" * (MAX_ANCHOR_SCAN // 6 + 200) + "BEYOND_HORIZON = 1\n"
     _git_repo(tmp_path, {"vast.py": deep})
     ctx = build_repo_context(tmp_path)
-    assert "BEYOND_HORIZON" in ctx.file_contents["vast.py"]      # loaded...
-    assert not _pattern_anchor_live("BEYOND_HORIZON", ctx)       # ...but capped
+    assert "BEYOND_HORIZON" in ctx.file_contents["vast.py"]   # loaded in full...
+    assert _pattern_anchor_live("BEYOND_HORIZON", ctx)        # ...and now matched
 
 
 # --- command anchors (#175): exempt from content liveness ---
@@ -804,3 +820,32 @@ def test_active_scar_with_revives_if_is_not_a_revival(tmp_path):
         contents={"src/cli.py": "dispatch(args.command)\n"},
     )
     assert detect_revivals(store, ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Pattern liveness must not stop at MAX_ANCHOR_SCAN (#259)
+# ---------------------------------------------------------------------------
+
+def test_pattern_live_past_scan_bound_is_not_dead(tmp_path):
+    """A pattern whose only match sits past MAX_ANCHOR_SCAN is LIVE.
+
+    #156 fixed this same bug at the old 8 KB read-head and left the 64 KiB
+    matching bound in place, so the horizon moved rather than lifting. Real
+    case: `_add\\(\\s*sub,` matches 21 times in src/scar/cli.py, all past byte
+    100k of 112k, and reported as a dead anchor.
+
+    Files only ever grow, so an anchor rots purely by its file getting bigger.
+    """
+    from scar.match import MAX_ANCHOR_SCAN
+    from scar.orphan import detect_orphans, detect_partial_rot
+
+    store = _make_store(tmp_path, {
+        "0001-deep.deadend.md": _scar(id=1, status="active",
+                                      pattern_anchors=["needle_far_in"]),
+    })
+    big = ("x" * (MAX_ANCHOR_SCAN + 1000)) + "needle_far_in"
+    ctx = _make_repo_context(tracked_paths=["src/big.py"],
+                             contents={"src/big.py": big})
+
+    assert detect_orphans(store, ctx) == []
+    assert detect_partial_rot(store, ctx) == []

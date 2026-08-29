@@ -72,10 +72,18 @@ def _path_anchor_matches(anchor: str, rel_path: str) -> bool:
     return rel_path.startswith(anchor.rstrip("/"))
 
 
-def _pattern_anchor_matches(pattern: str, text: str) -> bool:
+def _pattern_anchor_matches(pattern: str, text: str,
+                            limit: int | None = MAX_ANCHOR_SCAN) -> bool:
     """One pattern anchor vs one text (path OR content): case-insensitive
     regex search. Invalid regex -> False (lint's job; never crash the read
-    path). THE shared rule — orphan detection imports this too."""
+    path). THE shared rule — orphan detection imports this too.
+
+    *limit* caps how much of *text* is scanned; ``None`` scans all of it.
+    The default is the read hot path's bound and must stay that way. Offline
+    callers (liveness/orphan detection) pass ``None``: their input is a
+    known-size file already capped at MAX_CONTENT_BYTES, they are not on the
+    latency budget, and a bound there does not protect anything — it just
+    reports live anchors as dead once a file grows past it (#259)."""
     try:
         rx = re.compile(pattern, re.IGNORECASE)
     except re.error:
@@ -90,7 +98,7 @@ def _pattern_anchor_matches(pattern: str, text: str) -> bool:
     # never hit CI can still backtrack here. Bounding arbitrary regex at runtime
     # needs a killable subprocess or a timeout-capable engine — both rejected to
     # keep this hot path stdlib-only and under the hook latency budget. See #88.
-    return bool(rx.search(text[:MAX_ANCHOR_SCAN]))
+    return bool(rx.search(text if limit is None else text[:limit]))
 
 
 def _read_source(abs_path: str) -> str | None:
