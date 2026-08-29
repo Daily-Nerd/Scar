@@ -223,7 +223,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `last_fired_age_days` int, `advisories` array | `per_scar[]`: `id`, `count`, `violations` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `last_fired_age_days` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -231,6 +231,16 @@ Top-level keys, and the keys of each object inside the listed arrays.
 
 `gc` mutates state. A consumer that only wants to observe MUST pass
 `--dry-run`; `dry_run` echoes back which mode ran.
+
+`stats --since` / `--until` filter records **before** any metric is computed,
+so every number is window-scoped by the same code that computes it unwindowed.
+Timestamps in the firing log are **naive local time** (`time.strftime`), and the
+bounds are interpreted in that same frame — a window is therefore local-time,
+never UTC. A bare date means `00:00:00` as `--since` and the END of that day as
+`--until`, so `--since D --until D` is the whole of day D. Records whose `ts` is
+missing, non-string, unparseable, or not comparable to the bounds are excluded
+and reported in `window.excluded_undated` — a windowed total that silently
+dropped rows would look cleaner than the data is.
 
 `draft-check` emits **no output at all** — not even `{}` — when the working
 directory is not a usable git repo. A consumer must treat empty stdout as "no

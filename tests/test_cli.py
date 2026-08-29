@@ -3538,3 +3538,124 @@ def test_stats_counts_a_doubly_hooked_firing_once(tmp_path):
     log = _firing_log(tmp_path, [_row(), _row()])
     agg = _aggregate_firings(_read_firing_log(log))
     assert agg["counts"][1] == 1
+
+
+# ---------------------------------------------------------------------------
+# stats --since / --until: a measurement window as a first-class operation (#258)
+# ---------------------------------------------------------------------------
+
+def test_stats_since_excludes_rows_before_the_window(repo, capsys, monkeypatch):
+    """--since is an inclusive lower bound applied BEFORE metrics compute, so a
+    pre-registered window is expressed by the tool rather than by a throwaway
+    script that re-implements injection_rate."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-08-29T09:00:00", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--since", "2026-08-29", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 1
+    assert data["last_fired"] == "2026-08-29T09:00:00"
+
+
+def test_stats_until_bare_date_includes_that_whole_day(repo, capsys, monkeypatch):
+    """`--until 2026-08-29` means the END of the 29th, so `--since D --until D`
+    is the whole of day D — what someone naming two dates means. A bare date
+    resolving to midnight would silently drop everything after 00:00:00."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-08-29T09:00:00", "repo": str(repo), "target": "a",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-08-30T09:00:00", "repo": str(repo), "target": "b",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--since", "2026-08-29", "--until", "2026-08-29",
+                 "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 1
+
+
+def test_stats_rejects_an_unparseable_window_bound(repo, capsys, monkeypatch):
+    """A typo'd date must ERROR, never silently widen the window — a quietly
+    ignored bound corrupts a pre-registered measurement in the flattering
+    direction and nothing in the output would say so."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [])
+    assert main(["stats", "--since", "last-tuesday", "--json"]) == 1
+    assert "not an ISO date" in capsys.readouterr().err
+
+
+def test_stats_window_reports_records_it_could_not_place(repo, capsys, monkeypatch):
+    """A windowed run must SAY how many records it dropped for lacking a usable
+    timestamp. Silently dropping them makes a window look cleaner than the data
+    is; per landmine #12 any `ts` shape can appear, so this is not exotic."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-08-29T09:00:00", "repo": str(repo), "target": "a",
+         "scar_ids": [1], "count": 1},
+        {"ts": None, "repo": str(repo), "target": "b", "scar_ids": [1], "count": 1},
+        {"repo": str(repo), "target": "c", "scar_ids": [1], "count": 1},
+        {"ts": "not-a-timestamp", "repo": str(repo), "target": "d",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--since", "2026-08-01", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 1
+    assert data["window"]["excluded_undated"] == 3
+
+
+def test_stats_window_composes_with_all_repos(repo, capsys, monkeypatch):
+    """Characterization (written after #258's first green): the window is
+    applied before the --all-repos branch, so both views share one filter
+    rather than the machine-global view quietly ignoring it."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-01T09:00:00", "repo": "/repo/one", "target": "a",
+         "scar_ids": [1], "count": 1},
+        {"ts": "2026-08-29T09:00:00", "repo": "/repo/two", "target": "b",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--all-repos", "--since", "2026-08-01", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [g["repo"] for g in data["repos"]] == ["/repo/two"]
+
+
+def test_stats_without_window_flags_is_unchanged(repo, capsys, monkeypatch):
+    """Characterization: absent --since/--until, no `window` key appears and no
+    record is filtered. #258 promised the default path is untouched, and SPEC
+    §9.1 only permits keys to APPEAR additively, not to show up unconditionally
+    with a meaning the caller never asked for."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2020-01-01T00:00:00", "repo": str(repo), "target": "a",
+         "scar_ids": [1], "count": 1},
+        {"ts": None, "repo": str(repo), "target": "b", "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "window" not in data
+    assert data["total_firings"] == 2      # undated row still counted
+
+
+def test_stats_rejects_a_backwards_window(repo, capsys, monkeypatch):
+    """Characterization: --since after --until is empty by construction, which
+    would read as 'no activity' rather than 'you inverted the bounds'."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [])
+    assert main(["stats", "--since", "2026-09-12",
+                 "--until", "2026-08-29", "--json"]) == 1
+    assert "is after" in capsys.readouterr().err
