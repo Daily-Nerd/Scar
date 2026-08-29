@@ -54,7 +54,7 @@ trust model is social by design (git history, `authors`, evidence-by-reference);
 that is sufficient within one repo or org. It does **not** carry across orgs that
 share no git history — the future cross-org / org-graph layer where "this dead end
 hit N teams" must be attributable. `receipt_id` reserves the slot for a signed,
-content-addressed receipt (e.g. [veritrail](https://github.com/Daily-Nerd/veritrail))
+content-addressed receipt (e.g. [vitni](https://github.com/Daily-Nerd/vitni))
 bound to an authorship (`scar_draft`) or promotion event. No tool emits, requires,
 or validates it today, and the line-wise parser ignores it like any unknown key —
 so existing scars are unaffected. It will not become required in v0.x.
