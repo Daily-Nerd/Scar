@@ -9,11 +9,7 @@ authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/cli.py
   - path: tests/test_json_contract.py
-  # No pattern anchor on purpose. `_add\(\s*sub,` matches 21 real call sites,
-  # but all of them sit past byte 100k in a 112 KiB cli.py, and pattern
-  # matching truncates at MAX_ANCHOR_SCAN (64 KiB) — so it lints as a DEAD
-  # anchor while the code is plainly present. The two path anchors above are
-  # precise and live. See the issue linked in evidence.
+  - pattern: "_add\(\s*sub,"
 evidence:
   - pr: 257
   - issue: 255

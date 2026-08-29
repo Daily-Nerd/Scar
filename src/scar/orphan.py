@@ -164,7 +164,14 @@ def _pattern_anchor_live(pattern: str, ctx: RepoContext,
     for rel, content in ctx.file_contents.items():
         if rel == exclude_path:
             continue
-        if content and _pattern_anchor_matches(pattern, content):
+        # limit=None: scan the WHOLE body. #156 lifted the 8 KB read-head for
+        # this reason and left the 64 KiB match bound, which moved the horizon
+        # instead of removing it — a pattern matching only past that bound still
+        # reported dead (#259). This path is offline, and its input is already
+        # capped at MAX_CONTENT_BYTES, so the bound bought nothing here. Per
+        # landmine #11 the ReDoS defense is lint._is_redos_prone() at the gate,
+        # never this cap; the read hot path keeps the default bound.
+        if content and _pattern_anchor_matches(pattern, content, limit=None):
             return True
     return False
 
