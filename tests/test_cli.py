@@ -3659,3 +3659,25 @@ def test_stats_rejects_a_backwards_window(repo, capsys, monkeypatch):
     assert main(["stats", "--since", "2026-09-12",
                  "--until", "2026-08-29", "--json"]) == 1
     assert "is after" in capsys.readouterr().err
+
+
+def test_stats_all_repos_reports_the_window_it_applied(repo, capsys, monkeypatch):
+    """--all-repos FILTERS by the window but must also SAY so.
+
+    The filter landed before the branch, so machine-global counts were already
+    windowed — but the payload carried no `window` key, which meant
+    excluded_undated was invisible in exactly the view used for cross-repo
+    measurement. Windowed numbers with no statement of the window are the
+    shape of an unreproducible figure.
+    """
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-08-29T09:00:00", "repo": "/repo/two", "target": "b",
+         "scar_ids": [1], "count": 1},
+        {"ts": None, "repo": "/repo/two", "target": "c", "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--all-repos", "--since", "2026-08-01", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["window"]["since"] == "2026-08-01"
+    assert data["window"]["excluded_undated"] == 1

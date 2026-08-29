@@ -1612,7 +1612,7 @@ def _cmd_stats(args) -> int:
               if (lo is not None or hi is not None) else None)
 
     if getattr(args, "all_repos", False):
-        return _stats_all_repos(records, log_path, args)
+        return _stats_all_repos(records, log_path, args, window)
 
     store = _require_store()
     if store is None:
@@ -1690,7 +1690,8 @@ def _cmd_stats(args) -> int:
     return 0
 
 
-def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
+def _stats_all_repos(records: list[dict], log_path: Path, args,
+                     window: dict | None = None) -> int:
     """Machine-global stats view (#137): one group per repo recorded in the
     log, each aggregated independently. Ids are NEVER merged across repos —
     a foreign repo's #1 is a different scar than this repo's #1. Repo-local
@@ -1711,8 +1712,15 @@ def _stats_all_repos(records: list[dict], log_path: Path, args) -> int:
                        **_stage_block(agg), **_health_block(agg)})
     groups.sort(key=lambda g: (-g["total_firings"], g["repo"]))
     data = {"all_repos": True, "repos": groups}
+    if window is not None:
+        data["window"] = window
 
     def plain():
+        if window is not None:
+            print(f"scar stats --all-repos: window {window['since'] or 'start'} "
+                  f".. {window['until'] or 'now'}"
+                  + (f" ({window['excluded_undated']} record(s) excluded: "
+                     "no usable timestamp)" if window["excluded_undated"] else ""))
         print(f"scar stats --all-repos: {len(groups)} repo(s) in {log_path}")
         for g in groups:
             print(f"  {g['repo']}: {g['total_firings']} firing(s)")
