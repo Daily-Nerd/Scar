@@ -1,0 +1,70 @@
+name: Feature request
+description: A capability Scar should have, or a pain it should remove
+title: "feat: "
+labels: ["enhancement", "type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A maintainer must add `status:approved` to this issue before a PR can be
+        opened against it.** CI enforces that, so please let the idea get a verdict
+        before writing code against it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        The pain, as concretely as you can. What happens today that shouldn't, or
+        can't happen that should? Prefer a real case you hit over a hypothetical.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How it would work from your side — commands, flags, output, behavior. Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other shapes this could take.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Anchoring and matching (path, pattern, symbol, fingerprint, command)
+        - Hooks and agent integration
+        - CLI surface and output
+        - Harvest and authoring
+        - Lint, orphan detection, lifecycle
+        - Measurement — firing log, stats, compliance
+        - Docs and website
+        - Packaging and install
+        - Other / not sure
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Before you write it up
+
+        Two things this project is deliberate about, worth knowing so a proposal
+        does not get bounced for a reason that isn't obvious:
+
+        - **Machine-readable output is a contract.** The `--json` payloads are
+          documented in `SPEC.md` §9. Adding keys is fine; removing or retyping a
+          documented key is breaking.
+        - **Numbers are refused rather than flattered.** Where a metric's
+          denominator is absent, Scar reports `null` instead of a number the data
+          cannot support. Proposals that would report a confident number from thin
+          evidence tend to get pushed back on for that reason alone.
