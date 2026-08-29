@@ -1,19 +1,14 @@
 ---
-id: 0
+id: 19
 type: deadend
 title: A token in a scar body cannot prove hook delivery — the agent can just read the file
 severity: high
 confidence: 0.95
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: src/scar/codex.py
   - path: src/scar/hooks.py
-  # No pattern anchor on purpose: the candidate phrasings ("verification
-  # token", "delivery proof") matched nothing but this file, and "A/B" alone
-  # is too loose to earn one. Path anchors are the honest fire condition —
-  # this hazard applies whenever someone edits a hook adapter and wants to
-  # prove it works. See scar #35 on ghost patterns that only self-match.
 evidence:
   - pr: 244
   - pr: 247
@@ -21,7 +16,7 @@ evidence:
 expires:
   condition: "a delivery check exists that observes hook execution directly (firing-log row or marker) rather than model output"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 Putting a private token in an active scar's body and looking for it in the
