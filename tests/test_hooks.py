@@ -781,3 +781,59 @@ def test_firing_record_omits_edit_id_when_payload_has_none(
     assert main(["hook", "precheck"]) == 0
     rec = json.loads((state / "firing-log.jsonl").read_text(encoding="utf-8").strip())
     assert "edit_id" not in rec
+
+
+# ---------------------------------------------------------------------------
+# armed_ids: which fired scars could actually have been recorded as violated (#266)
+# ---------------------------------------------------------------------------
+
+def _scar_obj(id: int, violation: str = ""):
+    from scar.model import Scar
+    return Scar(id=id, type="deadend", title=f"S{id}", severity="medium",
+                confidence=0.7, created="2026-08-29", authors=["t"],
+                path_anchors=["src/"], violation=violation, status="active")
+
+
+def test_log_firing_records_which_scars_were_armed(tmp_path, monkeypatch):
+    """A scar with no `violation:` regex CANNOT be recorded as violated, so a
+    compliance denominator that counts its firings pads the numerator with
+    events incapable of failing.
+
+    The hook already knows this at write time — it loaded the scar to inject
+    it. Recording it removes the manual `git log -S'violation:'` reconstruction
+    the published figure currently depends on.
+    """
+    from scar.hooks import _log_firing
+    from scar.store import ScarStore, init_scars
+
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    init_scars(tmp_path)
+    store = ScarStore.discover(tmp_path)
+    hits = [_scar_obj(1, violation="sleep\\(7\\)"), _scar_obj(2)]
+
+    _log_firing(store, "src/a.py", hits)
+
+    rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
+    assert rec["scar_ids"] == [1, 2]
+    assert rec["armed_ids"] == [1]
+
+
+def test_log_firing_records_empty_armed_ids_rather_than_omitting_them(
+        tmp_path, monkeypatch):
+    """`armed_ids: []` means 'none of these were armed'. A MISSING key means
+    'this row predates the field'. Those are different facts and the second
+    must never be inferred as the first — a scar armed last week was not armed
+    last month, so back-filling would rewrite history in the flattering
+    direction.
+    """
+    from scar.hooks import _log_firing
+    from scar.store import ScarStore, init_scars
+
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    init_scars(tmp_path)
+    store = ScarStore.discover(tmp_path)
+
+    _log_firing(store, "src/a.py", [_scar_obj(1)])
+
+    rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
+    assert rec["armed_ids"] == []

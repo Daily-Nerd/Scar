@@ -1384,7 +1384,8 @@ def _filter_window(records: list[dict], lo, hi) -> tuple[list[dict], int]:
 # twice (#225 Rich, #227 --all-repos). tests/test_cli.py asserts every stats
 # surface exposes exactly these keys.
 STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
-                        "edits_observed", "injection_rate"})
+                        "edits_observed", "injection_rate",
+                        "armed_firings", "armed_unknown"})
 
 
 def _stage_block(agg: dict) -> dict:
@@ -1441,8 +1442,19 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
                      f"edit(s) injected a scar; {misses} missed firing(s)")
     else:
         retrieval = f"retrieval: {misses} missed firing(s) — LOWER BOUND"
+    # #266: the enforcement denominator that can actually fail. A firing on a
+    # scar with no tripwire could never have been recorded as violated, so the
+    # armed count is the honest denominator; `armed_unknown` names the rows
+    # that predate the field rather than folding them into either side.
+    armed = block.get("armed_firings")
+    unknown = block.get("armed_unknown") or 0
+    enforcement = f"enforcement: {violations} violation(s) / {total_firings} firing(s)"
+    if armed is not None:
+        enforcement += f"; {armed} on violation-armed scar(s)"
+        if unknown:
+            enforcement += f", {unknown} unplaceable (logged before arming was recorded)"
     return [
-        f"enforcement: {violations} violation(s) / {total_firings} firing(s)",
+        enforcement,
         retrieval,
         f"demotions: {block['demotions']} scar(s) rendered as one-liners",
     ]
@@ -1467,6 +1479,11 @@ def _aggregate_firings(records: list[dict]) -> dict:
     demotions = 0
     edits_observed = 0      # precheck passes recorded (#217 denominator)
     zero_hit_edits = 0      # ...of which matched nothing
+    # #266: firings on scars that carried a violation: tripwire, and firings we
+    # cannot place because the row predates the field. NEVER inferred from
+    # today's .scars/ — a scar armed last week was not armed last month.
+    armed_firings = 0
+    armed_unknown = 0
     last_fired = None
     for rec in records:
         target = rec.get("target")
@@ -1485,6 +1502,14 @@ def _aggregate_firings(records: list[dict]) -> dict:
                         prev = fired_on.get(key)
                         if prev is None or ts_rec < prev:
                             fired_on[key] = ts_rec
+        if isinstance(sids, list) and sids:
+            armed = rec.get("armed_ids")
+            if isinstance(armed, list):
+                armed_firings += sum(1 for a in armed if isinstance(a, int))
+            else:
+                # Missing or malformed: unplaceable, not unarmed. Blanket
+                # tolerance per landmine #12 — any shape appears in this log.
+                armed_unknown += sum(1 for x in sids if isinstance(x, int))
         dids = rec.get("demoted_ids", [])
         if isinstance(dids, list):
             demotions += sum(1 for d in dids if isinstance(d, int))
@@ -1550,6 +1575,8 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "retrieval_misses": retrieval_misses,
             "demotions": demotions,
             "edits_observed": edits_observed,
+            "armed_firings": armed_firings,
+            "armed_unknown": armed_unknown,
             "injection_rate": injection_rate,
             "instrument_disconnected": instrument_disconnected,
             "last_fired_age_days": _age_in_days(last_fired),

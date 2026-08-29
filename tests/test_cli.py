@@ -3681,3 +3681,31 @@ def test_stats_all_repos_reports_the_window_it_applied(repo, capsys, monkeypatch
     data = json.loads(capsys.readouterr().out)
     assert data["window"]["since"] == "2026-08-01"
     assert data["window"]["excluded_undated"] == 1
+
+
+def test_stats_reports_armed_firings_and_refuses_to_guess_for_old_rows(
+        repo, capsys, monkeypatch):
+    """#266. `armed_firings` counts firings on scars that carried a tripwire;
+    rows written before the field existed are counted as `armed_unknown`.
+
+    The unknown bucket is the point. Inferring armedness from today's .scars/
+    would rewrite history in the flattering direction — a scar armed last week
+    was not armed last month — so an old row is reported as unplaceable rather
+    than quietly folded into either side.
+    """
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-08-29T09:00:00", "repo": str(repo), "target": "a",
+         "scar_ids": [1, 2], "count": 2, "armed_ids": [1]},
+        {"ts": "2026-08-29T09:01:00", "repo": str(repo), "target": "b",
+         "scar_ids": [2], "count": 1, "armed_ids": []},
+        {"ts": "2026-07-01T09:00:00", "repo": str(repo), "target": "c",
+         "scar_ids": [1], "count": 1},                      # legacy: no field
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_firings"] == 4
+    assert data["armed_firings"] == 1
+    assert data["armed_unknown"] == 1

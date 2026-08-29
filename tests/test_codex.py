@@ -138,6 +138,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         "target": str(repo / "payments" / "a.py"),
         "scar_ids": [1],
         "count": 1,
+        # #266: which fired scars carried a violation: tripwire and could
+        # therefore be recorded as violated. Always present, even when empty —
+        # `[]` is "none armed", a MISSING key is "row predates the field".
+        "armed_ids": [1],
         "demoted_ids": [],
         "runtime": "codex",
         "edit_id": "exec-test-1",
