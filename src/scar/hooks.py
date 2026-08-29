@@ -153,6 +153,17 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             "target": target,
             "scar_ids": [s.id for s in hits],
             "count": len(hits),
+            # Which of those scars carried a violation: tripwire AT THIS MOMENT
+            # (#266). A scar without one cannot ever be recorded as violated, so
+            # a compliance denominator counting its firings pads the numerator
+            # with events incapable of failing. The hook already loaded the scar
+            # to inject it, so this is free here and unrecoverable later —
+            # arming dates are only reconstructible from git history.
+            #
+            # ALWAYS present, even empty: `[]` means "none of these were armed",
+            # a MISSING key means "this row predates the field". Those are
+            # different facts, and the second must never be read as the first.
+            "armed_ids": [s.id for s in hits if getattr(s, "violation", "")],
             "demoted_ids": demoted_ids or [],
             "runtime": runtime,
         }
