@@ -162,3 +162,87 @@ All harvest output is `candidates/`, never active. Precision over recall: a harv
 3. **RESOLVED.** Monorepos use a single root `.scars/` with path scoping (nearest-ancestor discovery), not `.scars/` per package.
 4. **RESOLVED.** No pre-ranked binary index is needed: a live stdlib parse of `.scars/` ranks under the hook latency budget. Revisit only if a repo's scar count ever pushes past it.
 5. **OPEN** (tracked). Authorship trust: agent-authored scars marked `authors: ["claude-code"]` — should they start at a lower *static* confidence than human-authored ones? This no longer depends on the (now-cut) §5 dynamics; it could ship as a simple authored-default policy. Deferred with the rest of confidence tuning (issue #95).
+
+## 9. Machine-readable output contract
+
+Nine subcommands accept `--json`: `lint`, `status`, `check`, `why`, `stats`,
+`gc`, `orphan`, `reanchor`, `draft-check`. Two more are machine-mode by
+design: `scar inject` (hook JSON or silence) and `scar brief --compact`.
+
+Everything in this section is a **promise to external consumers**. It exists
+because a caller that parses this output — an agent runtime, another tool, a
+sibling project probing `scar` as an optional external binary — needs to know
+what it may rely on and what may move under it.
+
+### 9.1 Compatibility policy
+
+- **Guaranteed keys** (§9.3) are present on every successful `--json` run of
+  that subcommand, with the stated type. Removing one, renaming one, or
+  changing its type is a **breaking change**.
+- **New keys may appear in any release.** Consumers MUST ignore unknown keys.
+  Adding a key is *not* breaking, so do not assert on an exact key set.
+- **List order is not guaranteed** unless stated. `stats.per_scar` is the one
+  exception: it is sorted by descending `count`, then ascending `id`.
+- **`--json` implies machine mode.** It is never Rich-rendered and never
+  TTY-gated. Human-facing stdout is a separate, unpromised surface — parsing
+  it is unsupported and it *will* change.
+- **Unsupported surfaces.** The `.scars/*.md` files, the raw
+  `firing-log.jsonl`, and the marker files under machine state are internal.
+  They have changed shape and will again. Consume the CLI, not the store.
+
+### 9.2 `null` means refused, not zero
+
+Two `stats` fields are nullable, and the distinction is load-bearing:
+
+| Field | `null` when | Why |
+|---|---|---|
+| `injection_rate` | zero-hit passes are not being logged | Without `SCAR_LOG_ZERO_HITS=1` the log contains only edits that *matched*, so firings/edits is 100% by construction — a flattering number measuring nothing (#217). |
+| `retrieval_misses` | `instrument_disconnected` is `true` | Every violation in such a window has no prior firing *by construction*, so the count measures a broken install, not retrieval (#235, #237). |
+
+In both cases `null` is a deliberate refusal to report an undefined quantity.
+
+> A consumer that coerces `null` to `0` publishes a confident false number.
+> This is not hypothetical: it is the exact failure that produced a retrieval
+> figure this project had to publicly retract. **Propagate the refusal.**
+
+Related: `retrieval_misses` is a **floor, not a rate** even when non-null —
+misses on scars carrying no `violation:` pattern are not observable from the
+firing log at all. Never present it as a percentage.
+
+`instrument_disconnected: true` reports an *observed impossibility* (violations
+recorded with zero edits observed). `false` is not a clean bill of health — an
+empty log is silent, not healthy.
+
+### 9.3 Guaranteed keys
+
+Top-level keys, and the keys of each object inside the listed arrays.
+
+| Command | Guaranteed top-level | Array item keys |
+|---|---|---|
+| `lint` | `files` int, `findings` array, `failed` int, `orphans`, `partial_rot`, `symbol_drift`, `revivals`, `reverse_hints`, `unreachable_evidence` arrays, `shallow_clone` bool | `findings[]`: `file`, `level`, `message` |
+| `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
+| `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
+| `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `last_fired_age_days` int, `advisories` array | `per_scar[]`: `id`, `count`, `violations` |
+| `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
+| `orphan` | `orphan_detected`, `partial_rot` arrays | — |
+| `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
+| `draft-check` | `triggered` bool, `revert_language`, `revert_commits`, `reset_hard`, `churn` ints. `message` str **only when `triggered` is true** | — |
+
+`gc` mutates state. A consumer that only wants to observe MUST pass
+`--dry-run`; `dry_run` echoes back which mode ran.
+
+`draft-check` emits **no output at all** — not even `{}` — when the working
+directory is not a usable git repo. A consumer must treat empty stdout as "no
+verdict", never as a parse error. When it does emit, `message` is present only
+on `triggered: true`; there is no message to carry otherwise.
+
+`reanchor --json` is **propose-only**. `--apply` is human-review-only, never
+CI, and never emits JSON.
+
+### 9.4 Enforcement
+
+`tests/test_json_contract.py` asserts every guaranteed key above against live
+command output, and asserts the nullable semantics of §9.2. A guarantee no
+test enforces is an untestable assertion, and untestable assertions are the
+ones that reach `main` wrong.
