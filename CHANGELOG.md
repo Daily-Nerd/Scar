@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.0](https://github.com/Daily-Nerd/Scar/compare/v0.20.0...v0.21.0) (2026-08-29)
+
+
+### Features
+
+* **stats:** add --since/--until so a window is a first-class operation ([#263](https://github.com/Daily-Nerd/Scar/issues/263)) ([f1b262b](https://github.com/Daily-Nerd/Scar/commit/f1b262b600394d206022ce7f129a168f518254e1)), closes [#258](https://github.com/Daily-Nerd/Scar/issues/258)
+* **stats:** record which fired scars were violation-armed ([#267](https://github.com/Daily-Nerd/Scar/issues/267)) ([206d6af](https://github.com/Daily-Nerd/Scar/commit/206d6afff0094b72ec01ff004a274442738617d0)), closes [#266](https://github.com/Daily-Nerd/Scar/issues/266)
+
+
+### Bug Fixes
+
+* **codex:** let the duplicate-channel warning be silenced ([#253](https://github.com/Daily-Nerd/Scar/issues/253)) ([e060656](https://github.com/Daily-Nerd/Scar/commit/e06065631f9fd3054d7d86d1a528d464a15af432)), closes [#252](https://github.com/Daily-Nerd/Scar/issues/252)
+* **match:** scan whole file bodies for pattern liveness ([#262](https://github.com/Daily-Nerd/Scar/issues/262)) ([fe177ca](https://github.com/Daily-Nerd/Scar/commit/fe177ca55bd05dc69a9a486b89bb8dca0e24e514)), closes [#259](https://github.com/Daily-Nerd/Scar/issues/259)
+* **stats:** report the applied window in the --all-repos payload ([#265](https://github.com/Daily-Nerd/Scar/issues/265)) ([b0e8c1f](https://github.com/Daily-Nerd/Scar/commit/b0e8c1f4a138b2c8847acdd1e7ba8c09269a4069)), closes [#264](https://github.com/Daily-Nerd/Scar/issues/264)
+
+
+### Documentation
+
+* **spec:** publish a stability contract for the nine --json payloads ([#257](https://github.com/Daily-Nerd/Scar/issues/257)) ([c3e5c1b](https://github.com/Daily-Nerd/Scar/commit/c3e5c1b94060fc551aaece7ad98085464b9603d7)), closes [#255](https://github.com/Daily-Nerd/Scar/issues/255)
+
 ## [0.20.0](https://github.com/Daily-Nerd/Scar/compare/v0.19.0...v0.20.0) (2026-08-28)
 
 
