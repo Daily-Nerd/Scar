@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .hooks import (
+    _context_bytes,
     _emit,
     _log_firing,
     _log_violation_firing,
@@ -191,15 +192,18 @@ def pretool() -> int:
         for match in matches:
             by_path.setdefault(match.path, []).append(match.scar)
         edit_id = _edit_id(payload)
+        # #279: omitted when this host supplies no transcript path, which is
+        # the honest state rather than a zero.
+        ctx = _context_bytes(payload)
         for rel_path, scars in by_path.items():
             target = str((store.root / rel_path).resolve())
             _log_firing(store, target, scars,
                         demoted_ids=[s.id for s in scars if s.id in demoted_ids],
-                        runtime=RUNTIME, edit_id=edit_id)
+                        runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx)
         if not matches and _zero_hit_logging():
             for target, _ in targets:
                 _log_firing(store, str(target), [], runtime=RUNTIME,
-                            edit_id=edit_id)
+                            edit_id=edit_id, context_bytes=ctx)
     except Exception:
         return 0
     return 0

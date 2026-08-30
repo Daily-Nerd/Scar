@@ -49,6 +49,36 @@ def _state_dir() -> Path:
 # armed_ids are (#266).
 VERDICT_EXPECTED_KEY = "verdict_expected"
 
+# Context pressure at firing time (#279). RECORDING ONLY: nothing reads this
+# to make a decision, and the pre-registered analysis that will read it is
+# #282, deliberately gated on a real distribution existing first.
+#
+# The unit is BYTES OF THE HOST'S TRANSCRIPT FILE, not tokens. It is a proxy
+# for "how much conversation was already in play", and it is the only such
+# signal any supported host actually hands us. Naming it in bytes keeps a
+# consumer from reading it as a token count.
+#
+# The key is OMITTED when the host supplies nothing. Not zero, which would
+# claim the context was empty, and not null, which a careless consumer
+# coerces to zero anyway. Absent means the host did not say, the same
+# convention as armed_ids (#266) and block_capable (#278).
+CONTEXT_BYTES_KEY = "context_bytes"
+
+
+def _context_bytes(payload: dict) -> int | None:
+    """Size of the host's transcript file, or None when it cannot be known.
+
+    Never raises: this runs on the injection hot path, where a stat failure
+    must degrade to "unknown" rather than cost the user an edit (#91).
+    """
+    try:
+        path = payload.get("transcript_path")
+        if not isinstance(path, str) or not path:
+            return None
+        return os.stat(path).st_size
+    except Exception:
+        return None
+
 
 def firing_log_path() -> Path:
     """Path to the firing-observability log (#106) — same state dir/override
@@ -148,7 +178,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
                 demoted_ids: list | None = None,
                 runtime: str = "claude-code",
                 edit_id: str | None = None,
-                block_capable: bool = False) -> None:
+                block_capable: bool = False,
+                context_bytes: int | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -204,6 +235,9 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         # same-second precheck/posttool pair on its own.
         if edit_id:
             record["edit_id"] = edit_id
+        # Omitted, never zeroed. See CONTEXT_BYTES_KEY.
+        if context_bytes is not None:
+            record[CONTEXT_BYTES_KEY] = context_bytes
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -334,7 +368,8 @@ def precheck() -> int:
         if hits or _zero_hit_logging():
             _log_firing(store, target, hits,
                         demoted_ids=[s.id for s, _ in demoted],
-                        edit_id=edit_id if isinstance(edit_id, str) else None)
+                        edit_id=edit_id if isinstance(edit_id, str) else None,
+                        context_bytes=_context_bytes(payload))
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than

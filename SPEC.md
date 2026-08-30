@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -307,6 +307,29 @@ therefore understates the claim, never inflates it.
 > `0 violations` in an all-advisory window measures what the agent did. It says
 > nothing about what it was prevented from doing, because nothing could prevent
 > anything.
+
+### 9.6 Context size is recorded, not yet interpreted
+
+`context_bytes` on a firing row is the size of the host's transcript file at
+the moment of the firing. The unit is **bytes, not tokens**: it is a proxy for
+how much conversation was already in play, and it is the only such signal a
+supported host hands us.
+
+The key is **omitted** when the host supplies nothing. Not zero, which would
+claim the context was empty, and not `null`, which a careless consumer coerces
+to zero anyway.
+
+`firings_context_known` and `firings_context_unknown` report the population
+rate, in scar-firings, summing to `total_firings`. They exist because whether a
+given host supplies a transcript path on the injection hook is not knowable in
+advance, and a field that silently never populates is a blind column rather
+than a measurement. Check the population rate before drawing any conclusion
+from the values.
+
+Nothing reads `context_bytes` to make a decision, and no claim is derived from
+it here. The analysis that will read it is pre-registered separately and is
+gated on a real distribution existing first: buckets chosen after seeing a
+result are how a result gets laundered into a finding.
 
 `stats --since` / `--until` filter records **before** any metric is computed,
 so every number is window-scoped by the same code that computes it unwindowed.
