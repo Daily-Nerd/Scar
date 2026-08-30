@@ -132,6 +132,8 @@ candidate ──promote──▶ active ──challenge──▶ challenged
 
 - Confidence is a static, human-authored ranking weight (0..1); the tool does not currently mutate it. Dynamic confidence — decay toward a floor without confirmations, an uphold bump on a survived challenge, and an explicit `scar confirm <id>` — is deferred until scar volume and confirmation data can calibrate a decay policy without unvalidated constants (issue #95).
 - `review_after` forces periodic human contact with old scars; CI can warn on overdue reviews.
+- `review_after_firings` is the count-based sibling of `review_after`: once a scar has fired N times *since the last commit that touched its file*, `scar status` and `scar lint` escalate it from an ambient warning to an explicit review flag. Revising the scar re-affirms it and restarts the count; archiving it silences the flag because archived scars do not fire. Absent ⇒ per-type default (`landmine` 10, `fence` 15, `deadend` disabled); `0` ⇒ never escalate. Advisory by default — `scar lint --fail-firing-review` opts into a non-zero exit. Escalation reports only; it never archives or challenges a scar (ADR-4 keeps lifecycle transitions human).
+- When the reset point cannot be determined (untracked scar file, or no git history), the count reported is a **lifetime** count and says so. A since-revision count and a lifetime count are different quantities and must never share one label.
 - Archive keeps everything: SCAR's own history is negative knowledge.
 
 ## 6. Harvest heuristics (v0)
