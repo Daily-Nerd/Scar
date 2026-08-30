@@ -18,3 +18,8 @@ experiments/fence-honor/runs/
 .claude/
 
 .scars/candidates/fp-log.txt
+
+# Coverage artifacts (#273) — written by pytest-cov in CI and locally.
+.coverage
+coverage.xml
+junit-*.xml

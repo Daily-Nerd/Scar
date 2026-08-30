@@ -1,0 +1,71 @@
+# Codecov configuration (#273): per-subsystem coverage visibility.
+#
+# Components are pure report filtering (https://docs.codecov.com/docs/components):
+# they slice the single existing upload (--cov=scar) by path, so this file adds
+# no CI jobs and changes no uploads. Phase 1 deliberately defines NO per-component
+# status gates — targets picked before baselines exist are guesses, and a guessed
+# target either blocks honest PRs or is loose enough to mean nothing. Tighten once
+# real numbers are visible.
+#
+# hook/ adapter scripts are exercised via subprocess and never appear in the
+# coverage report, so they cannot be a component under the current collection.
+
+comment:
+  layout: "header, diff, flags, components, files"
+
+coverage:
+  status:
+    # Reporting only. informational: true means Codecov posts the verdict and
+    # never fails the check — a coverage system that can turn CI red on a
+    # rotated token is a coverage system nobody trusts.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+component_management:
+  individual_components:
+    - component_id: matching
+      name: matching
+      paths:
+        - src/scar/match.py
+        - src/scar/symbols.py
+        - src/scar/renames.py
+        - src/scar/reanchor.py
+    - component_id: model-store
+      name: model-store
+      paths:
+        - src/scar/model.py
+        - src/scar/store.py
+    - component_id: lifecycle
+      name: lifecycle
+      paths:
+        - src/scar/lint.py
+        - src/scar/orphan.py
+        - src/scar/gc.py
+        - src/scar/cascade.py
+        - src/scar/evidence.py
+    - component_id: host-hooks
+      name: host-hooks
+      paths:
+        - src/scar/hooks.py
+        - src/scar/installer.py
+        - src/scar/codex.py
+        - src/scar/draftcheck.py
+    - component_id: agent-surface
+      name: agent-surface
+      paths:
+        - src/scar/agent.py
+        - src/scar/mcp.py
+    - component_id: cli
+      name: cli
+      paths:
+        - src/scar/cli.py
+        - src/scar/output.py
+        - src/scar/render.py
+    - component_id: harvest
+      name: harvest
+      paths:
+        - src/scar/harvest.py

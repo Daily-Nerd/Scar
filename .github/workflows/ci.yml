@@ -39,15 +39,46 @@ jobs:
       # fixture (tests/conftest.py) fails loudly here instead of silently
       # writing into a real ~/.claude/scar-state firing log. 92 of 105 records
       # were once pytest artifacts — see website/docs/methodology.md (#228).
+      # Coverage is collected across BOTH legs and combined (--cov-append),
+      # not just the richer one: the no-symbols run is the only place the
+      # "symbols unavailable" fallbacks execute, so measuring the extras run
+      # alone would report those branches as dead when they are the default
+      # install's real path. One .coverage file, written here, appended below,
+      # rendered to XML at the end.
       - name: Run tests
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
-          HOME="$RUNNER_TEMP/fake-home" uv run pytest -q
+          HOME="$RUNNER_TEMP/fake-home" uv run pytest -q \
+            --cov=scar --cov-report= --junitxml=junit-core.xml
 
       - name: Run tests (with symbols extra)
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
-          HOME="$RUNNER_TEMP/fake-home" uv run --extra symbols pytest -q
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra symbols pytest -q \
+            --cov=scar --cov-append --cov-report=xml --junitxml=junit-symbols.xml
+
+      # Reporting only — no coverage threshold gates the build, and
+      # fail_ci_if_error stays false so a missing or rotated CODECOV_TOKEN
+      # degrades to "no coverage comment" rather than a red build on a PR
+      # that changed nothing about the tests (#273).
+      - name: Upload test results to Codecov
+        if: ${{ matrix.python-version == '3.13' && !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./junit-core.xml,./junit-symbols.xml
+          flags: py${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+      - name: Upload coverage to Codecov
+        if: ${{ matrix.python-version == '3.13' && !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: Daily-Nerd/Scar
+          files: ./coverage.xml
+          flags: py${{ matrix.python-version }}
+          fail_ci_if_error: false
 
       # Dogfood: the repo's own scar graph must always parse and lint clean.
       # A malformed scar silently never fires (the daimon 0004 incident) —
