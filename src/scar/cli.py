@@ -271,6 +271,10 @@ def _status_rich(data: dict) -> None:
         console.print(f"  [yellow]REVIEW DUE[/] {_type_label(s['type'])} #{s['id']} "
                       f"review_after {s['review_after']}")
 
+    for r in data["firing_review"]:
+        console.print(f"  [yellow]REVIEW DUE[/] {_type_label(r['type'])} #{r['id']} "
+                      f"{r['reason']}")
+
     console.print(f"  [bold]{c['orphan_detected']}[/] orphan-detected · "
                   f"[bold]{c['orphaned']}[/] orphaned (persisted) · "
                   f"[bold]{c['partial_rot']}[/] partial-rot")
@@ -307,6 +311,9 @@ def _lint_rich(data: dict) -> None:
                       f"{d['symbol']} ~{round(d['similarity'] * 100)}% similar since {d['sha'][:7]}")
     for h in data["reverse_hints"]:
         console.print(f"[cyan]HINT:[/] scar #{h['id']} marked orphaned but anchors live again")
+    for r in data["firing_review"]:
+        console.print(f"[yellow]WARNING firing-review:[/] scar #{r['scar_id']} — "
+                      f"{r['reason']}")
     if data["shallow_clone"]:
         console.print("[dim]note: shallow clone — evidence-reachability check skipped[/]")
     for ue in data["unreachable_evidence"]:
@@ -315,7 +322,8 @@ def _lint_rich(data: dict) -> None:
     style = "red" if data["failed"] else "green"
     console.print(f"[{style}]lint:[/] {data['files']} file(s), {data['failed']} with errors, "
                   f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
-                  f"{len(data['unreachable_evidence'])} unreachable-evidence")
+                  f"{len(data['unreachable_evidence'])} unreachable-evidence, "
+                  f"{len(data['firing_review'])} firing-review")
 
 
 def _check_rich(label: str, hits, violations=()) -> None:
@@ -475,6 +483,22 @@ def _repo_context(store):
         return None
 
 
+def _firing_reviews(store):
+    """Scars whose firing count crossed their review threshold (#274).
+
+    Reads the machine-global firing log through the same reader `stats` uses,
+    so dedup (#250) and the blanket per-line tolerance (landmine #12) apply
+    here too. Never raises: an unreadable log means "nothing to escalate",
+    never a broken `status` or `lint`.
+    """
+    try:
+        from .hooks import firing_log_path
+        from .review import firing_reviews
+        return firing_reviews(store, _read_firing_log(firing_log_path()))
+    except Exception:
+        return []
+
+
 def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
@@ -555,6 +579,11 @@ def _cmd_lint(args) -> int:
                         "— too broad to discriminate; narrow it to the "
                         "files the scar actually protects")]))
 
+    # Firing-count review (#274): a scar that keeps firing without being
+    # revised. Advisory like every other lifecycle signal here — only the
+    # opt-in --fail-firing-review turns it into an exit code.
+    reviews = _firing_reviews(store)
+
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
     unreachable = unreachable_evidence(store, store.root)
@@ -572,6 +601,10 @@ def _cmd_lint(args) -> int:
                           "sha": d.sha, "similarity": d.similarity} for d in drift],
         "revivals": [{"scar_id": r.scar_id, "predicate": r.predicate} for r in revivals],
         "reverse_hints": [{"id": s.id} for s in reverse_hints],
+        "firing_review": [{"scar_id": r.scar_id, "count": r.count,
+                           "threshold": r.threshold, "since": r.since,
+                           "undated": r.undated, "reason": r.reason()}
+                          for r in reviews],
         "shallow_clone": shallow,
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
                                  for ue in unreachable],
@@ -605,6 +638,10 @@ def _cmd_lint(args) -> int:
         for s in reverse_hints:
             print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
                   "again — consider re-activating (scar challenge/archive note)")
+        # firing-count review (#274): the count is the signal, so print it
+        # even though the scar is otherwise healthy.
+        for r in reviews:
+            print(f"WARNING firing-review: scar #{r.scar_id} — {r.reason()}")
         if shallow:
             print("note: shallow clone — evidence-reachability check skipped "
                   "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
@@ -613,7 +650,8 @@ def _cmd_lint(args) -> int:
                   f"{ue.sha} {ue.reason}, not reachable from HEAD")
         print(f"lint: {len(files)} file(s), {failed} with errors, "
               f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
-              f"{len(unreachable)} unreachable-evidence")
+              f"{len(unreachable)} unreachable-evidence, "
+              f"{len(reviews)} firing-review")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _lint_rich(data), plain=plain)
@@ -621,6 +659,8 @@ def _cmd_lint(args) -> int:
     if failed:
         return 1
     if orphans and getattr(args, "fail_orphans", False):
+        return 1
+    if reviews and getattr(args, "fail_firing_review", False):
         return 1
     return 0
 
@@ -643,6 +683,7 @@ def _cmd_status(args) -> int:
         detected = detect_orphans(store, ctx, repo=store.root)
         partial = detect_partial_rot(store, ctx, repo=store.root)
     persisted = [s for _, s in store.parsed() if s.status == "orphaned"]
+    reviews = _firing_reviews(store)
 
     data = {
         "scars_dir": str(store.scars_dir),
@@ -651,6 +692,14 @@ def _cmd_status(args) -> int:
         "challenged": [{"type": s.type, "id": s.id, "title": s.title} for _f, s in challenged],
         "candidates": [c.name for c in cands],
         "review_due": [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due],
+        # Count-based review trigger (#274), kept SEPARATE from review_due:
+        # one is a date passing, the other is accumulated firings, and a
+        # consumer that merges them cannot tell which obligation it is looking
+        # at or what would discharge it.
+        "firing_review": [{"type": r.type, "id": r.scar_id, "count": r.count,
+                           "threshold": r.threshold, "since": r.since,
+                           "undated": r.undated, "reason": r.reason()}
+                          for r in reviews],
         "orphan_detected": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)} for of in detected],
         "orphaned": [{"type": s.type, "id": s.id, "title": s.title} for s in persisted],
         "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
@@ -662,6 +711,7 @@ def _cmd_status(args) -> int:
             "orphaned": len(persisted),
             "partial_rot": len(partial),
             "broken": len(broken),
+            "firing_review": len(reviews),
         },
     }
 
@@ -676,6 +726,8 @@ def _cmd_status(args) -> int:
         for s in due:
             print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
                   "re-verify, then update the date or archive")
+        for r in reviews:
+            print(f"  REVIEW DUE [{r.type} #{r.scar_id}] {r.reason()}")
         print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
               f"{len(persisted)} orphaned (persisted), "
               f"{len(partial)} partial-rot (firing, ≥1 anchor dead)")
@@ -2393,6 +2445,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "lint", _cmd_lint, help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
+    p.add_argument("--fail-firing-review", action="store_true",
+                   help="exit non-zero when any scar has crossed its "
+                        "review_after_firings threshold")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p = _add(sub, "status", _cmd_status, help="counts, titles, broken-file warnings")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")

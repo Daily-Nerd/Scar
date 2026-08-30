@@ -45,6 +45,11 @@ class Scar:
     evidence: list[str] = field(default_factory=list)
     expires_condition: str = ""
     review_after: str = ""
+    # Count-based sibling of review_after (#274). None = field absent, which
+    # is NOT the same as 0: absent falls back to the per-type default, 0 is an
+    # explicit "never escalate this scar". Collapsing the two would make
+    # opting out impossible for a landmine.
+    review_after_firings: int | None = None
     violation: str = ""
     revives_if: str = ""
     status: str = "active"
@@ -68,12 +73,15 @@ class Scar:
         if self.evidence:
             lines.append("evidence:")
             lines += [f"  - {e}" for e in self.evidence]
-        if self.expires_condition or self.review_after:
+        if (self.expires_condition or self.review_after
+                or self.review_after_firings is not None):
             lines.append("expires:")
             if self.expires_condition:
                 lines.append(f"  condition: {_quote(self.expires_condition)}")
             if self.review_after:
                 lines.append(f"  review_after: {self.review_after}")
+            if self.review_after_firings is not None:
+                lines.append(f"  review_after_firings: {self.review_after_firings}")
         if self.violation:
             lines.append(f"violation: {_quote(self.violation)}")
         if self.revives_if:
@@ -135,6 +143,20 @@ def _field(front: str, name: str, default: str = "", strip_comment: bool = True)
     return value
 
 
+def _int_or_none(raw: str) -> int | None:
+    """A non-negative int, or None when absent/unparseable. An unparseable
+    value must NOT become 0: 0 means "never escalate", so coercing garbage to
+    it would silently disarm the trigger the author was trying to set. None
+    falls back to the per-type default, which is the loud path."""
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
 def parse_scar_text(text: str) -> Scar:
     m = _FRONTMATTER_RE.match(text)
     if not m:
@@ -186,6 +208,12 @@ def parse_scar_text(text: str) -> Scar:
         evidence=evidence,
         expires_condition=_unquote(_field(front, "condition")),
         review_after=_field(front, "review_after"),
+        # NOT a prefix collision with review_after: _field anchors on
+        # "<name>:", and the line "review_after_firings: 10" has '_' where
+        # review_after's rule needs ':'. Both directions are pinned by test,
+        # because a silent cross-match here would either void the date
+        # trigger or the count trigger with no error anywhere (#69 class).
+        review_after_firings=_int_or_none(_field(front, "review_after_firings")),
         # Matched-pair removal, same as pattern/command/condition (#202): a
         # single-quoted violation value must not keep its wrapper attached
         # (silently-dead tripwire, #200), and a value with edge quotes of its

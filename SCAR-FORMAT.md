@@ -46,6 +46,7 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `evidence` | recommended | list of `- commit:`/`- pr:`/`- issue:`/`- incident:`/`- note:`/`- url:` | absent ⇒ challengeable on sight; `issue:`/`url:` are durable forms that survive squash-merge |
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
 | `expires.review_after` | recommended | ISO date | forces periodic freshness contact |
+| `expires.review_after_firings` | optional | non-negative integer | forces a review once the scar has fired this many times since its last revision; absent ⇒ per-type default (`landmine` 10, `fence` 15, `deadend` disabled), `0` ⇒ never escalate |
 | `status` | yes | `candidate` \| `active` \| `challenged` \| `archived` \| `orphaned` \| `template` | lifecycle §5 |
 | `receipt_id` | reserved | string ref | **reserved — not yet parsed.** Optional pointer to a cryptographic provenance receipt; see note below. |
 
