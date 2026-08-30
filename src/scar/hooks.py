@@ -17,7 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-from .match import find_violations, has_content_signal, rank_matches_for_edit
+from .match import (armed_scar_ids, find_violations, has_content_signal,
+                    rank_matches_for_edit)
 from .render import injection_context
 from .store import ScarStore
 
@@ -34,6 +35,19 @@ USER_NEG_RE = re.compile(
 def _state_dir() -> Path:
     return Path(os.environ.get("SCAR_STATE_DIR",
                                str(Path.home() / ".claude" / "scar-state")))
+
+
+# The key precheck stamps to say "a posttool verdict is expected for this
+# edit, and the writer of this row was capable of producing one" (#277).
+#
+# `armed_ids` alone is NOT sufficient and this is the trap the first cut of
+# #277 fell into: armed_ids says a verdict was OWED, not that the running
+# version could RESOLVE it. Every row written before the verdict mechanism
+# existed carries armed_ids and can never be resolved, so treating those as
+# unresolved makes an install show a broken-install warning the moment it
+# upgrades. Rows without this key are UNPLACEABLE, exactly as rows without
+# armed_ids are (#266).
+VERDICT_EXPECTED_KEY = "verdict_expected"
 
 
 def firing_log_path() -> Path:
@@ -164,6 +178,9 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             # a MISSING key means "this row predates the field". Those are
             # different facts, and the second must never be read as the first.
             "armed_ids": [s.id for s in hits if getattr(s, "violation", "")],
+            # Written by every version that can also RESOLVE the expectation.
+            # See VERDICT_EXPECTED_KEY.
+            VERDICT_EXPECTED_KEY: any(getattr(s, "violation", "") for s in hits),
             "demoted_ids": demoted_ids or [],
             "runtime": runtime,
         }
@@ -180,11 +197,24 @@ def _log_firing(store: ScarStore, target: str, hits: list,
 
 def _log_violation_firing(store: ScarStore, target: str, violations: list,
                           runtime: str = "claude-code",
-                          edit_id: str | None = None) -> None:
-    """Append one line to the firing log when posttool actually flags a
-    violation. Best-effort only, mirroring _log_firing: this must NEVER raise
-    or delay the caller, so any failure (permissions, disk full, bad
-    SCAR_STATE_DIR, whatever) is swallowed here rather than propagated."""
+                          edit_id: str | None = None,
+                          armed_ids: list | None = None) -> None:
+    """Append one line to the firing log when posttool RUNS on a path where a
+    violation was possible — whether or not one was found (#277).
+
+    Before #277 this was only called when violations existed, so a clean edit
+    left no trace at all. That made a dead posttool hook and genuine total
+    compliance byte-identical: both produce firing rows and zero violation
+    rows. Writing on the clean path too is what makes the absence of a verdict
+    mean something.
+
+    `verdict_observed` is ALWAYS true on rows this writes; its ABSENCE on a row
+    means that row predates the field, which is a different fact from "no
+    verdict" and must never be read as one (the #266 convention).
+
+    Best-effort only, mirroring _log_firing: this must NEVER raise or delay the
+    caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
+    whatever) is swallowed here rather than propagated."""
     try:
         log_path = firing_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +225,12 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
             "violation_ids": [v.scar.id for v in violations],
             "count": len(violations),
             "runtime": runtime,
+            # The posttool half ran and reached a verdict on this edit.
+            "verdict_observed": True,
+            # Which scars it was capable of flagging here. Empty would mean a
+            # violation was impossible, and this row would not have been
+            # written at all.
+            "verdict_armed_ids": list(armed_ids or []),
         }
         if edit_id:
             record["edit_id"] = edit_id
@@ -221,18 +257,25 @@ def posttool() -> int:
             rel_path = str(Path(target).resolve().relative_to(store.root))
         except ValueError:
             return 0
+        armed = armed_scar_ids(store, rel_path)
         violations = find_violations(store, rel_path, new_content)
-        if not violations:
+        # Nothing here was capable of producing a violation, so no verdict is
+        # owed and the log must not grow on every unrelated edit in the repo.
+        if not armed and not violations:
             return 0
-        lines = [
-            f"[{v.scar.id}] {v.scar.title}: this file now contains code "
-            "matching this scar's violation pattern — reconsider before "
-            f"proceeding; run `scar why {v.path}` for the full record"
-            for v in violations
-        ]
-        _emit("PostToolUse", "\n".join(lines))
+        if violations:
+            lines = [
+                f"[{v.scar.id}] {v.scar.title}: this file now contains code "
+                "matching this scar's violation pattern — reconsider before "
+                f"proceeding; run `scar why {v.path}` for the full record"
+                for v in violations
+            ]
+            _emit("PostToolUse", "\n".join(lines))
+        # Logged on the CLEAN path too (#277). Silence from this hook must be
+        # distinguishable from a clean verdict, and it only can be if a clean
+        # run leaves a row behind.
         vid = payload.get("tool_use_id")
-        _log_violation_firing(store, target, violations,
+        _log_violation_firing(store, target, violations, armed_ids=armed,
                               edit_id=vid if isinstance(vid, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the

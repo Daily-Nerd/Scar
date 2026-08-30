@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -244,6 +244,38 @@ ratio — `total_firings` includes events incapable of failing.
 the past, and today's `.scars/` cannot answer it: a scar armed last week was
 not armed last month, so inferring it would rewrite history in the flattering
 direction. Consumers must treat it as unplaceable, not as zero.
+
+### 9.4 Both halves of the pipeline are watched
+
+`instrument_disconnected` reports the **precheck** half dying: violations
+recorded with no precheck rows, so no scar could have fired.
+
+`posttool_silent` reports the **posttool** half dying: armed scars fired, and
+no posttool verdict was ever recorded. This is the more dangerous direction,
+because it produces zero violations against a full firing count, which reads
+as perfect compliance. Before it existed the two were byte-identical.
+
+The posttool hook records a verdict on a **clean** edit as well as a violating
+one, whenever a violation was possible on that path. That is what makes silence
+meaningful: absence of a verdict is `verdicts_unresolved`, never a pass.
+
+Both flags are one-directional, exactly like the rest of this section. They can
+show an instrument is broken. Neither certifies one healthy: observing a verdict
+withdraws the alarm and claims nothing further.
+
+`verdicts_unplaceable` counts armed firings that can be neither resolved nor
+called unresolved, because the row predates the mechanism or carries no
+`edit_id` to join on. Same rule as `armed_unknown`: never folded into either
+side.
+
+Being armed is not the same as being resolvable. `armed_ids` says a verdict was
+*owed*; a separate marker on the precheck row says the writer could also
+*produce* one. Every row written before the mechanism existed is armed and
+permanently unresolvable, so gating on armedness alone would make a working
+install report a broken one the moment it upgraded.
+
+> An armed firing with no verdict means **UNKNOWN**. A consumer that reads it
+> as compliance republishes the exact failure this section exists to prevent.
 
 `stats --since` / `--until` filter records **before** any metric is computed,
 so every number is window-scoped by the same code that computes it unwindowed.
