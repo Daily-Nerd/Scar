@@ -1439,7 +1439,8 @@ STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
                         "edits_observed", "injection_rate",
                         "armed_firings", "armed_unknown",
                         "firings_block_capable", "firings_advisory",
-                        "firings_block_unknown", "all_firings_advisory"})
+                        "firings_block_unknown", "all_firings_advisory",
+                        "firings_context_known", "firings_context_unknown"})
 
 
 def _stage_block(agg: dict) -> dict:
@@ -1562,6 +1563,7 @@ RETRIEVAL_FLOOR_NOTE = (
 # Mirrors hooks.VERDICT_EXPECTED_KEY. Imported lazily there, duplicated here
 # as a module constant so the read path stays free of a hook import.
 _VERDICT_EXPECTED_KEY = "verdict_expected"
+_CONTEXT_BYTES_KEY = "context_bytes"
 
 
 def _aggregate_firings(records: list[dict]) -> dict:
@@ -1596,6 +1598,13 @@ def _aggregate_firings(records: list[dict]) -> dict:
     firings_block_capable = 0
     firings_advisory = 0
     firings_block_unknown = 0
+    # #279: did the host actually hand us a context size? Shipping a field
+    # that may never populate is how you get a blind column nobody notices,
+    # so the population rate is itself reported. One command then answers
+    # whether the signal exists on a given host, instead of an assumption
+    # sitting in a design doc.
+    firings_context_known = 0
+    firings_context_unknown = 0
     last_fired = None
     for rec in records:
         target = rec.get("target")
@@ -1649,6 +1658,11 @@ def _aggregate_firings(records: list[dict]) -> dict:
             # rows here would put two different units in one sentence and
             # read as though the remainder were known.
             n = sum(1 for x in sids if isinstance(x, int))
+            ctx = rec.get(_CONTEXT_BYTES_KEY)
+            if isinstance(ctx, int) and not isinstance(ctx, bool):
+                firings_context_known += n
+            else:
+                firings_context_unknown += n
             capable = rec.get("block_capable")
             if capable is True:
                 firings_block_capable += n
@@ -1746,6 +1760,8 @@ def _aggregate_firings(records: list[dict]) -> dict:
             # "Entirely" is a universal claim, so ONE unplaceable row is
             # enough to make it unsayable. Reported false in that case, which
             # means "cannot say", not "some firing could block".
+            "firings_context_known": firings_context_known,
+            "firings_context_unknown": firings_context_unknown,
             "all_firings_advisory": (firings_advisory > 0
                                      and firings_block_capable == 0
                                      and firings_block_unknown == 0),
