@@ -1437,7 +1437,9 @@ def _filter_window(records: list[dict], lo, hi) -> tuple[list[dict], int]:
 # surface exposes exactly these keys.
 STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
                         "edits_observed", "injection_rate",
-                        "armed_firings", "armed_unknown"})
+                        "armed_firings", "armed_unknown",
+                        "firings_block_capable", "firings_advisory",
+                        "firings_block_unknown", "all_firings_advisory"})
 
 
 def _stage_block(agg: dict) -> dict:
@@ -1527,6 +1529,22 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
         enforcement += f"; {armed} on violation-armed scar(s)"
         if unknown:
             enforcement += f", {unknown} unplaceable (logged before arming was recorded)"
+    # #278: what the enforcement number is EVIDENCE of. Zero violations where
+    # refusing an action was never possible is a different claim from zero
+    # violations where it was, and the two are numerically identical.
+    capable = block.get("firings_block_capable")
+    advisory = block.get("firings_advisory") or 0
+    cap_unknown = block.get("firings_block_unknown") or 0
+    if block.get("all_firings_advisory"):
+        enforcement += ("; every firing was ADVISORY — nothing here could "
+                        "refuse an action, so this measures what the agent "
+                        "did, never what it was prevented from doing")
+    elif capable:
+        enforcement += (f"; {capable} firing(s) could refuse the action, "
+                        f"{advisory} advisory")
+    if cap_unknown:
+        enforcement += (f", {cap_unknown} of unknown capability (logged "
+                        "before it was recorded)")
     return [
         enforcement,
         retrieval,
@@ -1572,6 +1590,12 @@ def _aggregate_firings(records: list[dict]) -> dict:
     verdict_seen_ids: set = set()
     verdicts_observed = 0
     verdicts_unplaceable = 0
+    # #278: could each firing have refused the action? Read from the row and
+    # never derived from `runtime`, so a host whose hook capability changes
+    # cannot retroactively rewrite what old rows claimed.
+    firings_block_capable = 0
+    firings_advisory = 0
+    firings_block_unknown = 0
     last_fired = None
     for rec in records:
         target = rec.get("target")
@@ -1619,6 +1643,23 @@ def _aggregate_firings(records: list[dict]) -> dict:
                 # unknowable. Counting it unresolved would make every
                 # historical window look permanently broken (#266).
                 verdicts_unplaceable += 1
+        if isinstance(sids, list) and "scar_ids" in rec:
+            # Counted per SCAR-FIRING, not per row, so these share the
+            # `total_firings` denominator they are printed beside. Counting
+            # rows here would put two different units in one sentence and
+            # read as though the remainder were known.
+            n = sum(1 for x in sids if isinstance(x, int))
+            capable = rec.get("block_capable")
+            if capable is True:
+                firings_block_capable += n
+            elif capable is False:
+                firings_advisory += n
+            else:
+                # Missing or malformed: unknown. NOT advisory — a row that
+                # predates the field says nothing about capability, and
+                # reading it as "could not block" would understate a host
+                # that could (landmine #12 tolerance, #266 convention).
+                firings_block_unknown += n
         if rec.get("verdict_observed") is True:
             verdicts_observed += 1
             eid = rec.get("edit_id")
@@ -1699,6 +1740,15 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "verdicts_observed": verdicts_observed,
             "verdicts_unresolved": len(verdict_expected_ids - verdict_seen_ids),
             "verdicts_unplaceable": verdicts_unplaceable,
+            "firings_block_capable": firings_block_capable,
+            "firings_advisory": firings_advisory,
+            "firings_block_unknown": firings_block_unknown,
+            # "Entirely" is a universal claim, so ONE unplaceable row is
+            # enough to make it unsayable. Reported false in that case, which
+            # means "cannot say", not "some firing could block".
+            "all_firings_advisory": (firings_advisory > 0
+                                     and firings_block_capable == 0
+                                     and firings_block_unknown == 0),
             "posttool_silent": bool(verdict_expected_ids) and verdicts_observed == 0,
             "injection_rate": injection_rate,
             "instrument_disconnected": instrument_disconnected,

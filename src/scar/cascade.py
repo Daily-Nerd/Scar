@@ -174,7 +174,10 @@ def _respond(store: ScarStore, trajectory: str, target: str,
     # field means "shown to the model, collapsed to one line" and stays a
     # subset of scar_ids. Logging UI-only showings either way would inflate
     # every count downstream of `scar stats`.
-    _log_firing(store, target, scars, runtime=RUNTIME)
+    # Reached only past `if not to_block: return 0`, so this firing DID
+    # refuse the action. Surface-only matches never reach the log at all
+    # (see the comment above), so every windsurf row is block-capable.
+    _log_firing(store, target, scars, runtime=RUNTIME, block_capable=True)
     return BLOCK_EXIT
 
 

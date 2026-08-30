@@ -147,7 +147,8 @@ def _zero_hit_logging() -> bool:
 def _log_firing(store: ScarStore, target: str, hits: list,
                 demoted_ids: list | None = None,
                 runtime: str = "claude-code",
-                edit_id: str | None = None) -> None:
+                edit_id: str | None = None,
+                block_capable: bool = False) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -183,6 +184,20 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             VERDICT_EXPECTED_KEY: any(getattr(s, "violation", "") for s in hits),
             "demoted_ids": demoted_ids or [],
             "runtime": runtime,
+            # Could THIS firing have refused the action (#278)? Written here,
+            # never inferred from `runtime` at read time: inference bakes
+            # today's host behavior into the reader, so a host that gains or
+            # loses a blocking hook silently rewrites every historical row.
+            #
+            # Capability is per-firing, not per-runtime. Windsurf can refuse,
+            # but only on a content-signal match; a path-proximity match on the
+            # same host goes to the UI and refuses nothing.
+            #
+            # The default is False on purpose. A new adapter that forgets to
+            # pass this records ADVISORY, which understates the claim. The
+            # opposite default would inflate it, and this metric may only ever
+            # fail in the direction that makes it look weaker.
+            "block_capable": bool(block_capable),
         }
         # Correlation key (#217), omitted rather than nulled when the harness
         # does not supply one — ts is second-resolution and cannot order a

@@ -148,6 +148,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         "verdict_expected": True,
         "demoted_ids": [],
         "runtime": "codex",
+        # #278: Codex emits advisory context only, so this firing could not
+        # have refused the apply_patch. Written, never inferred from the
+        # runtime string at read time.
+        "block_capable": False,
         "edit_id": "exec-test-1",
     }]
 

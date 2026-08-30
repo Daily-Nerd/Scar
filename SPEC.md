@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -276,6 +276,37 @@ install report a broken one the moment it upgraded.
 
 > An armed firing with no verdict means **UNKNOWN**. A consumer that reads it
 > as compliance republishes the exact failure this section exists to prevent.
+
+### 9.5 Capability travels with the claim
+
+Zero violations on a host that could refuse an edit, and zero violations where
+refusing was never possible, are the same number and different evidence.
+`block_capable` is recorded on each firing row so the two can be told apart.
+
+It is **written at firing time, never inferred from `runtime` at read time.**
+Inference bakes today's host behavior into the reader, so a host that gains or
+loses a blocking hook would silently rewrite the meaning of every historical
+row. Capability is also per-firing rather than per-runtime: a host may refuse
+on a content-signal match and merely surface a path-proximity match.
+
+- `firings_block_capable` — the firing could have refused the action.
+- `firings_advisory` — it could not; injection was the only channel.
+- `firings_block_unknown` — the row predates the field. Not advisory. Reading
+  it as "could not block" understates a host that could.
+- `all_firings_advisory` — true only when every firing in the window is known
+  advisory. One unknown row makes the universal claim unsayable, and the field
+  is then `false`, meaning *cannot say* rather than *some firing could block*.
+
+These three count **scar-firings**, the same unit as `total_firings`, and sum
+to it. They are printed beside it, and counting log rows instead would put two
+units in one sentence and read as though the remainder were known.
+
+The writer's default is advisory. An adapter that forgets to declare capability
+therefore understates the claim, never inflates it.
+
+> `0 violations` in an all-advisory window measures what the agent did. It says
+> nothing about what it was prevented from doing, because nothing could prevent
+> anything.
 
 `stats --since` / `--until` filter records **before** any metric is computed,
 so every number is window-scoped by the same code that computes it unwindowed.
