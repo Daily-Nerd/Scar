@@ -320,9 +320,17 @@ def _violation_excerpt(pattern: str, text: str) -> str | None:
     return capped[line_start:line_end][:120]
 
 
-def _violations_for_target(firing: list, root: Path, rel_path: str,
-                           new_content: str) -> list["Violation"]:
-    out: list[Violation] = []
+def _armed_candidates(firing: list, root: Path, rel_path: str):
+    """(scar, rel_source) for every firing scar that COULD produce a violation
+    on rel_path: armed with a violation regex, not the scar's own file, and
+    anchored here.
+
+    ONE definition with two consumers — the violation matcher below and the
+    verdict-expectation check (#277). Kept shared on purpose: if the two ever
+    disagreed, the tool would either expect a verdict for a scar the matcher
+    never evaluates (an expectation that can never resolve) or evaluate one it
+    never expected (a violation with no matching expectation).
+    """
     for source, scar in firing:
         if not scar.violation:
             continue
@@ -338,12 +346,30 @@ def _violations_for_target(firing: list, root: Path, rel_path: str,
         strength, _ = _anchor_signal(scar, rel_path, "", root)
         if strength <= 0:
             continue
+        yield scar, rel_source
+
+
+def _violations_for_target(firing: list, root: Path, rel_path: str,
+                           new_content: str) -> list["Violation"]:
+    out: list[Violation] = []
+    for scar, rel_source in _armed_candidates(firing, root, rel_path):
         excerpt = _violation_excerpt(scar.violation, new_content)
         if excerpt is None:
             continue
         out.append(Violation(scar=scar, source=rel_source,
                              path=rel_path, excerpt=excerpt))
     return out
+
+
+def armed_scar_ids(store: ScarStore, rel_path: str) -> list[int]:
+    """Ids of the scars a posttool verdict is owed for on this path (#277).
+
+    Non-empty means a violation was POSSIBLE here, so silence from posttool is
+    an unresolved verdict rather than a clean result. Empty means a violation
+    was impossible, and nothing is owed.
+    """
+    return [s.id for s, _ in _armed_candidates(store.firing(), store.root, rel_path)
+            if s.id is not None]
 
 
 def find_violations(store: ScarStore, rel_path: str, new_content: str) -> list[Violation]:

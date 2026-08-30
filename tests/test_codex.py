@@ -142,6 +142,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         # therefore be recorded as violated. Always present, even when empty —
         # `[]` is "none armed", a MISSING key is "row predates the field".
         "armed_ids": [1],
+        # #277: this row's writer can also RESOLVE the expectation. armed_ids
+        # alone says a verdict is owed; this says one is actually coming, so a
+        # row that predates the mechanism is unplaceable rather than unresolved.
+        "verdict_expected": True,
         "demoted_ids": [],
         "runtime": "codex",
         "edit_id": "exec-test-1",

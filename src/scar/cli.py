@@ -1448,7 +1448,10 @@ def _stage_block(agg: dict) -> dict:
 # Instrument health (#237). Separate from STAGE_KEYS on purpose: the stages
 # are measurements, these say whether the measurements can be believed at
 # all. Same parity discipline — one definition, every surface.
-HEALTH_KEYS = frozenset({"instrument_disconnected", "last_fired_age_days"})
+HEALTH_KEYS = frozenset({"instrument_disconnected", "last_fired_age_days",
+                         "posttool_silent", "verdicts_expected",
+                         "verdicts_observed", "verdicts_unresolved",
+                         "verdicts_unplaceable"})
 
 
 def _health_block(agg: dict) -> dict:
@@ -1464,6 +1467,15 @@ INSTRUMENT_WARNING = (
 )
 
 
+POSTTOOL_SILENT_WARNING = (
+    "WARNING: armed scars fired but NO posttool verdict was ever recorded — "
+    "the posttool hook is almost certainly not installed, so a violation "
+    "could not have been recorded even if one occurred. Zero violations in "
+    "this window is a broken install, not compliance. Run `scar hook "
+    "install`, then `scar hook status` to confirm all hooks are present."
+)
+
+
 def _health_lines(block: dict) -> list[str]:
     """Health lines, shared by every renderer. The firing age is REPORTED and
     never thresholded: a 'stale' cutoff would be an unvalidated fitted
@@ -1471,6 +1483,16 @@ def _health_lines(block: dict) -> list[str]:
     lines = []
     if block["instrument_disconnected"]:
         lines.append(INSTRUMENT_WARNING)
+    # The mirror of the above (#277). The pre-#277 guard only observed the
+    # precheck half dying; this one observes the posttool half dying, which is
+    # the direction that FLATTERS the result and so is the more dangerous of
+    # the two to leave unwatched.
+    if block.get("posttool_silent"):
+        lines.append(POSTTOOL_SILENT_WARNING)
+    unresolved = block.get("verdicts_unresolved") or 0
+    if unresolved and not block.get("posttool_silent"):
+        lines.append(f"{unresolved} armed firing(s) have no posttool verdict — "
+                     "unresolved, NOT clean")
     age = block["last_fired_age_days"]
     if age is not None:
         lines.append(f"newest firing: {age} day(s) old")
@@ -1519,6 +1541,11 @@ RETRIEVAL_FLOOR_NOTE = (
 )
 
 
+# Mirrors hooks.VERDICT_EXPECTED_KEY. Imported lazily there, duplicated here
+# as a module constant so the read path stays free of a hook import.
+_VERDICT_EXPECTED_KEY = "verdict_expected"
+
+
 def _aggregate_firings(records: list[dict]) -> dict:
     """Aggregate firing-log records into per-scar counts. Callers must pass
     records from ONE repo only — scar ids are per-repo sequential ints, so
@@ -1536,6 +1563,15 @@ def _aggregate_firings(records: list[dict]) -> dict:
     # today's .scars/ — a scar armed last week was not armed last month.
     armed_firings = 0
     armed_unknown = 0
+    # #277: verdict accounting. `expected` are joinable armed firings (an
+    # armed_ids list with at least one id, plus an edit_id to join on);
+    # `observed` are posttool rows that actually reached a verdict. Anything
+    # that can be neither joined nor placed is UNPLACEABLE and is counted
+    # apart, never folded into either side.
+    verdict_expected_ids: set = set()
+    verdict_seen_ids: set = set()
+    verdicts_observed = 0
+    verdicts_unplaceable = 0
     last_fired = None
     for rec in records:
         target = rec.get("target")
@@ -1556,12 +1592,38 @@ def _aggregate_firings(records: list[dict]) -> dict:
                             fired_on[key] = ts_rec
         if isinstance(sids, list) and sids:
             armed = rec.get("armed_ids")
+            eid = rec.get("edit_id")
             if isinstance(armed, list):
                 armed_firings += sum(1 for a in armed if isinstance(a, int))
+                # A verdict is owed only when something armed actually fired,
+                # AND only when the row was written by a version that could
+                # resolve it. The marker carries the second fact; armed_ids
+                # alone carries only the first (hooks.VERDICT_EXPECTED_KEY).
+                expects = rec.get(_VERDICT_EXPECTED_KEY)
+                if any(isinstance(a, int) for a in armed):
+                    if expects is not True:
+                        # Predates the verdict mechanism, or explicitly
+                        # expects nothing: unplaceable, never unresolved.
+                        verdicts_unplaceable += 1
+                    elif isinstance(eid, str) and eid:
+                        verdict_expected_ids.add(eid)
+                    else:
+                        # Armed and expected, but no correlation key: it can
+                        # be neither resolved nor called unresolved.
+                        verdicts_unplaceable += 1
             else:
                 # Missing or malformed: unplaceable, not unarmed. Blanket
                 # tolerance per landmine #12 — any shape appears in this log.
                 armed_unknown += sum(1 for x in sids if isinstance(x, int))
+                # Predates armed_ids, so whether a verdict was owed is
+                # unknowable. Counting it unresolved would make every
+                # historical window look permanently broken (#266).
+                verdicts_unplaceable += 1
+        if rec.get("verdict_observed") is True:
+            verdicts_observed += 1
+            eid = rec.get("edit_id")
+            if isinstance(eid, str) and eid:
+                verdict_seen_ids.add(eid)
         dids = rec.get("demoted_ids", [])
         if isinstance(dids, list):
             demotions += sum(1 for d in dids if isinstance(d, int))
@@ -1629,6 +1691,15 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "edits_observed": edits_observed,
             "armed_firings": armed_firings,
             "armed_unknown": armed_unknown,
+            # #277: the posttool half's own liveness. `posttool_silent` is
+            # ONE-DIRECTIONAL like every other health field here — it can show
+            # the half is dead, and observing a verdict never certifies it
+            # healthy, it only withdraws the alarm.
+            "verdicts_expected": len(verdict_expected_ids),
+            "verdicts_observed": verdicts_observed,
+            "verdicts_unresolved": len(verdict_expected_ids - verdict_seen_ids),
+            "verdicts_unplaceable": verdicts_unplaceable,
+            "posttool_silent": bool(verdict_expected_ids) and verdicts_observed == 0,
             "injection_rate": injection_rate,
             "instrument_disconnected": instrument_disconnected,
             "last_fired_age_days": _age_in_days(last_fired),
