@@ -1436,6 +1436,8 @@ def _filter_window(records: list[dict], lo, hi) -> tuple[list[dict], int]:
 # twice (#225 Rich, #227 --all-repos). tests/test_cli.py asserts every stats
 # surface exposes exactly these keys.
 STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
+                        "demotions_path_only", "demotions_cooldown",
+                        "demotions_reason_unknown",
                         "edits_observed", "injection_rate",
                         "armed_firings", "armed_unknown",
                         "firings_block_capable", "firings_advisory",
@@ -1546,10 +1548,23 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
     if cap_unknown:
         enforcement += (f", {cap_unknown} of unknown capability (logged "
                         "before it was recorded)")
+    # #284: what the demotions are EVIDENCE of. A path-only demotion is a
+    # near-miss on the file, a cooldown demotion is a content hit we chose not
+    # to repeat; one blended number hides which precision story this repo
+    # is telling. Unknown rows are named, never folded into either side.
+    demotions = f"demotions: {block['demotions']} scar(s) rendered as one-liners"
+    path_only = block.get("demotions_path_only") or 0
+    cooldown = block.get("demotions_cooldown") or 0
+    reason_unknown = block.get("demotions_reason_unknown") or 0
+    if path_only or cooldown:
+        demotions += f"; {path_only} path-only, {cooldown} cooldown"
+    if reason_unknown:
+        demotions += (f"{',' if (path_only or cooldown) else ';'} {reason_unknown} "
+                      "of unknown reason (logged before it was recorded)")
     return [
         enforcement,
         retrieval,
-        f"demotions: {block['demotions']} scar(s) rendered as one-liners",
+        demotions,
     ]
 
 
@@ -1570,12 +1585,20 @@ def _aggregate_firings(records: list[dict]) -> dict:
     """Aggregate firing-log records into per-scar counts. Callers must pass
     records from ONE repo only — scar ids are per-repo sequential ints, so
     aggregating across repos sums different scars under one id (#137)."""
+    from .hooks import DEMOTED_COOLDOWN, DEMOTED_PATH_ONLY  # one spelling, both sides
     counts: dict[int, int] = {}
     violations: dict[int, int] = {}
     # (scar_id, target) -> earliest firing ts, for the retrieval-miss check.
     fired_on: dict[tuple[int, str], str] = {}
     pending_violations: list[tuple[int, str, str]] = []
     demotions = 0
+    # #284: WHY. path-only is the weak signal (file in scope, edit matched
+    # nothing), cooldown is the strong one (content matched, suppressed to
+    # avoid repeating). A row that predates `demotion_reasons` is UNKNOWN,
+    # never folded into path-only — that is the flattering reading.
+    demotions_path_only = 0
+    demotions_cooldown = 0
+    demotions_reason_unknown = 0
     edits_observed = 0      # precheck passes recorded (#217 denominator)
     zero_hit_edits = 0      # ...of which matched nothing
     # #266: firings on scars that carried a violation: tripwire, and firings we
@@ -1680,8 +1703,22 @@ def _aggregate_firings(records: list[dict]) -> dict:
             if isinstance(eid, str) and eid:
                 verdict_seen_ids.add(eid)
         dids = rec.get("demoted_ids", [])
+        reasons = rec.get("demotion_reasons")
         if isinstance(dids, list):
-            demotions += sum(1 for d in dids if isinstance(d, int))
+            for d in dids:
+                if not isinstance(d, int):
+                    continue
+                demotions += 1
+                # str(id) keys: JSON has no int keys. A missing dict OR a
+                # missing key is the same fact — this demotion's reason was
+                # never recorded — and both land in unknown.
+                reason = reasons.get(str(d)) if isinstance(reasons, dict) else None
+                if reason == DEMOTED_PATH_ONLY:
+                    demotions_path_only += 1
+                elif reason == DEMOTED_COOLDOWN:
+                    demotions_cooldown += 1
+                else:
+                    demotions_reason_unknown += 1
         vids = rec.get("violation_ids", [])
         if isinstance(vids, list) and isinstance(target, str) and isinstance(ts_rec, str):
             for vid in vids:
@@ -1743,6 +1780,9 @@ def _aggregate_firings(records: list[dict]) -> dict:
     return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
             "retrieval_misses": retrieval_misses,
             "demotions": demotions,
+            "demotions_path_only": demotions_path_only,
+            "demotions_cooldown": demotions_cooldown,
+            "demotions_reason_unknown": demotions_reason_unknown,
             "edits_observed": edits_observed,
             "armed_firings": armed_firings,
             "armed_unknown": armed_unknown,

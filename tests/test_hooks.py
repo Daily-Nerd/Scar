@@ -484,6 +484,41 @@ def test_firing_log_records_demoted_ids(repo, monkeypatch, capsys):
     assert rec["scar_ids"] == [1]
 
 
+def test_firing_log_records_path_only_demotion_reason(repo, monkeypatch, capsys):
+    """#284: `demoted_ids` alone collapses two opposite facts. A path-only
+    demotion means the anchor proved the FILE was in scope and nothing about
+    the edit matched — the weak signal. The reason must reach the log, keyed
+    by scar id, or a precision reader cannot tell it from a strong match that
+    was merely suppressed for repetition."""
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "x = 1"}})
+    assert main(["hook", "precheck"]) == 0
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["demoted_ids"] == [1]
+    assert rec["demotion_reasons"] == {"1": "path-only"}
+
+
+def test_log_firing_records_empty_demotion_reasons_rather_than_omitting_them(
+        tmp_path, monkeypatch):
+    """`demotion_reasons: {}` means 'nothing was demoted'. A MISSING key means
+    'this row predates the field', and a reader must count those demotions as
+    UNKNOWN reason — never as path-only, which is the flattering reading for a
+    precision metric (#266 convention)."""
+    from scar.hooks import _log_firing
+    from scar.store import ScarStore, init_scars
+
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    init_scars(tmp_path)
+    store = ScarStore.discover(tmp_path)
+
+    _log_firing(store, "src/a.py", [_scar_obj(1)])
+
+    rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
+    assert rec["demoted_ids"] == []
+    assert rec["demotion_reasons"] == {}
+
+
 # --- repetition collapse (4h cooldown) ---
 
 SECOND_FENCE = """\
@@ -521,6 +556,20 @@ def test_recent_full_body_showing_collapses_to_one_liner(repo, monkeypatch, caps
     assert "Sleep is 7s" in second                   # still visible
     assert "already shown" in second                 # collapse reason
     assert "Do not lower the sleep." not in second   # body collapsed
+
+
+def test_firing_log_records_cooldown_demotion_reason(repo, monkeypatch, capsys):
+    """#284, the other half: a cooldown demotion matched the edit CONTENT and
+    was collapsed only to avoid repeating itself. Strong signal. It must be
+    recorded as `cooldown`, distinct from a path-only miss, or the two
+    serialize identically and a precision reader cannot decide."""
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")   # full body
+    _precheck_ctx(repo, monkeypatch, capsys, "lower the sleep to 3")   # collapses
+    log = (repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["demoted_ids"] == [1]
+    assert rec["demotion_reasons"] == {"1": "cooldown"}
 
 
 def _write_log_line(repo, ts, scar_ids, demoted_ids):
@@ -672,6 +721,21 @@ def test_precheck_command_collapses_repeat_within_cooldown(command_repo, monkeyp
     out = out_json(capsys)
     # second showing within 4h demotes to a one-liner, never a full body
     assert out is None or "already shown" in str(out)
+
+
+def test_precheck_command_records_cooldown_demotion_reason(command_repo, monkeypatch, capsys):
+    """#284 on the command path. A command anchor has no path-only case, so
+    every demotion here is a cooldown, and the row must say so rather than
+    leaving the reader to guess from which hook wrote it."""
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    capsys.readouterr()
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    log = (command_repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()
+    rec = json.loads(log[-1])
+    assert rec["demoted_ids"] == [2]
+    assert rec["demotion_reasons"] == {"2": "cooldown"}
 
 
 # --- hot path parses each scar file exactly once (#186) ---

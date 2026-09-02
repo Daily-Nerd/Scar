@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .hooks import (
+    DEMOTED_COOLDOWN,
+    DEMOTED_PATH_ONLY,
     _context_bytes,
+    _demoted_for_render,
+    _demotion_reasons,
     _emit,
     _log_firing,
     _log_violation_firing,
@@ -176,18 +180,22 @@ def pretool() -> int:
             target = str((store.root / match.path).resolve())
             recent = _recently_fired(str(store.root), target)
             if not has_content_signal(match):
-                demoted.append((match.scar, "path-only match"))
+                demoted.append((match.scar, DEMOTED_PATH_ONLY))
             elif match.scar.id is not None and match.scar.id in recent:
-                demoted.append((match.scar, "already shown in the last 4h"))
+                demoted.append((match.scar, DEMOTED_COOLDOWN))
             else:
                 full.append(match.scar)
 
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=demoted)
+                                    demoted=_demoted_for_render(demoted))
         if context:
             _emit("PreToolUse", context)
 
         demoted_ids = {scar.id for scar, _ in demoted}
+        # #284: one row per path, so the reasons are sliced per row exactly
+        # the way demoted_ids is, and the two can never disagree about which
+        # ids a row carries.
+        reasons = _demotion_reasons(demoted)
         by_path: dict[str, list] = {}
         for match in matches:
             by_path.setdefault(match.path, []).append(match.scar)
@@ -197,8 +205,11 @@ def pretool() -> int:
         ctx = _context_bytes(payload)
         for rel_path, scars in by_path.items():
             target = str((store.root / rel_path).resolve())
+            row_ids = [s.id for s in scars if s.id in demoted_ids]
             _log_firing(store, target, scars,
-                        demoted_ids=[s.id for s in scars if s.id in demoted_ids],
+                        demoted_ids=row_ids,
+                        demotion_reasons={str(i): reasons[str(i)] for i in row_ids
+                                          if str(i) in reasons},
                         runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx)
         if not matches and _zero_hit_logging():
             for target, _ in targets:

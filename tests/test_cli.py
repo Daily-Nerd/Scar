@@ -3075,6 +3075,56 @@ def test_stats_counts_demotions_as_a_separate_stage(repo, capsys, monkeypatch):
     assert data["total_firings"] == 2
 
 
+def test_stats_splits_demotions_by_reason_and_never_guesses_a_missing_one(
+        repo, capsys, monkeypatch):
+    """#284: a path-only demotion (the anchor proved the file was in scope,
+    nothing in the edit matched) and a cooldown demotion (content matched,
+    suppressed only to avoid repeating) are opposite evidence and must not
+    report as one blended number. A row that predates `demotion_reasons`
+    counts as UNKNOWN reason — never as path-only, which is the flattering
+    reading for a precision metric (#266 convention)."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2, 3],
+         "demotion_reasons": {"2": "path-only", "3": "cooldown"}},
+        {"ts": "2026-06-11T10:00:00", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2],
+         "demotion_reasons": {"2": "cooldown"}},
+        # predates the field: reason must read as unknown
+        {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [4, 5]},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["demotions"] == 5
+    assert data["demotions_path_only"] == 1
+    assert data["demotions_cooldown"] == 2
+    assert data["demotions_reason_unknown"] == 2
+
+
+def test_stats_plain_output_splits_demotions_by_reason(repo, capsys, monkeypatch):
+    """The split must reach the plain renderer, and rows the log could not
+    place must be named as such rather than silently absorbed."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [2, 3],
+         "demotion_reasons": {"2": "path-only", "3": "cooldown"}},
+        {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
+         "scar_ids": [1], "count": 1, "demoted_ids": [4]},
+    ])
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "1 path-only" in out
+    assert "1 cooldown" in out
+    assert "1 of unknown reason" in out
+
+
 def test_stats_plain_output_labels_retrieval_as_a_floor_not_a_rate(
         repo, capsys, monkeypatch):
     """The retrieval number MUST be published as a lower bound. Misses on
