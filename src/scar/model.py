@@ -38,6 +38,12 @@ class Scar:
     confidence: float = 0.5
     created: str = ""
     authors: list[str] = field(default_factory=list)
+    # #287: who VOUCHED, distinct from who drafted. Written only by promote,
+    # which overwrites whatever a candidate carried. Empty on every scar
+    # promoted before the field existed, and never inferred from authors:
+    # the reviewer used to be appended there with no marker, so position is
+    # not a role.
+    promoted_by: str = ""
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
     symbol_anchors: list[str] = field(default_factory=list)
@@ -65,6 +71,8 @@ class Scar:
             lines.append(f"created: {self.created}")
         if self.authors:
             lines.append("authors: [" + ", ".join(_quote(a) for a in self.authors) + "]")
+        if self.promoted_by:
+            lines.append(f"promoted_by: {self.promoted_by}")
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f"  - pattern: {_quote(p)}" for p in self.pattern_anchors]
@@ -194,6 +202,7 @@ def parse_scar_text(text: str) -> Scar:
         confidence=confidence,
         created=_field(front, "created"),
         authors=authors,
+        promoted_by=_field(front, "promoted_by"),
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())

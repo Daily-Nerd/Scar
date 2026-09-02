@@ -180,6 +180,14 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             "error", "missing status field — an omitted status silently "
             "defaults to active, bypassing human promotion; write "
             "status: candidate (or the intended status) explicitly"))
+    if scar.status == "candidate" and scar.promoted_by:
+        # #287: only promote writes this, and a candidate has not been
+        # promoted, so the field here is a claim nobody made (an agent can
+        # write any name). Promote overwrites it regardless; this just makes
+        # the pre-seeding visible instead of silent.
+        findings.append(Finding(
+            "warning", f"candidate carries promoted_by: {scar.promoted_by} — "
+            "only promote writes this field; nobody has vouched for a candidate"))
     if (not scar.path_anchors and not scar.pattern_anchors
             and not scar.symbol_anchors and not scar.command_anchors):
         findings.append(Finding("error", "no anchors — scar protects nothing"))

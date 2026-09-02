@@ -2687,7 +2687,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "promote", _cmd_promote, help="review a candidate into an active scar")
     p.add_argument("candidate", help="candidate filename (or unique substring)")
     p.add_argument("--reviewer", default="",
-                   help="human reviewer to add to authors "
+                   help="the human vouching for this scar, recorded as promoted_by "
                         "(default: git config user.name)")
 
     p = _add(sub, "check", _cmd_check, help="scars anchored to a path (CI gate with --exit-code)")
