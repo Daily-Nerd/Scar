@@ -245,6 +245,19 @@ the past, and today's `.scars/` cannot answer it: a scar armed last week was
 not armed last month, so inferring it would rewrite history in the flattering
 direction. Consumers must treat it as unplaceable, not as zero.
 
+**Arming dates are not on the row, and will not be.** For every row written
+by 0.21.0 or later, `armed_ids` records armedness at the moment of firing,
+which is strictly more accurate than gating on an arming date: a scar that was
+armed, disarmed and re-armed is placed correctly by `armed_ids` and wrongly by
+any single date. A date field would add nothing for those rows. For rows
+written before 0.21.0 it would add nothing either, because they are never
+backfilled. That makes the gap permanent and bounded: any armed-window number
+computed over rows that predate `armed_ids` is correct only if the arming
+dates were reconstructed from git history, and it is not reproducible from
+the log alone. The procedure is documented beside the one published number
+that depends on it (the methodology page), and `armed_unknown` names exactly
+the rows it applies to.
+
 ### 9.4 Both halves of the pipeline are watched
 
 `instrument_disconnected` reports the **precheck** half dying: violations

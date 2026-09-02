@@ -46,6 +46,29 @@ Two repositories dogfooded the instrument: SCAR's own repo and a sibling CLI pro
 
 **Outcome: Branch A.** The robustness cut is the load-bearing row: one scar with directory-wide anchors contributed 97% of raw F, and amputating it entirely still clears the pre-registered F ≥ 20 bar. The headline number survives the harshest cut, not the most flattering one.
 
+### What is reproducible from the log, and what is not
+
+The F above is correct, and it is **not reproducible from the firing log alone**. This is a permanent, known limitation, stated here because it has been stated publicly.
+
+The window rows predate `armed_ids`. At the time, a firing row recorded which scars fired and how many, but not whether each one carried a `violation:` tripwire at that moment. The armed-only denominator therefore came from git: for each scar file, the date of the first commit that added a `violation:` line, then a gate on every row's timestamp against that date.
+
+```bash
+# per scar file: the oldest commit that changed the count of `violation:` lines
+# is the arming commit. No --diff-filter=A: most scars are armed by a later
+# edit, not at creation, and that filter returns nothing for them.
+git log --format='%ad' --date=short -S'violation:' -- .scars/0001-*.md | tail -1
+# then count firing rows for that scar with ts on or after that date
+```
+
+Two independent counts (a script and a separate shell pipeline) agreed exactly. An auditor who wants to check 737 has to redo that step; `scar stats` on the archived rows will report them as `armed_unknown`, which is the correct output.
+
+Two things follow.
+
+- **The gap is bounded.** Every row written by 0.21.0 or later carries `armed_ids`, recorded live by the hook. For those rows the armed denominator reads straight off the log, and `armed_ids` is more accurate than a date could be: a scar that was armed, disarmed and re-armed is placed correctly per firing, and wrongly by any single date. Recording dates would add nothing.
+- **The gap is not repaired.** Rows from before the field are not backfilled from today's `.scars/`. A scar armed last week was not armed last month, and guessing would rewrite history in exactly the flattering direction this page exists to refuse.
+
+One earlier public statement said the log records ids and counts but not armedness. That was true of the window rows and is no longer true of current rows.
+
 Post-window disclosure: two violation records were logged **after** the window closed (Jul 27 and Jul 29), both from one scar tripping on files that *describe* the forbidden pattern — the same self-referential class as measurement error №4 below. They are outside the window and disclosed here regardless.
 
 ## Five times the numbers tried to lie
