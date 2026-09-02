@@ -64,6 +64,34 @@ VERDICT_EXPECTED_KEY = "verdict_expected"
 # convention as armed_ids (#266) and block_capable (#278).
 CONTEXT_BYTES_KEY = "context_bytes"
 
+# Why a one-liner was demoted (#284). `demoted_ids` alone flattens two
+# opposite facts into one list: a path-only match proved the FILE was in
+# scope and nothing about the edit matched (weak), while a cooldown demotion
+# matched the edit CONTENT and was suppressed purely to avoid repeating
+# itself (strong). A precision reader that cannot tell them apart will reach
+# for the flattering one.
+#
+# The CODE reaches the log, keyed by scar id. The PROSE reaches the agent,
+# unchanged by this: recording only, nothing injected differs.
+DEMOTED_PATH_ONLY = "path-only"
+DEMOTED_COOLDOWN = "cooldown"
+DEMOTION_PROSE = {
+    DEMOTED_PATH_ONLY: "path-only match",
+    DEMOTED_COOLDOWN: "already shown in the last 4h",
+}
+
+
+def _demoted_for_render(demoted: list) -> list:
+    """(scar, code) pairs -> (scar, prose) pairs for injection_context."""
+    return [(s, DEMOTION_PROSE[code]) for s, code in demoted]
+
+
+def _demotion_reasons(demoted: list) -> dict:
+    """(scar, code) pairs -> {str(id): code} for the firing row. JSON keys are
+    strings, so the id is stringified here and re-parsed by the reader; a scar
+    with no id is not countable by stats either way and is left out."""
+    return {str(s.id): code for s, code in demoted if s.id is not None}
+
 
 def _context_bytes(payload: dict) -> int | None:
     """Size of the host's transcript file, or None when it cannot be known.
@@ -177,6 +205,7 @@ def _zero_hit_logging() -> bool:
 def _log_firing(store: ScarStore, target: str, hits: list,
                 demoted_ids: list | None = None,
                 runtime: str = "claude-code",
+                demotion_reasons: dict | None = None,
                 edit_id: str | None = None,
                 block_capable: bool = False,
                 context_bytes: int | None = None) -> None:
@@ -214,6 +243,11 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             # See VERDICT_EXPECTED_KEY.
             VERDICT_EXPECTED_KEY: any(getattr(s, "violation", "") for s in hits),
             "demoted_ids": demoted_ids or [],
+            # #284: WHY each of those was demoted, by str(id). Same absence
+            # convention as armed_ids: `{}` means nothing was demoted, a
+            # MISSING key means the row predates the field, and a reader must
+            # count those as UNKNOWN reason — never as path-only.
+            "demotion_reasons": demotion_reasons or {},
             "runtime": runtime,
             # Could THIS firing have refused the action (#278)? Written here,
             # never inferred from `runtime` at read time: inference bakes
@@ -354,13 +388,13 @@ def precheck() -> int:
         full, demoted = [], []
         for m in matches:
             if not has_content_signal(m):
-                demoted.append((m.scar, "path-only match"))
+                demoted.append((m.scar, DEMOTED_PATH_ONLY))
             elif m.scar.id is not None and m.scar.id in recent:
-                demoted.append((m.scar, "already shown in the last 4h"))
+                demoted.append((m.scar, DEMOTED_COOLDOWN))
             else:
                 full.append(m.scar)
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=demoted)
+                                    demoted=_demoted_for_render(demoted))
         hits = [m.scar for m in matches]
         if context:
             _emit("PreToolUse", context)
@@ -368,6 +402,7 @@ def precheck() -> int:
         if hits or _zero_hit_logging():
             _log_firing(store, target, hits,
                         demoted_ids=[s.id for s, _ in demoted],
+                        demotion_reasons=_demotion_reasons(demoted),
                         edit_id=edit_id if isinstance(edit_id, str) else None,
                         context_bytes=_context_bytes(payload))
     except Exception:
@@ -397,16 +432,17 @@ def _precheck_command_payload(payload: dict,
         full, demoted = [], []
         for m in matches:
             if m.scar.id is not None and m.scar.id in recent:
-                demoted.append((m.scar, "already shown in the last 4h"))
+                demoted.append((m.scar, DEMOTED_COOLDOWN))
             else:
                 full.append(m.scar)
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=demoted)
+                                    demoted=_demoted_for_render(demoted))
         if context:
             _emit("PreToolUse", context)
         edit_id = payload.get("tool_use_id")
         _log_firing(store, command, [m.scar for m in matches],
                     demoted_ids=[s.id for s, _ in demoted], runtime=runtime,
+                    demotion_reasons=_demotion_reasons(demoted),
                     edit_id=edit_id if isinstance(edit_id, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the

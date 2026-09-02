@@ -147,6 +147,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         # row that predates the mechanism is unplaceable rather than unresolved.
         "verdict_expected": True,
         "demoted_ids": [],
+        # #284: WHY each demoted id was demoted, keyed by str(id). `{}` is
+        # "nothing demoted"; a MISSING key is "row predates the field" and
+        # reads as unknown reason, never as path-only.
+        "demotion_reasons": {},
         "runtime": "codex",
         # #278: Codex emits advisory context only, so this firing could not
         # have refused the apply_patch. Written, never inferred from the
@@ -154,6 +158,22 @@ def test_codex_pretool_injects_once_across_multiple_files(
         "block_capable": False,
         "edit_id": "exec-test-1",
     }]
+
+
+def test_codex_pretool_records_path_only_demotion_reason(repo, monkeypatch, capsys):
+    """#284 on the Codex path. A patch touching an anchored file with content
+    that matches nothing demotes to a one-liner for being path-only, and the
+    row must carry that reason, not just the id."""
+    patch = """*** Begin Patch
+*** Update File: payments/a.py
+@@
++x = 1
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch))
+    assert main(["hook", "codex-pretool"]) == 0
+    rec = json.loads((repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()[-1])
+    assert rec["demoted_ids"] == [1]
+    assert rec["demotion_reasons"] == {"1": "path-only"}
 
 
 def test_codex_pretool_accepts_absolute_path_inside_repo(repo, monkeypatch, capsys):

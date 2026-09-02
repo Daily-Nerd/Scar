@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -348,6 +348,31 @@ on `triggered: true`; there is no message to carry otherwise.
 
 `reanchor --json` is **propose-only**. `--apply` is human-review-only, never
 CI, and never emits JSON.
+
+### 9.7 A demotion says why
+
+A scar rendered as a one-liner was demoted for one of two reasons, and they are
+opposite evidence. A **path-only** demotion means the anchor proved the file
+was in scope and nothing in the edit matched: a near miss. A **cooldown**
+demotion means the edit content matched (a pattern hit, a symbol resolved, a
+command matched) and the full body was withheld only because it had been shown
+in the last four hours: a hit we chose not to repeat.
+
+`demoted_ids` lists both in one field. `demotion_reasons` records which is
+which, keyed by `str(scar_id)` because JSON keys are strings, with the values
+`path-only` and `cooldown`. Nothing injected changes; this is recording only.
+
+The key is always written. `{}` means nothing on the row was demoted. A
+**missing** key means the row predates the field, and every demotion on such a
+row counts as `demotions_reason_unknown`. It is never read as path-only, which
+is the flattering reading for a precision measure.
+
+- `demotions_path_only`, `demotions_cooldown`, `demotions_reason_unknown` sum
+  to `demotions`.
+
+> A repo whose demotions are mostly cooldown suppressions of strong matches
+> and one whose demotions are mostly path-only noise have different precision
+> stories. Before this field they reported identically.
 
 ### 9.4 Enforcement
 
