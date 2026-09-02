@@ -425,7 +425,7 @@ def test_precheck_fails_open_on_internal_error(repo, monkeypatch, capsys):
     def boom(*a, **k):
         raise RuntimeError("simulated internal failure")
 
-    monkeypatch.setattr(hooks, "rank_matches_for_edit", boom)
+    monkeypatch.setattr(hooks, "rank_and_census_for_edit", boom)
     feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
                                       "new_string": "time.sleep(3)"}})
     assert main(["hook", "precheck"]) == 0        # clean exit, no raise
@@ -497,6 +497,22 @@ def test_firing_log_records_path_only_demotion_reason(repo, monkeypatch, capsys)
     rec = json.loads(log[-1])
     assert rec["demoted_ids"] == [1]
     assert rec["demotion_reasons"] == {"1": "path-only"}
+
+
+def test_precheck_records_the_census_before_top_k_truncates(repo, monkeypatch, capsys):
+    """Five path-anchored scars on payments/, one of them with a content
+    pattern that hits. top_k keeps three; the row must still say five matched,
+    one on content, four on path alone."""
+    for i in range(2, 6):
+        (repo / ".scars" / f"000{i}-x{i}.fence.md").write_text(
+            SECOND_FENCE.replace("id: 2", f"id: {i}").replace("Retry needs backoff", f"S{i}"))
+    (repo / ".scars" / "0001-vendor.fence.md").write_text(PATTERNED_FENCE)
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    rec = json.loads((repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()[-1])
+    assert rec["count"] == 3
+    assert rec["matched"] == {"total": 5, "content": 1, "path_only": 4}
 
 
 def test_log_firing_records_empty_demotion_reasons_rather_than_omitting_them(
@@ -738,6 +754,16 @@ def test_precheck_command_records_cooldown_demotion_reason(command_repo, monkeyp
     assert rec["demotion_reasons"] == {"2": "cooldown"}
 
 
+def test_precheck_command_records_an_all_content_census(command_repo, monkeypatch, capsys):
+    """#286 on the command path: a command hit is act-proof, so the census is
+    all content and path_only is 0 by construction, not by luck."""
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    main(["hook", "precheck-command"])
+    rec = json.loads((command_repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()[-1])
+    assert rec["count"] == 1
+    assert rec["matched"] == {"total": 1, "content": 1, "path_only": 0}
+
+
 # --- hot path parses each scar file exactly once (#186) ---
 
 def test_precheck_parses_each_scar_file_once(repo, monkeypatch, capsys):
@@ -856,6 +882,44 @@ def _scar_obj(id: int, violation: str = ""):
     return Scar(id=id, type="deadend", title=f"S{id}", severity="medium",
                 confidence=0.7, created="2026-08-29", authors=["t"],
                 path_anchors=["src/"], violation=violation, status="active")
+
+
+def test_log_firing_records_the_match_census_when_given(tmp_path, monkeypatch):
+    """#286: `count` is min(matched, top_k). `matched` is what actually
+    matched, split by signal, taken before the cut. Both live on the row so
+    a reader can see the cap without guessing at it."""
+    from scar.hooks import _log_firing
+    from scar.match import MatchCensus
+    from scar.store import ScarStore, init_scars
+
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    init_scars(tmp_path)
+    store = ScarStore.discover(tmp_path)
+
+    _log_firing(store, "src/a.py", [_scar_obj(1)],
+                matched=MatchCensus(total=5, content=1, path_only=4))
+
+    rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
+    assert rec["count"] == 1
+    assert rec["matched"] == {"total": 5, "content": 1, "path_only": 4}
+
+
+def test_log_firing_omits_the_census_rather_than_zeroing_it(tmp_path, monkeypatch):
+    """A writer that did not count must not write zeros: zeros claim the edit
+    was observed and matched nothing. Absent means the writer did not say,
+    the same convention as context_bytes. Every writer that exists today
+    passes it; this guards the adapter that forgets."""
+    from scar.hooks import _log_firing
+    from scar.store import ScarStore, init_scars
+
+    monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
+    init_scars(tmp_path)
+    store = ScarStore.discover(tmp_path)
+
+    _log_firing(store, "src/a.py", [_scar_obj(1)])
+
+    rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
+    assert "matched" not in rec
 
 
 def test_log_firing_records_which_scars_were_armed(tmp_path, monkeypatch):

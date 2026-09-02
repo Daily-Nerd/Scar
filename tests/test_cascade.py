@@ -268,6 +268,17 @@ def test_stats_counts_a_cascade_firing(repo, monkeypatch, capsys):
     assert data["per_scar"][0]["id"] == 1
 
 
+def test_cascade_row_carries_the_census(repo, monkeypatch, capsys):
+    """#286 on the Cascade path. A block row records what matched before
+    top_k, split by signal, like every other writer. The repo fixture has one
+    content-anchored scar, so this edit is 1/1/0."""
+    feed(monkeypatch, write_payload(repo, "lower the sleep to 3"))
+    main(["cascade-hook"])
+    rec = json.loads((repo / "state" / "firing-log.jsonl")
+                     .read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert rec["matched"] == {"total": 1, "content": 1, "path_only": 0}
+
+
 # --- never break the user's editor ---
 
 def test_garbage_stdin_proceeds(repo, monkeypatch, capsys):
@@ -314,7 +325,7 @@ def test_internal_error_proceeds(repo, monkeypatch, capsys):
     def boom(*a, **k):
         raise RuntimeError("simulated internal failure")
 
-    monkeypatch.setattr(cascade, "rank_matches_for_edit", boom)
+    monkeypatch.setattr(cascade, "rank_and_census_for_edit", boom)
     feed(monkeypatch, write_payload(repo, "lower the sleep to 3"))
     assert main(["cascade-hook"]) == 0
     assert capsys.readouterr().err == ""

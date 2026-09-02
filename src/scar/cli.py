@@ -1438,6 +1438,8 @@ def _filter_window(records: list[dict], lo, hi) -> tuple[list[dict], int]:
 STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
                         "demotions_path_only", "demotions_cooldown",
                         "demotions_reason_unknown",
+                        "census_known", "census_unknown", "cofires_per_edit",
+                        "edits_multi_fire", "path_only_ratio",
                         "edits_observed", "injection_rate",
                         "armed_firings", "armed_unknown",
                         "firings_block_capable", "firings_advisory",
@@ -1561,10 +1563,31 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
     if reason_unknown:
         demotions += (f"{',' if (path_only or cooldown) else ';'} {reason_unknown} "
                       "of unknown reason (logged before it was recorded)")
+    # #286: co-fires per edit is the leading indicator for the compliance
+    # cliff (two anchored lessons on one edit, pulling apart), and the
+    # path-only share is a PROXY for the false-anchor rate, never the rate:
+    # the true rate needs ground truth about applicability that nothing
+    # here produces. Both are refused, not zeroed, when no row carries a
+    # census, and rows without one are named rather than absorbed.
+    known = block.get("census_known") or 0
+    unknown_census = block.get("census_unknown") or 0
+    per_edit = block.get("cofires_per_edit")
+    ratio = block.get("path_only_ratio")
+    if per_edit is None:
+        cofires = "co-fires: UNKNOWN, no row carries a census yet"
+    else:
+        cofires = (f"co-fires: {per_edit:.1f} per edit over {known} row(s), "
+                   f"{block.get('edits_multi_fire') or 0} edit(s) with 2+")
+        if ratio is not None:
+            cofires += (f"; path-only share {ratio:.1%} "
+                        "(a proxy for false-anchor rate, not the rate)")
+    if unknown_census:
+        cofires += f"; {unknown_census} row(s) without a census (logged before it was recorded)"
     return [
         enforcement,
         retrieval,
         demotions,
+        cofires,
     ]
 
 
@@ -1599,6 +1622,15 @@ def _aggregate_firings(records: list[dict]) -> dict:
     demotions_path_only = 0
     demotions_cooldown = 0
     demotions_reason_unknown = 0
+    # #286: the pre-truncation census. `count` on a row is min(matched,
+    # top_k), so co-fires per edit were unrecordable until `matched` existed.
+    # Unit is FIRING ROWS (one edit on one file), not scar-firings. A row
+    # without the field is unknown, never a 1.
+    census_known = 0
+    census_unknown = 0
+    census_total_sum = 0
+    census_path_only_sum = 0
+    edits_multi_fire = 0
     edits_observed = 0      # precheck passes recorded (#217 denominator)
     zero_hit_edits = 0      # ...of which matched nothing
     # #266: firings on scars that carried a violation: tripwire, and firings we
@@ -1647,6 +1679,17 @@ def _aggregate_firings(records: list[dict]) -> dict:
                         if prev is None or ts_rec < prev:
                             fired_on[key] = ts_rec
         if isinstance(sids, list) and sids:
+            matched = rec.get("matched")
+            total = matched.get("total") if isinstance(matched, dict) else None
+            path_only = matched.get("path_only") if isinstance(matched, dict) else None
+            if isinstance(total, int) and isinstance(path_only, int):
+                census_known += 1
+                census_total_sum += total
+                census_path_only_sum += path_only
+                if total >= 2:
+                    edits_multi_fire += 1
+            else:
+                census_unknown += 1
             armed = rec.get("armed_ids")
             eid = rec.get("edit_id")
             if isinstance(armed, list):
@@ -1783,6 +1826,18 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "demotions_path_only": demotions_path_only,
             "demotions_cooldown": demotions_cooldown,
             "demotions_reason_unknown": demotions_reason_unknown,
+            # #286. Both ratios are REFUSED (null) when nothing carries a
+            # census: 0 would read as "no co-fires" and "no path-only noise".
+            # path_only_ratio is a PROXY for the false-anchor rate, labelled
+            # as one wherever it renders: the true rate needs ground truth
+            # about applicability that nothing here produces.
+            "census_known": census_known,
+            "census_unknown": census_unknown,
+            "cofires_per_edit": (census_total_sum / census_known
+                                 if census_known else None),
+            "edits_multi_fire": edits_multi_fire,
+            "path_only_ratio": (census_path_only_sum / census_total_sum
+                                if census_total_sum else None),
             "edits_observed": edits_observed,
             "armed_firings": armed_firings,
             "armed_unknown": armed_unknown,

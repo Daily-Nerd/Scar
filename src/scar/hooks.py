@@ -17,8 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-from .match import (armed_scar_ids, find_violations, has_content_signal,
-                    rank_matches_for_edit)
+from .match import (MatchCensus, armed_scar_ids, find_violations, has_content_signal,
+                    rank_and_census_for_edit)
 from .render import injection_context
 from .store import ScarStore
 
@@ -208,7 +208,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
                 demotion_reasons: dict | None = None,
                 edit_id: str | None = None,
                 block_capable: bool = False,
-                context_bytes: int | None = None) -> None:
+                context_bytes: int | None = None,
+                matched: MatchCensus | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -272,6 +273,14 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         # Omitted, never zeroed. See CONTEXT_BYTES_KEY.
         if context_bytes is not None:
             record[CONTEXT_BYTES_KEY] = context_bytes
+        # #286: what matched BEFORE top_k, split by signal. `count` above is
+        # the injected list and has been capped at DEFAULT_TOP_K for as long
+        # as the cap existed, so co-fires per edit were unrecordable from
+        # this row. Omitted when the writer did not count, never zeroed:
+        # zeros claim the edit was observed and matched nothing. Every
+        # writer that exists today passes it.
+        if matched is not None:
+            record["matched"] = matched.to_dict()
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -382,8 +391,8 @@ def precheck() -> int:
             return 0
         new_content = _extract_edit_content(tool_input)
         firing, broken = store.scan()  # one directory pass, not two (#186)
-        matches = rank_matches_for_edit(store, Path(target), new_content,
-                                        firing=firing)
+        matches, census = rank_and_census_for_edit(store, Path(target),
+                                                   new_content, firing=firing)
         recent = _recently_fired(str(store.root), target)
         full, demoted = [], []
         for m in matches:
@@ -403,6 +412,7 @@ def precheck() -> int:
             _log_firing(store, target, hits,
                         demoted_ids=[s.id for s, _ in demoted],
                         demotion_reasons=_demotion_reasons(demoted),
+                        matched=census,
                         edit_id=edit_id if isinstance(edit_id, str) else None,
                         context_bytes=_context_bytes(payload))
     except Exception:
@@ -423,9 +433,9 @@ def _precheck_command_payload(payload: dict,
         store = ScarStore.discover(Path(payload.get("cwd") or os.getcwd()))
         if store is None:
             return 0
-        from .match import rank_matches_for_command
+        from .match import rank_and_census_for_command
         firing, broken = store.scan()  # one directory pass, not two (#186)
-        matches = rank_matches_for_command(store, command, firing=firing)
+        matches, census = rank_and_census_for_command(store, command, firing=firing)
         if not matches:
             return 0
         recent = _recently_fired(str(store.root), command)
@@ -443,6 +453,7 @@ def _precheck_command_payload(payload: dict,
         _log_firing(store, command, [m.scar for m in matches],
                     demoted_ids=[s.id for s, _ in demoted], runtime=runtime,
                     demotion_reasons=_demotion_reasons(demoted),
+                    matched=census,
                     edit_id=edit_id if isinstance(edit_id, str) else None)
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the
