@@ -28,7 +28,6 @@ from .hooks import (
     _zero_hit_logging,
 )
 from .match import (
-    MatchCensus,
     find_violations_for_targets,
     has_content_signal,
     rank_and_census_for_targets,
@@ -217,24 +216,14 @@ def pretool() -> int:
                         runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx)
         if not matches and _zero_hit_logging():
             for target, _ in targets:
+                # _targets already resolved every path and dropped anything
+                # outside the store, so this key always exists in the census.
                 _log_firing(store, str(target), [], runtime=RUNTIME,
-                            matched=_census_for(store, census, target),
+                            matched=census.get(str(target.relative_to(store.root))),
                             edit_id=edit_id, context_bytes=ctx)
     except Exception:
         return 0
     return 0
-
-
-def _census_for(store: ScarStore, census: dict, target) -> MatchCensus | None:
-    """The census entry for a raw target path, or None when the target was
-    outside the store and therefore never counted."""
-    path = Path(target)
-    path = path if path.is_absolute() else store.root / path
-    try:
-        rel = str(path.resolve().relative_to(store.root))
-    except ValueError:
-        return None
-    return census.get(rel)
 
 
 def _tool_succeeded(response: object) -> bool:

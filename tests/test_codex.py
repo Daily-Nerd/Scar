@@ -203,6 +203,25 @@ def test_codex_pretool_census_is_per_row(repo, monkeypatch, capsys):
     assert rows[str(repo / "brand" / "b.py")]["matched"] == {"total": 1, "content": 0, "path_only": 1}
 
 
+def test_codex_zero_hit_row_carries_an_all_zero_census(repo, monkeypatch, capsys):
+    """#286: a zero-hit row (opt-in, #217) was observed and matched nothing.
+    That is a fact, so it carries {0,0,0} rather than omitting the key: the
+    omission convention is for a writer that did not count, and this one
+    did. Keyed by the same relative path _targets already guarantees is
+    inside the store."""
+    monkeypatch.setenv("SCAR_LOG_ZERO_HITS", "1")
+    patch = """*** Begin Patch
+*** Update File: docs/readme.md
+@@
++hello
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch))
+    assert main(["hook", "codex-pretool"]) == 0
+    rec = json.loads((repo / "state" / "firing-log.jsonl").read_text().strip())
+    assert rec["scar_ids"] == []
+    assert rec["matched"] == {"total": 0, "content": 0, "path_only": 0}
+
+
 def test_codex_pretool_accepts_absolute_path_inside_repo(repo, monkeypatch, capsys):
     patch = f"""*** Begin Patch
 *** Update File: {repo / 'payments' / 'retry.py'}
