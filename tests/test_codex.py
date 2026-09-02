@@ -157,6 +157,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         # runtime string at read time.
         "block_capable": False,
         "edit_id": "exec-test-1",
+        # #286: what matched before top_k, split by signal. `count` is the
+        # injected list; this is the census. Omitted only by a writer that
+        # did not count, which no shipped writer is.
+        "matched": {"total": 1, "content": 1, "path_only": 0},
     }]
 
 
@@ -174,6 +178,29 @@ def test_codex_pretool_records_path_only_demotion_reason(repo, monkeypatch, caps
     rec = json.loads((repo / "state" / "firing-log.jsonl").read_text().strip().splitlines()[-1])
     assert rec["demoted_ids"] == [1]
     assert rec["demotion_reasons"] == {"1": "path-only"}
+
+
+def test_codex_pretool_census_is_per_row(repo, monkeypatch, capsys):
+    """#286: Codex writes one row per file, so each row carries ITS file's
+    census. payments/a.py hits the sleep scar on content; brand/b.py hits a
+    brand-only path scar and nothing on content. Two rows, two censuses."""
+    (repo / ".scars" / "0003-brand.fence.md").write_text(
+        FENCE.replace("id: 1", "id: 3").replace("payments/", "brand/")
+             .replace("  - pattern: 'lower.{0,20}sleep'\n", ""))
+    patch = """*** Begin Patch
+*** Update File: payments/a.py
+@@
++lower the sleep to 3
+*** Update File: brand/b.py
+@@
++x = 1
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch))
+    assert main(["hook", "codex-pretool"]) == 0
+    rows = {r["target"]: r for r in
+            (json.loads(line) for line in (repo / "state" / "firing-log.jsonl").read_text().splitlines())}
+    assert rows[str(repo / "payments" / "a.py")]["matched"] == {"total": 1, "content": 1, "path_only": 0}
+    assert rows[str(repo / "brand" / "b.py")]["matched"] == {"total": 1, "content": 0, "path_only": 1}
 
 
 def test_codex_pretool_accepts_absolute_path_inside_repo(repo, monkeypatch, capsys):

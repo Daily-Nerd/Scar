@@ -41,7 +41,8 @@ from .hooks import (
     _read_payload,
     _state_dir,
 )
-from .match import find_violations, has_content_signal, rank_matches_for_edit
+from .match import (MatchCensus, find_violations, has_content_signal,
+                    rank_and_census_for_edit)
 from .render import compact_block, rule_line
 from .store import ScarStore
 
@@ -151,7 +152,7 @@ def _fire_key(trajectory: str, scar_id: int | None, target: str) -> str:
 
 
 def _respond(store: ScarStore, trajectory: str, target: str,
-             matches: list) -> int:
+             matches: list, census: MatchCensus | None = None) -> int:
     """The shared tail of both pre-hooks: decide, render, log, exit."""
     if not matches:
         return 0
@@ -177,7 +178,8 @@ def _respond(store: ScarStore, trajectory: str, target: str,
     # Reached only past `if not to_block: return 0`, so this firing DID
     # refuse the action. Surface-only matches never reach the log at all
     # (see the comment above), so every windsurf row is block-capable.
-    _log_firing(store, target, scars, runtime=RUNTIME, block_capable=True)
+    _log_firing(store, target, scars, runtime=RUNTIME, block_capable=True,
+                matched=census)
     return BLOCK_EXIT
 
 
@@ -190,10 +192,10 @@ def pre_write_code(payload: dict) -> int:
     if store is None:
         return 0
     firing, _broken = store.scan()  # one directory pass, not two (#186)
-    matches = rank_matches_for_edit(store, Path(target),
-                                    _extract_edit_content(tool_info),
-                                    firing=firing)
-    return _respond(store, _trajectory(payload), target, matches)
+    matches, census = rank_and_census_for_edit(store, Path(target),
+                                               _extract_edit_content(tool_info),
+                                               firing=firing)
+    return _respond(store, _trajectory(payload), target, matches, census)
 
 
 def pre_run_command(payload: dict) -> int:
@@ -204,10 +206,10 @@ def pre_run_command(payload: dict) -> int:
     store = ScarStore.discover(Path(tool_info.get("cwd") or os.getcwd()))
     if store is None:
         return 0
-    from .match import rank_matches_for_command
+    from .match import rank_and_census_for_command
     firing, _broken = store.scan()
-    matches = rank_matches_for_command(store, command, firing=firing)
-    return _respond(store, _trajectory(payload), command, matches)
+    matches, census = rank_and_census_for_command(store, command, firing=firing)
+    return _respond(store, _trajectory(payload), command, matches, census)
 
 
 def post_write_code(payload: dict) -> int:

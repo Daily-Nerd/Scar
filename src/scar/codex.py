@@ -28,9 +28,10 @@ from .hooks import (
     _zero_hit_logging,
 )
 from .match import (
+    MatchCensus,
     find_violations_for_targets,
     has_content_signal,
-    rank_matches_for_targets,
+    rank_and_census_for_targets,
 )
 from .render import injection_context
 from .store import ScarStore
@@ -173,7 +174,7 @@ def pretool() -> int:
         if store is None or not targets:
             return 0
         firing, broken = store.scan()
-        matches = rank_matches_for_targets(store, targets, firing=firing)
+        matches, census = rank_and_census_for_targets(store, targets, firing=firing)
 
         full, demoted = [], []
         for match in matches:
@@ -210,14 +211,30 @@ def pretool() -> int:
                         demoted_ids=row_ids,
                         demotion_reasons={str(i): reasons[str(i)] for i in row_ids
                                           if str(i) in reasons},
+                        # #286: THIS file's census, keyed the same way the
+                        # rows are, so a row never carries another file's count.
+                        matched=census.get(rel_path),
                         runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx)
         if not matches and _zero_hit_logging():
             for target, _ in targets:
                 _log_firing(store, str(target), [], runtime=RUNTIME,
+                            matched=_census_for(store, census, target),
                             edit_id=edit_id, context_bytes=ctx)
     except Exception:
         return 0
     return 0
+
+
+def _census_for(store: ScarStore, census: dict, target) -> MatchCensus | None:
+    """The census entry for a raw target path, or None when the target was
+    outside the store and therefore never counted."""
+    path = Path(target)
+    path = path if path.is_absolute() else store.root / path
+    try:
+        rel = str(path.resolve().relative_to(store.root))
+    except ValueError:
+        return None
+    return census.get(rel)
 
 
 def _tool_succeeded(response: object) -> bool:

@@ -31,6 +31,31 @@ MAX_ANCHOR_SCAN = 64 * 1024
 
 
 @dataclass(frozen=True)
+class MatchCensus:
+    """What matched an edit BEFORE the fatigue budget truncated it (#286).
+
+    `count` on a firing row is min(matched, top_k), so co-fires per edit have
+    been capped at DEFAULT_TOP_K in the log for as long as the cap existed.
+    This is taken from _match_target's full ranked list, and the split is the
+    same one _select_top uses to tier the budget: `content` matched the edit
+    itself (act-proof), `path_only` matched nothing but the file's location.
+    `content + path_only == total` always."""
+    total: int
+    content: int
+    path_only: int
+
+    def to_dict(self) -> dict:
+        return {"total": self.total, "content": self.content,
+                "path_only": self.path_only}
+
+
+def census_of(ranked: list["ScarMatch"]) -> MatchCensus:
+    content = sum(1 for m in ranked if has_content_signal(m))
+    return MatchCensus(total=len(ranked), content=content,
+                       path_only=len(ranked) - content)
+
+
+@dataclass(frozen=True)
 class ScarMatch:
     scar: Scar
     source: Path
@@ -192,20 +217,40 @@ def merge_best_matches(match_lists: list[list[ScarMatch]],
     return _select_top(sorted(best.values(), key=lambda m: -m.rank), top_k)
 
 
+def rank_and_census_for_edit(store: ScarStore, target: Path, new_content: str,
+                             top_k: int = DEFAULT_TOP_K,
+                             firing: list | None = None,
+                             ) -> tuple[list[ScarMatch], MatchCensus | None]:
+    """rank_matches_for_edit plus the pre-truncation census (#286). The census
+    is None, not zeros, when the target is outside the store: zeros would
+    claim an edit was observed and matched nothing."""
+    try:
+        rel_path = str(Path(target).resolve().relative_to(store.root))
+    except ValueError:
+        return [], None
+    if firing is None:
+        firing = store.firing()
+    ranked = _match_target(firing, store.root, rel_path, new_content)
+    return _select_top(ranked, top_k), census_of(ranked)
+
+
 def rank_matches_for_edit(store: ScarStore, target: Path, new_content: str,
                           top_k: int = DEFAULT_TOP_K,
                           firing: list | None = None) -> list[ScarMatch]:
     """Top-k firing scar matches relevant to editing `target`. Pass `firing`
     when the caller already holds a store.scan() result (#186) — the hook hot
     path must not trigger a second directory parse."""
-    try:
-        rel_path = str(Path(target).resolve().relative_to(store.root))
-    except ValueError:
-        return []
-    if firing is None:
-        firing = store.firing()
-    return _select_top(
-        _match_target(firing, store.root, rel_path, new_content), top_k)
+    return rank_and_census_for_edit(store, target, new_content, top_k, firing)[0]
+
+
+def rank_and_census_for_command(store: ScarStore, command: str,
+                                top_k: int = DEFAULT_TOP_K,
+                                firing: list | None = None,
+                                ) -> tuple[list[ScarMatch], MatchCensus]:
+    """rank_matches_for_command plus the pre-truncation census (#286). Every
+    command hit is content-signal, so path_only is 0 by construction."""
+    ranked = _rank_command(store, command, firing)
+    return ranked[:top_k], census_of(ranked)
 
 
 def rank_matches_for_command(store: ScarStore, command: str,
@@ -215,6 +260,11 @@ def rank_matches_for_command(store: ScarStore, command: str,
     to execute (#175). Command anchors are matched ONLY here — never against
     edit paths or content — and a hit is act-proof (full-body tier), because
     the command IS the mistake the scar warns about."""
+    return _rank_command(store, command, firing)[:top_k]
+
+
+def _rank_command(store: ScarStore, command: str,
+                  firing: list | None) -> list[ScarMatch]:
     ranked: list[ScarMatch] = []
     if firing is None:
         firing = store.firing()
@@ -228,17 +278,22 @@ def rank_matches_for_command(store: ScarStore, command: str,
                                 rank=rank, anchor_strength=2.5,
                                 matched_by=("command",), path=command))
     ranked.sort(key=lambda m: -m.rank)
-    return ranked[:top_k]
+    return ranked
 
 
-def rank_matches_for_targets(store: ScarStore,
-                             targets: list[tuple[Path | str, str]],
-                             top_k: int = DEFAULT_TOP_K,
-                             firing: list | None = None) -> list[ScarMatch]:
-    """Best matches across path/content pairs with one loaded firing set."""
+def rank_and_census_for_targets(store: ScarStore,
+                                targets: list[tuple[Path | str, str]],
+                                top_k: int = DEFAULT_TOP_K,
+                                firing: list | None = None,
+                                ) -> tuple[list[ScarMatch], dict[str, MatchCensus]]:
+    """rank_matches_for_targets plus one census per target, keyed by path
+    relative to the store (#286). Taken before the per-target cut and before
+    merge_best_matches dedups across files, because the multi-file writers
+    log one row per file. A target outside the store gets no entry."""
     if firing is None:
         firing = store.firing()
     lists = []
+    census: dict[str, MatchCensus] = {}
     for target, new_content in targets:
         path = Path(target)
         path = path if path.is_absolute() else store.root / path
@@ -246,9 +301,18 @@ def rank_matches_for_targets(store: ScarStore,
             rel = str(path.resolve().relative_to(store.root))
         except ValueError:
             continue
-        lists.append(_select_top(
-            _match_target(firing, store.root, rel, new_content), top_k))
-    return merge_best_matches(lists, top_k)
+        ranked = _match_target(firing, store.root, rel, new_content)
+        census[rel] = census_of(ranked)
+        lists.append(_select_top(ranked, top_k))
+    return merge_best_matches(lists, top_k), census
+
+
+def rank_matches_for_targets(store: ScarStore,
+                             targets: list[tuple[Path | str, str]],
+                             top_k: int = DEFAULT_TOP_K,
+                             firing: list | None = None) -> list[ScarMatch]:
+    """Best matches across path/content pairs with one loaded firing set."""
+    return rank_and_census_for_targets(store, targets, top_k, firing)[0]
 
 
 def rank_matches_for_paths(store: ScarStore, paths: list[str], new_content: str,

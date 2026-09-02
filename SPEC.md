@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -373,6 +373,38 @@ is the flattering reading for a precision measure.
 > A repo whose demotions are mostly cooldown suppressions of strong matches
 > and one whose demotions are mostly path-only noise have different precision
 > stories. Before this field they reported identically.
+
+### 9.8 The census is taken before the cut
+
+`count` on a firing row is the injected list, and the injected list is capped
+at `top_k` (default 3). It has been `min(matched, top_k)` for as long as the
+cap has existed, so the number of scars that actually applied to one edit was
+never recoverable from the log.
+
+`matched` records what `_match_target` returned before `_select_top` truncated
+it: `{"total": n, "content": c, "path_only": p}` with `content + path_only ==
+total`. `content` matched the edit itself (a pattern hit, a symbol resolved, a
+command matched). `path_only` matched nothing but the file's location. The
+split is the same one the fatigue budget uses to tier, counted before it cuts.
+
+The key is written by every shipped writer (edit, command, Codex, Cascade). It
+is **omitted** by a writer that did not count, never zeroed: zeros would claim
+the edit was observed and matched nothing.
+
+- `census_known` / `census_unknown` count **firing rows** (one edit on one
+  file), not scar-firings. A row without `matched` is unknown, never a 1.
+- `cofires_per_edit` is the mean of `matched.total` over known rows. It is the
+  leading indicator for the compliance cliff: two anchored lessons applying to
+  one edit and pulling in different directions. If it sits near 1 almost
+  always, a clean violation rate is partly structural rather than earned.
+- `edits_multi_fire` counts known rows with `matched.total >= 2`.
+- `path_only_ratio` is `sum(path_only) / sum(total)` over known rows. It is a
+  **proxy** for the false-anchor rate and is labelled as one wherever it
+  renders. The true rate needs ground truth about whether a scar applied,
+  which nothing here produces.
+
+Both ratios are `null`, not `0`, when no row carries a census. A zero would
+read as "no co-fires" and "no path-only noise", both flattering.
 
 ### 9.4 Enforcement
 

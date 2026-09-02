@@ -111,6 +111,49 @@ def test_top_k_cap(tmp_path):
     assert len(hits) == 3
 
 
+def test_census_counts_every_match_before_top_k_truncates(tmp_path):
+    """#286: `count` on a firing row is min(matched, top_k), so co-fires per
+    edit have been capped at DEFAULT_TOP_K in the log since the cap existed.
+    The census is taken from _match_target BEFORE _select_top, so it can say
+    seven when the injected list says three."""
+    from scar.match import rank_and_census_for_edit
+    store = make_repo(tmp_path)
+    for i in range(3, 8):
+        (tmp_path / ".scars" / f"000{i}-x{i}.fence.md").write_text(
+            FENCE.replace("id: 1", f"id: {i}"))
+    matches, census = rank_and_census_for_edit(
+        store, tmp_path / "payments" / "x.py", "", top_k=3)
+    assert len(matches) == 3
+    assert census.total == 6
+    assert census.path_only == 6
+    assert census.content == 0
+
+
+def test_census_splits_content_signal_from_path_proximity(tmp_path):
+    """The split _select_top computes to tier the fatigue budget is the same
+    split a precision reader needs, and it must be counted before the cut:
+    one content hit plus one path-proximity match is 2/1/1, whatever top_k
+    then keeps."""
+    from scar.match import rank_and_census_for_edit
+    store = make_repo(tmp_path)
+    matches, census = rank_and_census_for_edit(
+        store, tmp_path / "payments" / "retry.py", "import redis", top_k=1)
+    assert len(matches) == 1
+    assert census.total == 2
+    assert census.content == 1
+    assert census.path_only == 1
+
+
+def test_census_is_none_when_target_is_outside_the_store(tmp_path):
+    """Outside the repo there is nothing to count. None, not zeros: zeros
+    would claim an edit was observed and matched nothing."""
+    from scar.match import rank_and_census_for_edit
+    store = make_repo(tmp_path)
+    matches, census = rank_and_census_for_edit(store, Path("/elsewhere/x.py"), "")
+    assert matches == []
+    assert census is None
+
+
 def test_archived_scars_never_fire(tmp_path):
     store = make_repo(tmp_path)
     f = tmp_path / ".scars" / "0001-vendor.fence.md"
@@ -477,6 +520,43 @@ def test_rank_matches_for_command_silent_on_innocent_command(tmp_path):
     store = _command_repo(tmp_path)
     assert rank_matches_for_command(store, "uv sync --all-extras") == []
     assert rank_matches_for_command(store, "git status") == []
+
+
+def test_command_census_counts_before_top_k_and_is_all_content(tmp_path):
+    """#286 on the command path. A command hit IS the mistake, so every match
+    is content-signal by construction and path_only is always 0. The count
+    still has to be taken before top_k or a repo with four overlapping
+    command scars logs three forever."""
+    from scar.match import rank_and_census_for_command
+    store = _command_repo(tmp_path)
+    for i in (8, 9):
+        (tmp_path / ".scars" / f"000{i}-uv{i}.deadend.md").write_text(
+            COMMAND_SCAR.replace("id: 7", f"id: {i}"))
+    matches, census = rank_and_census_for_command(store, "uv sync", top_k=2)
+    assert len(matches) == 2
+    assert census.total == 3
+    assert census.content == 3
+    assert census.path_only == 0
+
+
+def test_targets_census_is_per_target_and_pre_merge(tmp_path):
+    """#286 on the multi-file path. Codex logs one row per file, so the census
+    is keyed by relative path and taken before the per-target cut AND before
+    merge_best_matches dedups across files. A file outside the store gets no
+    entry rather than zeros."""
+    from scar.match import rank_and_census_for_targets
+    store = make_repo(tmp_path)
+    for i in range(3, 6):
+        (tmp_path / ".scars" / f"000{i}-x{i}.fence.md").write_text(
+            FENCE.replace("id: 1", f"id: {i}"))
+    targets = [(tmp_path / "payments" / "a.py", "import redis"),
+               (tmp_path / "brand" / "b.py", "nothing"),
+               (Path("/elsewhere/c.py"), "import redis")]
+    matches, census = rank_and_census_for_targets(store, targets, top_k=2)
+    assert len(matches) == 2
+    assert set(census) == {"payments/a.py", "brand/b.py"}
+    assert census["payments/a.py"].to_dict() == {"total": 5, "content": 1, "path_only": 4}
+    assert census["brand/b.py"].to_dict() == {"total": 0, "content": 0, "path_only": 0}
 
 
 def test_edit_matching_never_fires_command_anchors(tmp_path):

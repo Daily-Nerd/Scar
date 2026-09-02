@@ -3105,6 +3105,76 @@ def test_stats_splits_demotions_by_reason_and_never_guesses_a_missing_one(
     assert data["demotions_reason_unknown"] == 2
 
 
+def test_stats_reports_cofires_per_edit_from_the_census(repo, capsys, monkeypatch):
+    """#286: `count` is capped at top_k, so co-fires per edit were never
+    recoverable from the log. `matched.total` is the real number. The unit
+    here is FIRING ROWS (one edit on one file), not scar-firings, and a row
+    that predates the field is unknown, never a 1."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1, 2, 3], "count": 3,
+         "matched": {"total": 5, "content": 1, "path_only": 4}},
+        {"ts": "2026-06-11T10:00:00", "repo": str(repo), "target": "src/b.py",
+         "scar_ids": [1], "count": 1,
+         "matched": {"total": 1, "content": 1, "path_only": 0}},
+        # predates the field
+        {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
+         "scar_ids": [1, 2], "count": 2},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["census_known"] == 2
+    assert data["census_unknown"] == 1
+    assert data["cofires_per_edit"] == 3.0          # (5 + 1) / 2
+    assert data["edits_multi_fire"] == 1            # only the 5
+    assert data["path_only_ratio"] == pytest.approx(4 / 6)
+
+
+def test_stats_cofire_fields_are_null_not_zero_with_no_census(repo, capsys, monkeypatch):
+    """No row carries a census: the ratios are REFUSED (null), not 0. A zero
+    would read as 'no co-fires' and 'no path-only noise', both flattering."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["census_known"] == 0
+    assert data["census_unknown"] == 1
+    assert data["cofires_per_edit"] is None
+    assert data["path_only_ratio"] is None
+    assert data["edits_multi_fire"] == 0
+
+
+def test_stats_plain_output_renders_cofires_and_labels_the_proxy(repo, capsys, monkeypatch):
+    """The path-only share is a PROXY for the false-anchor rate and must say
+    so on the line it renders on, never as the rate. Rows without a census
+    are named, not absorbed."""
+    init_scars(repo)
+    (repo / ".scars" / "0001-a.deadend.md").write_text(_active_scar(1, "Scar one"))
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _write_firing_log(repo / "state", [
+        {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
+         "scar_ids": [1, 2, 3], "count": 3,
+         "matched": {"total": 5, "content": 1, "path_only": 4}},
+        {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
+         "scar_ids": [1], "count": 1},
+    ])
+    assert main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "co-fires: 5.0 per edit" in out
+    assert "1 edit(s) with 2+" in out
+    assert "path-only share 80.0%" in out
+    assert "proxy" in out
+    assert "1 row(s) without a census" in out
+
+
 def test_stats_plain_output_splits_demotions_by_reason(repo, capsys, monkeypatch):
     """The split must reach the plain renderer, and rows the log could not
     place must be named as such rather than silently absorbed."""
