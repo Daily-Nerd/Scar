@@ -145,23 +145,45 @@ DUP_AUTHOR_CANDIDATE = CANDIDATE.replace(
     'authors: ["claude-code"]', 'authors: ["claude-code", "kibukx"]')
 
 
-def test_promote_reviewer_dedup_ignores_case(repo):
+def test_promote_writes_the_reviewer_to_promoted_by_and_leaves_authors_alone(repo):
+    """#287, superseding the #182 append-and-dedup. The reviewer is who
+    VOUCHED, and that is a different role from who drafted, so it gets its
+    own key. authors: is left exactly as the candidate wrote it."""
+    cand = repo / ".scars" / "candidates" / "dup-author.md"
+    cand.write_text(DUP_AUTHOR_CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="mara")
+    text = new_path.read_text()
+    assert "promoted_by: mara" in text
+    assert 'authors: ["claude-code", "kibukx"]' in text
+
+
+def test_promote_no_longer_dedups_the_reviewer_against_authors(repo):
+    """The #182 silent-skip: a reviewer whose handle was already in authors
+    (an agent can write any name there) made the promotion append a no-op,
+    so the promoted file could not show who vouched. With its own key the
+    reviewer is recorded whatever authors: says."""
     cand = repo / ".scars" / "candidates" / "dup-author.md"
     cand.write_text(DUP_AUTHOR_CANDIDATE)
     store = ScarStore.discover(repo)
     new_path = store.promote(cand, reviewer="Kibukx")
     text = new_path.read_text()
-    # existing spelling kept, duplicate NOT appended
+    assert "promoted_by: Kibukx" in text
     assert 'authors: ["claude-code", "kibukx"]' in text
-    assert "Kibukx" not in text
 
 
-def test_promote_still_appends_genuinely_new_reviewer(repo):
-    cand = repo / ".scars" / "candidates" / "dup-author.md"
-    cand.write_text(DUP_AUTHOR_CANDIDATE)
+def test_promote_overwrites_a_pre_seeded_promoted_by(repo):
+    """A candidate cannot have been promoted, so a promoted_by it carries is
+    a claim nobody made. Promote overwrites it with the actual reviewer
+    rather than trusting or appending to it."""
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace('authors: ["claude-code"]',
+                                      'authors: ["claude-code"]\npromoted_by: kibukx'))
     store = ScarStore.discover(repo)
     new_path = store.promote(cand, reviewer="mara")
-    assert 'authors: ["claude-code", "kibukx", "mara"]' in new_path.read_text()
+    text = new_path.read_text()
+    assert "promoted_by: mara" in text
+    assert "kibukx" not in text
 
 
 def test_template_documents_revives_if():

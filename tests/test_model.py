@@ -99,6 +99,28 @@ def test_roundtrip_preserves_fields():
     assert s2.evidence == s.evidence
 
 
+def test_promoted_by_parses_and_roundtrips():
+    """#287: who vouched for a scar is its own field, not a third meaning in
+    `authors:`. authors = who drafted; promoted_by = the human who promoted."""
+    from scar.model import Scar, parse_scar_text
+    s = Scar(title="t", path_anchors=["src/"], authors=["agent"], promoted_by="kibukx")
+    text = s.to_text()
+    assert "promoted_by: kibukx" in text
+    s2 = parse_scar_text(text)
+    assert s2.promoted_by == "kibukx"
+    assert s2.authors == ["agent"]
+
+
+def test_promoted_by_is_empty_on_a_scar_that_never_recorded_it():
+    """Every scar promoted before the field existed has no promoted_by. Empty
+    string, not a guess from authors: the reviewer was appended there without
+    a marker, and reading position as role would be the exact collapse #287
+    is about."""
+    from scar.model import parse_scar_text
+    s = parse_scar_text(VALID)
+    assert s.promoted_by == ""
+
+
 def test_symbol_anchor_parses_and_roundtrips():
     from scar.model import Scar, parse_scar_text
     s = Scar(title="t", path_anchors=["src/store.py"], symbol_anchors=["SessionStore", "src/store.py::SessionStore.save"])

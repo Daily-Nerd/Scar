@@ -52,7 +52,7 @@ title: One line, searchable, says the constraint
 severity: medium           # low | medium | high | critical
 confidence: 0.7            # 0..1 — how sure are we this still holds
 created: 1970-01-01
-authors: ["claude-code"]   # reviewer added at promotion
+authors: ["claude-code"]   # who DRAFTED it; the promoting human goes in promoted_by, written by promote
 anchors:
   - path: src/module/      # file or directory this protects
   - pattern: "regex"       # optional: fires when matching code appears in ANY new/edited file
@@ -240,11 +240,13 @@ class ScarStore:
         scar = parse_scar_text(text)
         scar.id = self.next_id()
         scar.status = "active"
-        # Case-insensitive dedup (#182): the same human under a different
-        # casing is not a new reviewer. Keep the spelling already present —
-        # promote never rewrites attribution, it only declines to duplicate.
-        if reviewer and reviewer.casefold() not in {a.casefold() for a in scar.authors}:
-            scar.authors.append(reviewer)
+        # #287: the reviewer is who VOUCHED, its own key. Never appended to
+        # authors (that was #182's dedup, which an agent could turn into a
+        # silent no-op by pre-seeding the reviewer's handle), and always
+        # OVERWRITTEN: a candidate cannot have been promoted, so whatever it
+        # carried here was a claim nobody made. Empty reviewer stays empty
+        # rather than guessing.
+        scar.promoted_by = reviewer or ""
         slug = candidate.stem
         new_path = self.scars_dir / f"{scar.id:04d}-{slug}.{scar.type}.md"
         new_path.write_text(scar.to_text(), encoding="utf-8")

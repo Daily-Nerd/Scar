@@ -30,6 +30,20 @@ def test_missing_frontmatter_is_fatal():
     assert any(f.level == "error" and "frontmatter" in f.message for f in findings)
 
 
+def test_candidate_carrying_promoted_by_is_a_warning():
+    """#287: only promote writes promoted_by, and a candidate has not been
+    promoted, so the field on a candidate is a claim nobody made. Warn, not
+    error: promote overwrites it anyway, and blocking would make the fix
+    harder than the fault. An active scar with the field is the normal case
+    and must stay quiet."""
+    cand = GOOD.replace("status: active", "status: candidate") \
+               .replace("authors: [mara]", "authors: [mara]\npromoted_by: mara")
+    findings = lint_text(cand)
+    assert any(f.level == "warning" and "promoted_by" in f.message for f in findings)
+    active = GOOD.replace("authors: [mara]", "authors: [mara]\npromoted_by: kib")
+    assert not any("promoted_by" in f.message for f in lint_text(active))
+
+
 def test_unknown_type_is_error():
     findings = lint_text(GOOD.replace("type: fence", "type: wart"))
     assert any(f.level == "error" and "type" in f.message for f in findings)
