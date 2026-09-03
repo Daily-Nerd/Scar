@@ -198,3 +198,29 @@ def test_is_interactive_requires_both_streams(monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     assert hosts.is_interactive() is False
+
+
+def test_tty_zero_candidates_served_only_reports_and_never_asks():
+    asked = []
+    found = [_host("claude", channel="plugin")]
+    d = hosts.decide(found, interactive=True, all_flag=False,
+                      ask=lambda q: asked.append(q) or True, command="hook")
+    assert d.install == []
+    assert asked == []
+    assert any("nothing to install" in ln for ln in d.lines)
+
+
+def test_tty_zero_candidates_completely_empty_reports_and_never_asks():
+    asked = []
+    d = hosts.decide([], interactive=True, all_flag=False,
+                      ask=lambda q: asked.append(q) or True, command="hook")
+    assert d.install == []
+    assert asked == []
+    assert any("nothing to install" in ln for ln in d.lines)
+
+
+def test_all_flag_zero_candidates_reports_and_installs_nothing():
+    found = [_host("claude", channel="plugin")]
+    d = hosts.decide(found, interactive=False, all_flag=True, ask=lambda q: False, command="hook")
+    assert d.install == []
+    assert any("nothing to install" in ln for ln in d.lines)

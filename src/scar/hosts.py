@@ -147,6 +147,9 @@ def decide(found: list[Host], *, interactive: bool, all_flag: bool,
     candidates = [h.name for h in found if h.present and h.wirable and h.channel == "none"]
     served = [h for h in found if h.present and h.wirable and h.channel != "none"]
     lines = [f"{h.name}: already served by {h.channel}, not asked" for h in served]
+    if not candidates:
+        lines.append("nothing to install: every detected host is already served or not wirable")
+        return Decision([], lines)
     if all_flag:
         return Decision(candidates, lines)
     if interactive:
@@ -157,10 +160,7 @@ def decide(found: list[Host], *, interactive: bool, all_flag: bool,
         lines.append(f"{only}: only unserved host detected, installing without asking "
                      f"(no terminal to ask on)")
         return Decision([only], lines)
-    if candidates:
-        lines.append("several hosts detected and no terminal to ask on; nothing written. Run one of:")
-        lines.extend(f"  scar {command} install --runtime {n}" for n in candidates)
-        lines.append(f"  scar {command} install --all")
-    else:
-        lines.append("nothing to install: every detected host is already served or not wirable")
+    lines.append("several hosts detected and no terminal to ask on; nothing written. Run one of:")
+    lines.extend(f"  scar {command} install --runtime {n}" for n in candidates)
+    lines.append(f"  scar {command} install --all")
     return Decision([], lines)
