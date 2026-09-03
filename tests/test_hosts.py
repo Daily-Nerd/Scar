@@ -98,6 +98,15 @@ def test_windsurf_accepts_a_worktree_dot_git_file(tmp_path):
     assert by["windsurf"].present and by["windsurf"].signal == "windsurf on PATH"
 
 
+def test_in_git_repo_false_when_resolve_raises_oserror(tmp_path, monkeypatch):
+    # A path that cannot be resolved (e.g. a symlink loop) must read as "not
+    # a git repo", not blow up the caller.
+    def _boom(self):
+        raise OSError("symlink loop")
+    monkeypatch.setattr(Path, "resolve", _boom)
+    assert hosts._in_git_repo(tmp_path) is False
+
+
 def test_wirable_and_hints_for_hook_kind(tmp_path):
     by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))}
     assert by["claude"].wirable and by["codex"].wirable and by["windsurf"].wirable
@@ -152,6 +161,17 @@ def test_unreadable_registry_is_not_plugin(tmp_path):
     assert hosts.claude_plugin_enabled(claude) is False
 
 
+def test_plugin_enabled_false_when_registry_lists_other_plugin(tmp_path):
+    # A readable registry that simply does not mention scar@scar is still a
+    # "no plugin" answer, not an error path.
+    claude = tmp_path / ".claude"
+    plugins = claude / "plugins"
+    plugins.mkdir(parents=True)
+    reg = {"version": 2, "plugins": {"other@other": [{"scope": "user"}]}}
+    (plugins / "installed_plugins.json").write_text(json.dumps(reg), encoding="utf-8")
+    assert hosts.claude_plugin_enabled(claude) is False
+
+
 def test_resolve_channels_marks_plugin_then_settings(tmp_path, monkeypatch):
     from scar import installer
     claude = tmp_path / ".claude"
@@ -176,6 +196,34 @@ def test_resolve_channels_settings_when_hooks_owned(tmp_path, monkeypatch):
     found = hosts.detect_hosts(tmp_path, None, path_env=str(tmp_path))
     by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
     assert by["claude"].channel == "settings"
+
+
+def test_resolve_channels_settings_for_codex_when_hooks_owned(tmp_path, monkeypatch):
+    from scar import installer
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    codex_dir = tmp_path / "codexhome"
+    codex_dir.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "codex_hooks_present", lambda: True)
+    found = hosts.detect_hosts(tmp_path, None, codex_dir=codex_dir, path_env=str(tmp_path))
+    by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
+    assert by["codex"].channel == "settings"
+
+
+def test_resolve_channels_settings_for_windsurf_when_hooks_owned(tmp_path, monkeypatch):
+    from scar import installer
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    repo = tmp_path / "repo"
+    (repo / ".windsurf").mkdir(parents=True)
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "cascade_hooks_present", lambda r: True)
+    found = hosts.detect_hosts(tmp_path, repo, path_env=str(tmp_path))
+    by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=repo)}
+    assert by["windsurf"].channel == "settings"
 
 
 def _host(name, present=True, wirable=True, channel="none"):
@@ -269,6 +317,13 @@ def test_ask_yes_no_defaults_to_no(monkeypatch):
     assert hosts.ask_yes_no("wire claude?") is False
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
     assert hosts.ask_yes_no("wire claude?") is True
+
+
+def test_ask_yes_no_false_when_input_raises_eof(monkeypatch):
+    def _boom(prompt):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", _boom)
+    assert hosts.ask_yes_no("wire claude?") is False
 
 
 def test_is_interactive_requires_both_streams(monkeypatch):
