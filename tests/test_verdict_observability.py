@@ -12,7 +12,8 @@ import json
 
 import pytest
 
-from scar.match import armed_scar_ids, find_violations
+from scar.match import (armed_scar_ids, armed_scar_ids_for_targets,
+                        find_violations)
 from scar.store import ScarStore
 
 
@@ -81,6 +82,30 @@ def test_a_scar_does_not_expect_a_verdict_on_its_own_file(repo):
     assert armed_scar_ids(repo, ".scars/0001-armed.landmine.md") == []
 
 
+# --- the multi-target form (#293) -----------------------------------------
+
+def test_armed_ids_for_targets_answers_per_path(repo):
+    """A host that edits several files per tool call owes a verdict per path.
+    One merged answer would attribute one file's arming to all of them."""
+    (repo.root / "other").mkdir()
+    got = armed_scar_ids_for_targets(
+        repo, [(repo.root / "src" / "a.py", ""), (repo.root / "other" / "b.py", "")])
+    assert got == {"src/a.py": [1], "other/b.py": []}
+
+
+def test_armed_ids_for_targets_agrees_with_the_single_path_form(repo):
+    """Two spellings of one question is how a writer and a reader stop
+    agreeing about which scars a row was capable of flagging."""
+    rel = "src/a.py"
+    assert armed_scar_ids_for_targets(repo, [(rel, "")]) == {
+        rel: armed_scar_ids(repo, rel)}
+
+
+def test_armed_ids_for_targets_drops_paths_outside_the_store(repo, tmp_path):
+    outside = tmp_path.parent / "elsewhere" / "c.py"
+    assert armed_scar_ids_for_targets(repo, [(outside, "")]) == {}
+
+
 # --- posttool now leaves a trace when it runs clean -----------------------
 
 def _run_posttool(monkeypatch, capsys, store, target, content, edit_id="e1"):
@@ -134,6 +159,16 @@ def test_no_armed_scar_writes_nothing(repo, state, monkeypatch, capsys):
     target.write_text("x\n")
     _run_posttool(monkeypatch, capsys, repo, target, "x\n")
     assert _rows(state) == []
+
+
+def test_an_unmeasured_armed_set_is_omitted_not_emptied(repo, state):
+    """#266 on the writer's side. `[]` here claims a violation was impossible,
+    which contradicts the row's own existence. A caller that did not measure
+    must leave the key off, the way armed_ids and context_bytes already do."""
+    from scar import hooks
+    hooks._log_violation_firing(repo, str(repo.root / "src" / "a.py"), [])
+    rows = _rows(state)
+    assert rows and "verdict_armed_ids" not in rows[0]
 
 
 def test_logging_never_breaks_the_hook(repo, state, monkeypatch, capsys):

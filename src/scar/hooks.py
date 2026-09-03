@@ -319,11 +319,14 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
             "runtime": runtime,
             # The posttool half ran and reached a verdict on this edit.
             "verdict_observed": True,
-            # Which scars it was capable of flagging here. Empty would mean a
-            # violation was impossible, and this row would not have been
-            # written at all.
-            "verdict_armed_ids": list(armed_ids or []),
         }
+        # Which scars it was capable of flagging here. Empty would mean a
+        # violation was impossible, and this row would not have been written at
+        # all, so the key is OMITTED rather than emptied when the caller did
+        # not measure (#293, the #266 convention). A `[]` from a writer that
+        # never looked states a fact the row's own existence contradicts.
+        if armed_ids is not None:
+            record["verdict_armed_ids"] = list(armed_ids)
         if edit_id:
             record["edit_id"] = edit_id
         with open(log_path, "a", encoding="utf-8") as fh:

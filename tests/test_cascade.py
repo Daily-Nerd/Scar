@@ -222,6 +222,61 @@ def test_post_write_code_logs_violation(repo, monkeypatch, capsys):
     assert rec["runtime"] == "windsurf"
 
 
+# --- the clean verdict (#293) ---------------------------------------------
+
+def post_payload(repo, new_string: str, rel: str = "payments/retry.py") -> dict:
+    return {"agent_action_name": "post_write_code", "trajectory_id": "t1",
+            "tool_info": {"file_path": str(repo / rel),
+                          "edits": [{"old_string": "a",
+                                     "new_string": new_string}]}}
+
+
+def log_rows(repo):
+    path = repo / "state" / "firing-log.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(x) for x in
+            path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def test_post_write_code_records_a_verdict_on_a_clean_edit(repo, monkeypatch, capsys):
+    """#277 on the Windsurf path. Silence from this half only means something
+    if a clean run leaves a row behind."""
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, post_payload(repo, "time.sleep(9)"))
+    assert main(["cascade-hook"]) == 0
+    capsys.readouterr()
+    rows = log_rows(repo)
+    assert len(rows) == 1
+    assert rows[0]["verdict_observed"] is True
+    assert rows[0]["violation_ids"] == []
+    assert rows[0]["verdict_armed_ids"] == [9]
+    assert rows[0]["runtime"] == "windsurf"
+
+
+def test_post_write_code_writes_nothing_when_no_scar_was_armed(repo, monkeypatch, capsys):
+    """Volume guard: a violation was impossible on this file, so no verdict is
+    owed and the log must not grow on every unrelated edit in the repo."""
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    (repo / "docs").mkdir()
+    feed(monkeypatch, post_payload(repo, "hello", rel="docs/notes.md"))
+    assert main(["cascade-hook"]) == 0
+    capsys.readouterr()
+    assert log_rows(repo) == []
+
+
+def test_post_write_code_violation_row_carries_the_armed_set(repo, monkeypatch, capsys):
+    """`verdict_armed_ids` names what the writer could have flagged here. The
+    adapter used to write `[]` on a row that had just found a violation."""
+    (repo / ".scars" / "0009-sleep.fence.md").write_text(VIOLATION_FENCE)
+    feed(monkeypatch, post_payload(repo, "time.sleep(3)"))
+    assert main(["cascade-hook"]) == 0
+    capsys.readouterr()
+    rows = log_rows(repo)
+    assert rows[-1]["violation_ids"] == [9]
+    assert rows[-1]["verdict_armed_ids"] == [9]
+
+
 # --- firing log parity (#106) ---
 
 def test_block_is_recorded_in_the_firing_log(repo, monkeypatch, capsys):

@@ -28,6 +28,7 @@ from .hooks import (
     _zero_hit_logging,
 )
 from .match import (
+    armed_scar_ids_for_targets,
     find_violations_for_targets,
     has_content_signal,
     rank_and_census_for_targets,
@@ -257,22 +258,33 @@ def posttool() -> int:
         store, targets = _targets(payload)
         if store is None or not targets:
             return 0
+        armed = armed_scar_ids_for_targets(store, targets)
         violations = find_violations_for_targets(store, targets)
-        if not violations:
+        # Nothing here was capable of producing a violation, so no verdict is
+        # owed and the log must not grow on every unrelated edit in the repo.
+        if not any(armed.values()) and not violations:
             return 0
-        lines = [
-            f"[{v.scar.id}] {v.scar.title}: {v.path} now contains code "
-            "matching this scar's violation pattern — reconsider before "
-            f"proceeding; run `scar why {v.path}` for the full record"
-            for v in violations
-        ]
-        _emit("PostToolUse", "\n".join(lines))
+        if violations:
+            lines = [
+                f"[{v.scar.id}] {v.scar.title}: {v.path} now contains code "
+                "matching this scar's violation pattern — reconsider before "
+                f"proceeding; run `scar why {v.path}` for the full record"
+                for v in violations
+            ]
+            _emit("PostToolUse", "\n".join(lines))
         edit_id = _edit_id(payload)
-        for path in dict.fromkeys(v.path for v in violations):
+        # Logged on the CLEAN path too (#293, the #277 mechanism reaching this
+        # runtime). One row per PATH, not per apply_patch: a merged row would
+        # let one file's verdict stand in for every file the patch touched.
+        # A path with nothing armed owes nothing and is skipped, so the row
+        # count still tracks edits where a violation was possible.
+        owed = [p for p in armed if armed[p]] + [v.path for v in violations]
+        for path in dict.fromkeys(owed):
             scoped = [v for v in violations if v.path == path]
             _log_violation_firing(
                 store, str((store.root / path).resolve()), scoped,
-                runtime=RUNTIME, edit_id=edit_id)
+                runtime=RUNTIME, edit_id=edit_id,
+                armed_ids=armed.get(path, []))
     except Exception:
         return 0
     return 0

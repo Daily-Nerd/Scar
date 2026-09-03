@@ -301,6 +301,118 @@ def test_codex_posttool_emits_advisory_violation_and_correlates_log(
     assert record["violation_ids"] == [1]
 
 
+SUCCESS = ("Exit code: 0\nOutput:\nSuccess. Updated the following files:\n"
+           "M payments/retry.py\n")
+
+
+def rows(repo):
+    path = repo / "state" / "firing-log.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+
+
+# --- the clean verdict (#293) ---------------------------------------------
+
+def test_codex_posttool_records_a_verdict_on_a_clean_edit(
+        repo, monkeypatch, capsys):
+    """#277 on the Codex path. Without a row here, a live hook that found the
+    edit clean is byte-identical to a hook that was never installed."""
+    patch = """*** Begin Patch
+*** Update File: payments/retry.py
+@@
++time.sleep(9)
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch, SUCCESS, "exec-clean-1"))
+    assert main(["hook", "codex-posttool"]) == 0
+    logged = rows(repo)
+    assert len(logged) == 1
+    assert logged[0]["verdict_observed"] is True
+    assert logged[0]["violation_ids"] == []
+    assert logged[0]["verdict_armed_ids"] == [1]
+    assert logged[0]["runtime"] == "codex"
+    assert logged[0]["edit_id"] == "exec-clean-1"
+
+
+def test_codex_posttool_writes_nothing_when_no_scar_was_armed(
+        repo, monkeypatch, capsys):
+    """Volume guard, same as the Claude Code path: a violation was impossible
+    on this file, so no verdict is owed and the log must not grow."""
+    patch = """*** Begin Patch
+*** Add File: docs/notes.md
++hello
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch, SUCCESS, "exec-clean-2"))
+    assert main(["hook", "codex-posttool"]) == 0
+    assert rows(repo) == []
+
+
+def test_codex_posttool_violation_row_carries_the_armed_set(
+        repo, monkeypatch, capsys):
+    """`verdict_armed_ids` claims to name what the writer could have flagged.
+    Before #293 the adapter wrote `[]` there on a row that had just found a
+    violation, which made the field's own stated invariant false."""
+    patch = """*** Begin Patch
+*** Update File: payments/retry.py
+@@
++time.sleep(3)
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch, SUCCESS, "exec-post-2"))
+    assert main(["hook", "codex-posttool"]) == 0
+    logged = rows(repo)
+    assert logged[0]["violation_ids"] == [1]
+    assert logged[0]["verdict_armed_ids"] == [1]
+
+
+def test_codex_posttool_writes_one_verdict_row_per_armed_target(
+        repo, monkeypatch, capsys):
+    """apply_patch edits many files at once. A single row would attribute one
+    file's verdict to all of them, so the clean path splits per path exactly
+    the way the violating path already does."""
+    patch = """*** Begin Patch
+*** Update File: payments/retry.py
+@@
++time.sleep(3)
+*** Update File: payments/settle.py
+@@
++time.sleep(9)
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch, SUCCESS, "exec-multi-1"))
+    assert main(["hook", "codex-posttool"]) == 0
+    by_target = {r["target"].split("/")[-1]: r for r in rows(repo)}
+    assert set(by_target) == {"retry.py", "settle.py"}
+    assert by_target["retry.py"]["violation_ids"] == [1]
+    assert by_target["settle.py"]["violation_ids"] == []
+    assert by_target["settle.py"]["verdict_observed"] is True
+    for record in by_target.values():
+        assert record["verdict_armed_ids"] == [1]
+
+
+def test_codex_clean_edit_leaves_no_unresolved_verdict(
+        repo, monkeypatch, capsys):
+    """The issue's reproduction, end to end. A healthy Codex install on a
+    clean armed edit used to aggregate to posttool_silent=True, so the guard
+    built to catch a dead hook fired on a live one."""
+    from scar.cli import _aggregate_firings
+
+    patch = """*** Begin Patch
+*** Update File: payments/retry.py
+@@
++time.sleep(9)
+*** End Patch"""
+    feed(monkeypatch, codex_patch(repo, patch, tool_use_id="exec-e2e-1"))
+    assert main(["hook", "codex-pretool"]) == 0
+    capsys.readouterr()
+    feed(monkeypatch, codex_patch(repo, patch, SUCCESS, "exec-e2e-1"))
+    assert main(["hook", "codex-posttool"]) == 0
+    capsys.readouterr()
+    agg = _aggregate_firings(rows(repo))
+    assert agg["verdicts_expected"] == 1
+    assert agg["verdicts_observed"] == 1
+    assert agg["verdicts_unresolved"] == 0
+    assert agg["posttool_silent"] is False
+
+
 def test_codex_posttool_ignores_failed_apply_patch(repo, monkeypatch, capsys):
     patch = """*** Begin Patch
 *** Update File: payments/retry.py
