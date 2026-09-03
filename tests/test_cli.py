@@ -3115,14 +3115,14 @@ def test_stats_reports_cofires_per_edit_from_the_census(repo, capsys, monkeypatc
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     _write_firing_log(repo / "state", [
         {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
-         "scar_ids": [1, 2, 3], "count": 3,
+         "scar_ids": [1, 2, 3], "count": 3, "anchor_kind": "edit",
          "matched": {"total": 5, "content": 1, "path_only": 4}},
         {"ts": "2026-06-11T10:00:00", "repo": str(repo), "target": "src/b.py",
-         "scar_ids": [1], "count": 1,
+         "scar_ids": [1], "count": 1, "anchor_kind": "edit",
          "matched": {"total": 1, "content": 1, "path_only": 0}},
         # predates the field
         {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
-         "scar_ids": [1, 2], "count": 2},
+         "scar_ids": [1, 2], "count": 2, "anchor_kind": "edit"},
     ])
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -3141,7 +3141,7 @@ def test_stats_cofire_fields_are_null_not_zero_with_no_census(repo, capsys, monk
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     _write_firing_log(repo / "state", [
         {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
-         "scar_ids": [1], "count": 1},
+         "scar_ids": [1], "count": 1, "anchor_kind": "edit"},
     ])
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -3161,10 +3161,10 @@ def test_stats_plain_output_renders_cofires_and_labels_the_proxy(repo, capsys, m
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     _write_firing_log(repo / "state", [
         {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
-         "scar_ids": [1, 2, 3], "count": 3,
+         "scar_ids": [1, 2, 3], "count": 3, "anchor_kind": "edit",
          "matched": {"total": 5, "content": 1, "path_only": 4}},
         {"ts": "2026-06-12T10:00:00", "repo": str(repo), "target": "src/c.py",
-         "scar_ids": [1], "count": 1},
+         "scar_ids": [1], "count": 1, "anchor_kind": "edit"},
     ])
     assert main(["stats"]) == 0
     out = capsys.readouterr().out
@@ -3541,11 +3541,11 @@ def test_stats_reports_injection_rate_when_zero_hit_records_exist(
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     _write_firing_log(repo / "state", [
         {"ts": "2026-06-10T10:00:00", "repo": str(repo), "target": "src/a.py",
-         "scar_ids": [1], "count": 1},
+         "scar_ids": [1], "count": 1, "anchor_kind": "edit"},
         {"ts": "2026-06-10T10:00:01", "repo": str(repo), "target": "src/b.py",
-         "scar_ids": [], "count": 0},
+         "scar_ids": [], "count": 0, "anchor_kind": "edit"},
         {"ts": "2026-06-10T10:00:02", "repo": str(repo), "target": "src/c.py",
-         "scar_ids": [], "count": 0},
+         "scar_ids": [], "count": 0, "anchor_kind": "edit"},
     ])
     assert main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)

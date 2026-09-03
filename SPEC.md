@@ -225,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `command_firings` int, `firings_kind_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -424,6 +424,39 @@ the edit was observed and matched nothing.
 
 Both ratios are `null`, not `0`, when no row carries a census. A zero would
 read as "no co-fires" and "no path-only noise", both flattering.
+
+### 9.9 An edit denominator counts edits
+
+`anchor_kind` on a firing row is `"edit"` or `"command"`: which runtime path
+produced it. Both paths share one writer and one row shape, so before this
+field the only thing separating them was free text in `target`, and every
+command firing was counted as an observed edit.
+
+That direction is always flattering. The command path returns early when
+nothing matches, so it can never contribute a zero-hit row, and it only ever
+adds to the numerator of `injection_rate`. A command match is also
+content-signal by construction (a command is never matched against a path), so
+each one drags `path_only_ratio` toward zero and `cofires_per_edit` toward one.
+
+`edits_observed`, `injection_rate`, `cofires_per_edit`, `path_only_ratio` and
+`edits_multi_fire` are therefore computed over `anchor_kind: "edit"` rows only.
+Command rows are counted in `command_firings` and excluded from those.
+
+The key is **omitted**, never defaulted. A MISSING `anchor_kind` means the row
+predates the field, which is not the same fact as `"edit"` and must never be
+read as one. Such rows are counted in `firings_kind_unknown` and are excluded
+from **both** sides, the same way `armed_unknown` and
+`demotions_reason_unknown` are. A log written entirely before the field
+therefore reports `edits_observed: 0` and `injection_rate: null`: refused,
+per §9.2, not a rate over an empty denominator.
+
+Per-scar counts are unaffected. A scar that fired on a command fired, and
+`counts`, `per_scar` and `total_firings` include it. Only the edit-scoped
+denominators changed.
+
+`instrument_disconnected` also stays unaffected: it asks whether the precheck
+hook recorded **anything**, so command rows and kind-unknown rows answer it
+just as well as edit rows do.
 
 ### 9.4 Enforcement
 
