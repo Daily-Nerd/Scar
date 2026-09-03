@@ -554,14 +554,11 @@ def cascade_status(repo: Path) -> int:
 
 
 def cascade_hooks_present(repo: Path) -> bool:
-    path = repo / CASCADE_CONFIG_RELPATH
-    if not path.exists():
+    config = _load_cascade_config(repo / CASCADE_CONFIG_RELPATH)
+    if config is None:
         return False
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    hooks_cfg = data.get("hooks", {}) if isinstance(data, dict) else {}
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
     return all(any(_cascade_is_ours(e) for e in (hooks_cfg.get(ev) or []))
                for ev in CASCADE_EVENTS)
 
@@ -895,14 +892,11 @@ def codex_status() -> int:
 
 
 def codex_hooks_present() -> bool:
-    path = codex_config_path()
-    if not path.exists():
+    config = _load_codex_config(codex_config_path())
+    if config is None:
         return False
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    hooks_cfg = data.get("hooks", {}) if isinstance(data, dict) else {}
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
     return all(any(_codex_owns_kind(g, spec["kind"]) for g in hooks_cfg.get(spec["event"], []))
                for spec in CODEX_HOOKS)
 
