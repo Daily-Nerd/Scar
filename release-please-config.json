@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "python",
+      "bump-minor-pre-major": true,
       "extra-files": [
         {
           "type": "json",
