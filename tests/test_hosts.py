@@ -52,12 +52,50 @@ def test_codex_dir_override_honours_codex_home(tmp_path):
 
 
 def test_windsurf_is_repo_scoped(tmp_path):
+    # A .windsurf directory is enough on its own, git repo or not: the user
+    # already put it where the hooks file belongs.
     repo = tmp_path / "repo"
     (repo / ".windsurf").mkdir(parents=True)
     with_repo = {h.name: h for h in hosts.detect_hosts(tmp_path, repo, path_env=_nobin(tmp_path))}
     without = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))}
     assert with_repo["windsurf"].present
+    assert with_repo["windsurf"].signal == str(repo / ".windsurf")
     assert not without["windsurf"].present
+
+
+def test_windsurf_binary_counts_only_inside_a_git_repo(tmp_path):
+    # cascade_install writes <cwd>/.windsurf/hooks.json with no repo guard, so
+    # the binary alone must not make windsurf a candidate.
+    bindir = _bin(tmp_path, "windsurf")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    inside = {h.name: h for h in hosts.detect_hosts(tmp_path, repo, path_env=str(bindir))}
+    assert inside["windsurf"].present and inside["windsurf"].signal == "windsurf on PATH"
+    nested = repo / "src" / "pkg"
+    nested.mkdir(parents=True)
+    deep = {h.name: h for h in hosts.detect_hosts(tmp_path, nested, path_env=str(bindir))}
+    assert deep["windsurf"].present
+
+
+def test_windsurf_binary_outside_any_repo_is_absent(tmp_path):
+    bindir = _bin(tmp_path, "windsurf")
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, loose, path_env=str(bindir))}
+    assert not by["windsurf"].present
+    assert by["windsurf"].signal == ""
+    none_repo = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=str(bindir))}
+    assert not none_repo["windsurf"].present
+
+
+def test_windsurf_accepts_a_worktree_dot_git_file(tmp_path):
+    # A linked worktree's .git is a file, not a directory.
+    bindir = _bin(tmp_path, "windsurf")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, wt, path_env=str(bindir))}
+    assert by["windsurf"].present and by["windsurf"].signal == "windsurf on PATH"
 
 
 def test_wirable_and_hints_for_hook_kind(tmp_path):
@@ -185,6 +223,24 @@ def test_no_tty_zero_candidates_reports_served_hosts():
     d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
     assert d.install == []
     assert any("plugin" in ln for ln in d.lines)
+    assert any("every detected host is served by the plugin or not wirable" in ln
+               for ln in d.lines)
+
+
+def test_no_host_present_at_all_says_so_instead_of_blaming_the_plugin():
+    # Every host absent is a different situation from "detected but not a
+    # candidate", and the plugin line reads as nonsense for it.
+    found = [_host("claude", present=False), _host("codex", present=False)]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.install == []
+    assert d.lines == ["nothing to install: no agent host detected on this machine"]
+
+
+def test_present_but_unwirable_host_is_not_the_no_host_message():
+    found = [_host("cursor", wirable=False)]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.lines == [
+        "nothing to install: every detected host is served by the plugin or not wirable"]
 
 
 def test_tty_asks_once_per_candidate_default_no():
@@ -238,7 +294,7 @@ def test_tty_zero_candidates_completely_empty_reports_and_never_asks():
                       ask=lambda q: asked.append(q) or True, command="hook")
     assert d.install == []
     assert asked == []
-    assert any("nothing to install" in ln for ln in d.lines)
+    assert d.lines == ["nothing to install: no agent host detected on this machine"]
 
 
 def test_all_flag_zero_candidates_reports_and_installs_nothing():

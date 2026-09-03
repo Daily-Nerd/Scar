@@ -2697,14 +2697,27 @@ def _run_hook_installers(names: list[str], repo: Path, dry: bool) -> int:
     return rc
 
 
-def _force_needs_runtime(args) -> int | None:
-    """--force is not a target, so --all/--runtime exclusivity is argparse's
-    job, but --force without --runtime fails here, and by returning: every
-    command in this CLI returns exit codes and never raises to the shell.
-    Shared verbatim by `hook` and `skill` (#303)."""
-    if getattr(args, "force", False) and not args.runtime:
+def _lifecycle_flag_guard(args) -> int | None:
+    """--all/--runtime exclusivity is argparse's job. The rest fails here, and
+    by returning: every command in this CLI returns exit codes and never
+    raises to the shell. Shared verbatim by `hook` and `skill` (#303).
+
+    Both --all and --force describe how to install, so on uninstall or status
+    they can only be silently ignored. --force overrides the plugin check,
+    and the plugin channel is Claude Code's alone, so on any other runtime it
+    would claim to override something that does not exist."""
+    force = getattr(args, "force", False)
+    for flag, given in (("--all", getattr(args, "all", False)), ("--force", force)):
+        if given and args.kind != "install":
+            print(f"{flag} applies to install only")
+            return 2
+    if force and not args.runtime:
         print("--force needs --runtime: it overrides the plugin check for one "
               "named runtime, and detection never needs overriding.")
+        return 2
+    if force and args.runtime != "claude":
+        print("--force applies to --runtime claude only, the plugin channel "
+              "is Claude Code only")
         return 2
     return None
 
@@ -2759,7 +2772,7 @@ def _cmd_hook_lifecycle(args) -> int:
         uninstall,
     )
     dry = args.dry_run
-    if (rc := _force_needs_runtime(args)) is not None:
+    if (rc := _lifecycle_flag_guard(args)) is not None:
         return rc
     if getattr(args, "git", False):
         repo = Path.cwd()
@@ -2796,7 +2809,7 @@ def _cmd_skill_lifecycle(args) -> int:
     from . import hosts
     from .installer import CLAUDE_DIR, skill_install, skill_status, skill_uninstall
     dry = args.dry_run
-    if (rc := _force_needs_runtime(args)) is not None:
+    if (rc := _lifecycle_flag_guard(args)) is not None:
         return rc
     runtime = args.runtime
     if runtime is None and args.kind in ("install", "status"):
@@ -3001,7 +3014,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "argparse rejects it next to --runtime or --git "
                              "rather than letting one be silently ignored")
     p.add_argument("--force", action="store_true",
-                   help="with --runtime: install into the settings file even "
+                   help="with --runtime claude: install into the settings file even "
                         "though the scar plugin already serves that host")
 
     _add(sub, "cascade-hook", _cmd_cascade_hook,
@@ -3027,7 +3040,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "argparse rejects it next to --runtime rather than "
                              "letting one be silently ignored")
     p.add_argument("--force", action="store_true",
-                   help="with --runtime: install even though the scar plugin "
+                   help="with --runtime claude: install even though the scar plugin "
                         "already ships the skill")
 
     _add(sub, "mcp", _cmd_mcp, help="run the SCAR MCP stdio server")

@@ -65,7 +65,7 @@ scar skill install               # same detection for the scar-authoring skill
 scar hook status                 # every host with the channel that serves it (settings, plugin, none)
 ```
 
-Claude Code users: the marketplace **plugin** ships the hooks and the scar-authoring skill together. `scar hook install` and `scar skill install` see the plugin and skip Claude unless you pass `--force`. Re-run `scar skill install` after upgrading a manual install; the installed skill is a static copy.
+Claude Code users: the marketplace **plugin** ships the hooks and the scar-authoring skill together. `scar hook install` and `scar skill install` see the plugin and skip Claude unless you pass `--runtime claude --force`. Re-run `scar skill install` after upgrading a manual install; the installed skill is a static copy.
 
 Codex users: run `scar hook install --runtime codex`, then open `/hooks` in Codex to review and trust the entries. The hooks push matching scars before `Bash` and `apply_patch` calls and report post-patch `violation:` tripwires without blocking. The plugin no longer carries Codex hook definitions; the installer is the one path.
 

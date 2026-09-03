@@ -822,6 +822,38 @@ def test_hook_flags_are_exclusive(tmp_path, monkeypatch, capsys):
     assert "--force needs --runtime" in capsys.readouterr().out
 
 
+def test_hook_all_applies_to_install_only(no_hosts, capsys):
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    capsys.readouterr()
+    assert main(["hook", "uninstall", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+    assert installer.claude_hooks_present()
+    assert main(["hook", "status", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+
+
+def test_hook_force_applies_to_install_only(no_hosts, capsys):
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    capsys.readouterr()
+    assert main(["hook", "uninstall", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+    assert installer.claude_hooks_present()
+    assert main(["hook", "status", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+
+
+def test_hook_force_applies_to_claude_only(no_hosts, capsys):
+    """--force overrides the plugin check, and the plugin channel is Claude
+    Code's alone: on any other runtime it can only mislead."""
+    assert main(["hook", "install", "--runtime", "codex", "--force"]) == 2
+    assert "--force applies to --runtime claude only" in capsys.readouterr().out
+    assert not installer.codex_hooks_present()
+    assert main(["hook", "install", "--runtime", "windsurf", "--force"]) == 2
+    assert "--force applies to --runtime claude only" in capsys.readouterr().out
+    assert not installer.cascade_hooks_present(no_hosts)
+
+
 def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
     """Windsurf is repo-scoped, so detection sees it from the cwd, not $HOME."""
     (no_hosts / ".windsurf").mkdir()
@@ -865,3 +897,22 @@ def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert main(["skill", "install", "--force"]) == 2
     assert "--force needs --runtime" in capsys.readouterr().out
+
+
+def test_skill_all_applies_to_install_only(skill_home, capsys):
+    assert main(["skill", "install", "--all"]) == 0
+    assert installer.skill_present()
+    capsys.readouterr()
+    assert main(["skill", "uninstall", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+    assert installer.skill_present()
+    assert main(["skill", "status", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+
+
+def test_skill_force_applies_to_install_only(skill_home, capsys):
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    capsys.readouterr()
+    assert main(["skill", "uninstall", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+    assert installer.skill_present()

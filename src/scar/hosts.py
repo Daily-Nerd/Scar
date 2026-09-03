@@ -37,6 +37,19 @@ _SPECS = (
 )
 
 
+def _in_git_repo(start: Path) -> bool:
+    """Walk up from `start` looking for a `.git` entry. It is a directory in a
+    normal clone and a file in a linked worktree, so existence is the test."""
+    try:
+        here = start.resolve()
+    except OSError:
+        return False
+    for parent in (here, *here.parents):
+        if (parent / ".git").exists():
+            return True
+    return False
+
+
 def detect_hosts(
     home: Path,
     repo: Path | None,
@@ -56,9 +69,17 @@ def detect_hosts(
             cfg = home / rel
         elif repo is not None:
             cfg = repo / ".windsurf"
+        # windsurf is the one repo-scoped host: cascade_install writes
+        # <cwd>/.windsurf/hooks.json with no repo guard of its own, so the
+        # binary alone must not make it a candidate. Inside a git repo that
+        # path is a file the user can review and commit; outside one it is a
+        # stray directory in whatever folder the shell happened to be in.
+        on_path = bool(shutil.which(binary, path=which_path))
+        if name == "windsurf" and on_path:
+            on_path = repo is not None and _in_git_repo(repo)
         if cfg is not None and cfg.is_dir():
             signal = str(cfg)
-        elif shutil.which(binary, path=which_path):
+        elif on_path:
             signal = f"{binary} on PATH"
         wirable = skill_ok if kind == "skill" else hook_ok
         hint = None
@@ -154,7 +175,14 @@ def decide(found: list[Host], *, interactive: bool, all_flag: bool,
     plugin_served = [h for h in found if h.present and h.wirable and h.channel == "plugin"]
     lines = [f"{h.name}: already served by plugin, not asked" for h in plugin_served]
     if not candidates:
-        lines.append("nothing to install: every detected host is served by the plugin or not wirable")
+        # An empty machine and a machine whose hosts are all served are two
+        # different answers. Blaming the plugin when nothing was detected
+        # sends the reader looking for a plugin that is not there.
+        if not any(h.present for h in found):
+            lines.append("nothing to install: no agent host detected on this machine")
+        else:
+            lines.append("nothing to install: every detected host is served by "
+                         "the plugin or not wirable")
         return Decision([], lines)
     names = [h.name for h in candidates]
     if all_flag:
