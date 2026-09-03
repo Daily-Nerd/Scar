@@ -1,0 +1,83 @@
+from pathlib import Path
+
+from scar import hosts
+
+
+def _bin(tmp_path: Path, name: str) -> Path:
+    d = tmp_path / "bin"
+    d.mkdir(exist_ok=True)
+    f = d / name
+    f.write_text("#!/bin/sh\n", encoding="utf-8")
+    f.chmod(0o755)
+    return d
+
+
+def _nobin(tmp_path: Path) -> str:
+    d = tmp_path / "nobin"
+    d.mkdir(exist_ok=True)
+    return str(d)
+
+
+def test_detect_hosts_reports_every_known_host_absent_on_empty_home(tmp_path):
+    found = hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))
+    assert [h.name for h in found] == ["claude", "codex", "windsurf", "cursor", "opencode"]
+    assert all(not h.present for h in found)
+    assert all(h.channel == "none" for h in found)
+
+
+def test_config_dir_counts_as_present(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".config" / "opencode").mkdir(parents=True)
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))}
+    assert by["claude"].present and by["claude"].signal == str(tmp_path / ".claude")
+    assert by["opencode"].present
+    assert not by["codex"].present
+
+
+def test_binary_on_path_counts_as_present(tmp_path):
+    bindir = _bin(tmp_path, "codex")
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=str(bindir))}
+    assert by["codex"].present and by["codex"].signal == "codex on PATH"
+
+
+def test_codex_dir_override_honours_codex_home(tmp_path):
+    custom = tmp_path / "elsewhere"
+    custom.mkdir()
+    by = {
+        h.name: h
+        for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path), codex_dir=custom)
+    }
+    assert by["codex"].present and by["codex"].signal == str(custom)
+
+
+def test_windsurf_is_repo_scoped(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".windsurf").mkdir(parents=True)
+    with_repo = {h.name: h for h in hosts.detect_hosts(tmp_path, repo, path_env=_nobin(tmp_path))}
+    without = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))}
+    assert with_repo["windsurf"].present
+    assert not without["windsurf"].present
+
+
+def test_wirable_and_hints_for_hook_kind(tmp_path):
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path))}
+    assert by["claude"].wirable and by["codex"].wirable and by["windsurf"].wirable
+    assert not by["cursor"].wirable and by["cursor"].hint == "scar agent config cursor"
+    assert not by["opencode"].wirable and by["opencode"].hint == "scar agent config opencode"
+
+
+def test_skill_kind_wires_claude_only(tmp_path):
+    by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, kind="skill", path_env=_nobin(tmp_path))}
+    assert by["claude"].wirable
+    assert not by["codex"].wirable and "not supported yet" in by["codex"].hint
+
+
+def test_render_table_one_line_per_host(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    out = hosts.render_table(hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path)))
+    lines = out.splitlines()
+    assert len(lines) == 5
+    assert lines[0].startswith("claude")
+    assert "present" in lines[0] and "channel=none" in lines[0]
+    assert "absent" in lines[1]
+    assert "scar agent config cursor" in lines[3]
