@@ -732,6 +732,23 @@ def test_cascade_hooks_present_is_repo_scoped(cascade_repo):
     assert installer.cascade_hooks_present(cascade_repo) is True
 
 
+def test_cascade_hooks_present_false_on_invalid_json(cascade_repo):
+    # A hand-edited, unparseable hooks.json is refuse-not-overwrite territory
+    # (see _load_cascade_config), so presence must read as False, not raise.
+    windsurf_dir = cascade_repo / ".windsurf"
+    windsurf_dir.mkdir()
+    (windsurf_dir / "hooks.json").write_text("{not json", encoding="utf-8")
+    assert installer.cascade_hooks_present(cascade_repo) is False
+
+
+def test_codex_hooks_present_false_on_invalid_json(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codexhome"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    (codex_home / "hooks.json").write_text("{not json", encoding="utf-8")
+    assert installer.codex_hooks_present() is False
+
+
 def test_skill_present_follows_skill_dir(skill_home):
     assert installer.skill_present() is False
     assert main(["skill", "install"]) == 0
@@ -877,6 +894,20 @@ def test_skill_install_skipped_when_plugin_serves(skill_home, capsys):
     assert not installer.skill_present()
     assert main(["skill", "install", "--runtime", "claude", "--force"]) == 0
     assert installer.skill_present()
+
+
+def test_skill_install_runtime_claude_skipped_when_plugin_serves(skill_home, capsys):
+    # Same refusal as the bare `skill install`, but reached through the
+    # explicit --runtime claude path.
+    plugins = skill_home / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]}}), encoding="utf-8")
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    out = capsys.readouterr().out
+    assert "scar-authoring skill" in out
+    assert "--force" in out
+    assert not installer.skill_present()
 
 
 def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
