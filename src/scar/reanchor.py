@@ -78,6 +78,21 @@ def _signature_lines(text: str) -> frozenset[str]:
         if len(s) >= _MIN_SIGNATURE_LEN)
 
 
+def format_reanchor_note(date: str, anchor_kind: str, old: str, new: str,
+                          confidence: str) -> str:
+    """The evidence note `reanchor --apply` records on a scar for one
+    rewritten anchor (#296). A rewrite changes a scar's meaning with no
+    record otherwise: an auditor cannot tell a hand-authored anchor from
+    a heuristic guess once the rewrite has landed, since the two are
+    byte-identical on disk. The note names what changed (anchor_kind, old,
+    new), how confident the heuristic was (confidence, the same tier
+    reanchor already reports), and when, so `reanchored` in the evidence
+    reads as a guess, distinct from a `fix-renames` git fact.
+    """
+    return (f'note: "reanchored {date}: {anchor_kind} {old} -> {new} '
+            f'(tier: {confidence})"')
+
+
 def _tier(ratio: float) -> str | None:
     if ratio >= PATH_HIGH_THRESHOLD:
         return "high"

@@ -328,3 +328,29 @@ def test_propose_symbol_reanchors_for_scar_orchestrates_evidence_sha(tmp_path):
     assert p.dead_anchor == "old_helper"
     assert p.proposed_anchor == f"{path}::new_helper"
     assert p.confidence == "high"
+
+
+# ---------------------------------------------------------------------------
+# format_reanchor_note: the evidence-note text `reanchor --apply` records
+# on a scar (#296). Pure formatting, no git needed.
+# ---------------------------------------------------------------------------
+
+def test_format_reanchor_note_path_anchor():
+    from scar.reanchor import format_reanchor_note
+
+    note = format_reanchor_note(
+        date="2026-09-02", anchor_kind="path",
+        old="src/old.py", new="src/new.py", confidence="high")
+    assert note == (
+        'note: "reanchored 2026-09-02: path src/old.py -> src/new.py (tier: high)"')
+
+
+def test_format_reanchor_note_symbol_anchor_uses_kind_word():
+    from scar.reanchor import format_reanchor_note
+
+    note = format_reanchor_note(
+        date="2026-09-02", anchor_kind="symbol",
+        old="old_helper", new="src/pkg/mod.py::new_helper", confidence="high")
+    assert note == (
+        'note: "reanchored 2026-09-02: symbol old_helper -> '
+        'src/pkg/mod.py::new_helper (tier: high)"')

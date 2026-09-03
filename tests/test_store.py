@@ -226,3 +226,80 @@ def test_template_documents_revives_if():
     root = Path(__file__).parent.parent
     assert "revives_if" in TEMPLATE
     assert "revives_if" in (root / ".scars" / "template.md").read_text()
+
+
+# --- append_evidence_note (#296): reanchor --apply's write path, reusing
+# transition()'s parse -> append -> reserialize mechanism instead of a
+# second YAML splicer. ---
+
+WITH_EVIDENCE = """\
+---
+id: 1
+type: deadend
+title: Tried X, failed
+severity: medium
+confidence: 0.7
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/
+evidence:
+  - commit: abc1234
+status: active
+---
+
+Why X failed.
+"""
+
+NO_EVIDENCE = """\
+---
+id: 2
+type: deadend
+title: Tried Y, failed
+severity: medium
+confidence: 0.7
+created: 2026-06-10
+authors: ["claude-code"]
+anchors:
+  - path: src/y.py
+status: active
+---
+
+Why Y failed.
+"""
+
+_NOTE = 'note: "reanchored 2026-09-02: path a -> b (tier: high)"'
+
+
+def test_append_evidence_note_keeps_existing_entries(repo):
+    (repo / ".scars" / "0001-x.deadend.md").write_text(WITH_EVIDENCE)
+    store = ScarStore.discover(repo)
+    path = store.append_evidence_note(1, _NOTE)
+    text = path.read_text()
+    assert "  - commit: abc1234" in text
+    assert f"  - {_NOTE}" in text
+
+
+def test_append_evidence_note_creates_evidence_block_when_absent(repo):
+    (repo / ".scars" / "0002-y.deadend.md").write_text(NO_EVIDENCE)
+    store = ScarStore.discover(repo)
+    path = store.append_evidence_note(2, _NOTE)
+    text = path.read_text()
+    assert "evidence:" in text
+    assert f"  - {_NOTE}" in text
+
+
+def test_append_evidence_note_survives_parse_round_trip(repo):
+    (repo / ".scars" / "0002-y.deadend.md").write_text(NO_EVIDENCE)
+    ScarStore.discover(repo).append_evidence_note(2, _NOTE)
+    reparsed = ScarStore.discover(repo)
+    _, scar = next((f, s) for f, s in reparsed.parsed() if s.id == 2)
+    # parse_scar_text unquotes evidence values the same way it does for
+    # every other quoted field (pattern/violation/url): the wrapper is a
+    # serialization detail, the note text itself is what must survive.
+    assert 'note: reanchored 2026-09-02: path a -> b (tier: high)' in scar.evidence
+
+
+def test_append_evidence_note_unknown_id_raises(repo):
+    with pytest.raises(ValueError):
+        ScarStore.discover(repo).append_evidence_note(99, _NOTE)
