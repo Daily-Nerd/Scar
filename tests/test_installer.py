@@ -684,3 +684,32 @@ def test_codex_plugin_ref_is_derived_from_the_cache_path(codex_home):
     plugin = _codex_plugin(codex_home)
     assert _codex_plugin_ref(plugin) == "scar@scar"
     assert _codex_plugin_ref(Path("/nowhere/hooks.json")) is None
+
+
+def test_claude_hooks_present_only_when_every_kind_is_owned(isolated_settings):
+    assert installer.claude_hooks_present() is False
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    assert installer.claude_hooks_present() is True
+
+
+def test_codex_hooks_present_reads_codex_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.setattr(installer, "find_scar", lambda: "/stable/bin/scar")
+    assert installer.codex_hooks_present() is False
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert installer.codex_hooks_present() is True
+
+
+def test_cascade_hooks_present_is_repo_scoped(cascade_repo):
+    assert installer.cascade_hooks_present(cascade_repo) is False
+    assert main(["hook", "install", "--runtime", "windsurf"]) == 0
+    assert installer.cascade_hooks_present(cascade_repo) is True
+
+
+def test_skill_present_follows_skill_dir(tmp_path, monkeypatch):
+    claude = tmp_path / ".claude"
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    assert installer.skill_present() is False
+    assert main(["skill", "install"]) == 0
+    assert installer.skill_present() is True

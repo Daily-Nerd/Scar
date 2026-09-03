@@ -7,6 +7,7 @@ unreadable registry never counts as "plugin": missing is not a value.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -66,6 +67,46 @@ def detect_hosts(
                 else f"scar agent config {name}"
             )
         found.append(Host(name, bool(signal), signal, wirable, hint=hint))
+    return found
+
+
+def claude_plugin_enabled(claude_dir: Path, ref: str = "scar@scar") -> bool:
+    """Installed in installed_plugins.json AND not explicitly disabled in
+    settings.json enabledPlugins. Unreadable or missing means False: a
+    missing registry never counts as "plugin"."""
+    reg = claude_dir / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(reg.read_text(encoding="utf-8")).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    if ref not in plugins:
+        return False
+    try:
+        enabled = (json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+                   .get("enabledPlugins") or {}).get(ref)
+    except (OSError, ValueError, AttributeError):
+        enabled = None
+    return enabled is not False
+
+
+def resolve_channels(
+    found: list[Host], *, claude_dir: Path, repo: Path | None, kind: str = "hook"
+) -> list[Host]:
+    from . import installer  # lazy: installer binds paths at import
+
+    for h in found:
+        if not (h.present and h.wirable):
+            continue
+        if h.name == "claude":
+            if claude_plugin_enabled(claude_dir):
+                h.channel = "plugin"
+            elif (installer.skill_present() if kind == "skill"
+                  else installer.claude_hooks_present()):
+                h.channel = "settings"
+        elif h.name == "codex" and installer.codex_hooks_present():
+            h.channel = "settings"
+        elif h.name == "windsurf" and repo is not None and installer.cascade_hooks_present(repo):
+            h.channel = "settings"
     return found
 
 

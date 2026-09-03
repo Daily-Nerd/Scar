@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from scar import hosts
@@ -81,3 +82,59 @@ def test_render_table_one_line_per_host(tmp_path):
     assert "present" in lines[0] and "channel=none" in lines[0]
     assert "absent" in lines[1]
     assert "scar agent config cursor" in lines[3]
+
+
+def _registry(claude_dir: Path, *, installed: bool = True, enabled: bool | None = None):
+    plugins = claude_dir / "plugins"
+    plugins.mkdir(parents=True, exist_ok=True)
+    reg = {"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]} if installed else {}}
+    (plugins / "installed_plugins.json").write_text(json.dumps(reg), encoding="utf-8")
+    if enabled is not None:
+        (claude_dir / "settings.json").write_text(
+            json.dumps({"enabledPlugins": {"scar@scar": enabled}}), encoding="utf-8")
+
+
+def test_plugin_enabled_requires_registry_entry(tmp_path):
+    claude = tmp_path / ".claude"
+    assert hosts.claude_plugin_enabled(claude) is False
+    _registry(claude, installed=True)
+    assert hosts.claude_plugin_enabled(claude) is True
+
+
+def test_plugin_explicitly_disabled_is_off(tmp_path):
+    claude = tmp_path / ".claude"
+    _registry(claude, installed=True, enabled=False)
+    assert hosts.claude_plugin_enabled(claude) is False
+
+
+def test_unreadable_registry_is_not_plugin(tmp_path):
+    claude = tmp_path / ".claude"
+    (claude / "plugins").mkdir(parents=True)
+    (claude / "plugins" / "installed_plugins.json").write_text("{not json", encoding="utf-8")
+    assert hosts.claude_plugin_enabled(claude) is False
+
+
+def test_resolve_channels_marks_plugin_then_settings(tmp_path, monkeypatch):
+    from scar import installer
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    found = hosts.detect_hosts(tmp_path, None, path_env=str(tmp_path))
+    by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
+    assert by["claude"].channel == "none"
+    _registry(claude, installed=True)
+    by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
+    assert by["claude"].channel == "plugin"
+
+
+def test_resolve_channels_settings_when_hooks_owned(tmp_path, monkeypatch):
+    from scar import installer
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "claude_hooks_present", lambda: True)
+    found = hosts.detect_hosts(tmp_path, None, path_env=str(tmp_path))
+    by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
+    assert by["claude"].channel == "settings"
