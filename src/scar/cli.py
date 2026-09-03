@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -2666,37 +2667,102 @@ def _cmd_cascade_hook(args) -> int:
     return cascade_hook()
 
 
+def _detect(kind: str, args):
+    """Which hosts exist here, and which channel already serves each one.
+    Pure read: hosts.py never writes and never prompts (#303)."""
+    from . import hosts, installer
+    home = installer.CLAUDE_DIR.parent
+    repo = Path.cwd()
+    found = hosts.detect_hosts(home, repo, kind=kind,
+                               path_env=os.environ.get("PATH", ""),
+                               codex_dir=installer.codex_home())
+    resolved = hosts.resolve_channels(found, claude_dir=installer.CLAUDE_DIR,
+                                      repo=repo, kind=kind)
+    return resolved, repo
+
+
+def _run_hook_installers(names: list[str], repo: Path, dry: bool) -> int:
+    """Worst exit code wins: one host failing must not be reported as success."""
+    from .installer import cascade_install, codex_install, install
+    rc = 0
+    for name in names:
+        print(f"== {name}")
+        if name == "claude":
+            rc = max(rc, install(dry=dry))
+        elif name == "codex":
+            rc = max(rc, codex_install(dry=dry))
+        elif name == "windsurf":
+            rc = max(rc, cascade_install(repo, dry=dry))
+    return rc
+
+
 def _cmd_hook_lifecycle(args) -> int:
-    runtime = getattr(args, "runtime", "claude")
-    if runtime == "codex":
-        from .installer import codex_install, codex_status, codex_uninstall
-        if args.kind == "install":
-            return codex_install(dry=args.dry_run)
-        if args.kind == "uninstall":
-            return codex_uninstall(dry=args.dry_run)
-        return codex_status()
-    if runtime == "windsurf":
-        from .installer import cascade_install, cascade_status, cascade_uninstall
-        repo = Path.cwd()
-        if args.kind == "install":
-            return cascade_install(repo, dry=args.dry_run)
-        if args.kind == "uninstall":
-            return cascade_uninstall(repo, dry=args.dry_run)
-        return cascade_status(repo)
+    from . import hosts
+    from .installer import (
+        CLAUDE_DIR,
+        cascade_install,
+        cascade_status,
+        cascade_uninstall,
+        codex_install,
+        codex_status,
+        codex_uninstall,
+        git_hook_install,
+        git_hook_status,
+        git_hook_uninstall,
+        install,
+        status,
+        uninstall,
+    )
+    dry = args.dry_run
+    if getattr(args, "all", False) and args.runtime:
+        raise SystemExit("--all cannot be combined with --runtime")
+    if getattr(args, "force", False) and not args.runtime:
+        raise SystemExit("--force needs --runtime")
     if getattr(args, "git", False):
-        from .installer import git_hook_install, git_hook_status, git_hook_uninstall
         repo = Path.cwd()
-        if args.kind == "install":
-            return git_hook_install(repo, dry=args.dry_run)
-        if args.kind == "uninstall":
-            return git_hook_uninstall(repo, dry=args.dry_run)
-        return git_hook_status(repo)
-    from .installer import install, status, uninstall
-    if args.kind == "install":
-        return install(dry=args.dry_run)
-    if args.kind == "uninstall":
-        return uninstall(dry=args.dry_run)
-    return status()
+        return {"install": lambda: git_hook_install(repo, dry=dry),
+                "uninstall": lambda: git_hook_uninstall(repo, dry=dry),
+                "status": lambda: git_hook_status(repo)}[args.kind]()
+    runtime = args.runtime
+    # No --runtime: look at the machine first. Plain print, not Rich, because
+    # the non-tty branch of a read command must stay unwrapped (scar 0008).
+    if runtime is None and args.kind == "install":
+        found, repo = _detect("hook", args)
+        print(hosts.render_table(found))
+        decision = hosts.decide(found, interactive=hosts.is_interactive(),
+                                all_flag=getattr(args, "all", False),
+                                ask=hosts.ask_yes_no, command="hook")
+        for line in decision.lines:
+            print(line)
+        return _run_hook_installers(decision.install, repo, dry)
+    if runtime is None and args.kind == "status":
+        found, _ = _detect("hook", args)
+        print(hosts.render_table(found))
+        print()
+        return status()
+    # uninstall with no --runtime keeps targeting Claude: removal is out of
+    # the detection spec's scope, and widening it silently would rip hooks
+    # out of hosts the user never named.
+    runtime = runtime or "claude"
+    if (runtime == "claude" and args.kind == "install"
+            and not getattr(args, "force", False)
+            and hosts.claude_plugin_enabled(CLAUDE_DIR)):
+        print("claude: hooks are provided by the scar plugin (scar@scar); "
+              "nothing written. Pass --force to install into "
+              "~/.claude/settings.json as well.")
+        return 0
+    if runtime == "codex":
+        return {"install": lambda: codex_install(dry=dry),
+                "uninstall": lambda: codex_uninstall(dry=dry),
+                "status": codex_status}[args.kind]()
+    if runtime == "windsurf":
+        repo = Path.cwd()
+        return {"install": lambda: cascade_install(repo, dry=dry),
+                "uninstall": lambda: cascade_uninstall(repo, dry=dry),
+                "status": lambda: cascade_status(repo)}[args.kind]()
+    return {"install": lambda: install(dry=dry),
+            "uninstall": lambda: uninstall(dry=dry),
+            "status": status}[args.kind]()
 
 
 def _cmd_skill_lifecycle(args) -> int:
@@ -2874,14 +2940,23 @@ def build_parser() -> argparse.ArgumentParser:
                              ".git/hooks/post-commit trigger for `scar draft-check` "
                              "(#117) instead of Claude Code's settings.json")
     target.add_argument("--runtime", choices=["claude", "codex", "windsurf"],
-                        default="claude",
+                        default=None,
                         help="with install/uninstall/status: which runtime to wire. "
+                             "Omitted: detect installed hosts and ask (install), or "
+                             "show every host's channel (status); uninstall still "
+                             "targets claude. "
                              "codex writes ~/.codex/hooks.json — shared with other "
                              "tools, so merged, and inactive until you trust the "
                              "entries in Codex's `/hooks` (#246); "
                              "windsurf writes this repo's committed "
                              ".windsurf/hooks.json (Cascade block-once, #197); "
-                             "claude (default) writes ~/.claude/settings.json")
+                             "claude writes ~/.claude/settings.json")
+    p.add_argument("--all", action="store_true",
+                   help="with install and no --runtime: wire every detected, "
+                        "unserved host without asking")
+    p.add_argument("--force", action="store_true",
+                   help="with --runtime: install into the settings file even "
+                        "though the scar plugin already serves that host")
 
     _add(sub, "cascade-hook", _cmd_cascade_hook,
          help="run the Windsurf/Cascade hook adapter (stdin JSON; installed by "

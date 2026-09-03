@@ -86,8 +86,11 @@ def _commands(settings_path, event):
             for group in cfg.get(event, []) for h in group.get("hooks", [])]
 
 
+# These name --runtime claude explicitly: since #303 a bare `hook install`
+# detects hosts and may decide to write nothing, which would make every
+# assertion below depend on what the developer happens to have on PATH.
 def test_cli_hook_install_then_uninstall(isolated_settings, capsys):
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
     assert settings.count("/stable/bin/scar hook") == len(installer.HOOKS)
 
@@ -102,16 +105,16 @@ def test_install_keeps_every_spec_that_shares_an_event(isolated_settings):
     # Ownership used to be event-scoped, so installing the second spec stripped
     # the first and left the tool with no pre-edit injection at all. Both must
     # survive an install into an empty settings file.
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     commands = _commands(isolated_settings, "PreToolUse")
     assert "/stable/bin/scar hook precheck" in commands
     assert "/stable/bin/scar hook precheck-command" in commands
 
 
 def test_install_is_idempotent_on_a_shared_event(isolated_settings, capsys):
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     capsys.readouterr()
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     out = capsys.readouterr().out
     assert out.count("up-to-date") == len(installer.HOOKS)
     commands = _commands(isolated_settings, "PreToolUse")
@@ -130,7 +133,7 @@ def test_install_migrates_a_legacy_precheck_without_eating_its_neighbour(
          "hooks": [{"type": "command",
                     "command": "python3 ~/.claude/hooks/scar-precheck.py"}]},
     ]}}), encoding="utf-8")
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     out = capsys.readouterr().out
     assert "[precheck] settings: migrate legacy entry" in out
     commands = _commands(isolated_settings, "PreToolUse")
@@ -145,7 +148,7 @@ def test_install_preserves_foreign_hooks_on_a_shared_event(isolated_settings):
         {"matcher": "Bash", "hooks": [{"type": "command",
                                        "command": "/usr/local/bin/other-tool guard"}]},
     ]}}), encoding="utf-8")
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     assert "/usr/local/bin/other-tool guard" in _commands(isolated_settings, "PreToolUse")
 
 
@@ -179,12 +182,12 @@ def test_install_fails_loudly_when_the_written_file_lost_a_hook(
         real_save(settings, dry)
 
     monkeypatch.setattr(installer, "save_settings", lossy_save)
-    assert main(["hook", "install"]) == 1
+    assert main(["hook", "install", "--runtime", "claude"]) == 1
     assert "precheck" in capsys.readouterr().out
 
 
 def test_cli_hook_dry_run_does_not_create_settings(isolated_settings):
-    assert main(["hook", "install", "--dry-run"]) == 0
+    assert main(["hook", "install", "--runtime", "claude", "--dry-run"]) == 0
     assert not isolated_settings.exists()
 
 
@@ -713,3 +716,88 @@ def test_skill_present_follows_skill_dir(tmp_path, monkeypatch):
     assert installer.skill_present() is False
     assert main(["skill", "install"]) == 0
     assert installer.skill_present() is True
+
+
+# --- detection-driven install (#303): no --runtime means "look, then ask" ---
+
+@pytest.fixture
+def no_hosts(tmp_path, monkeypatch, isolated_settings):
+    """Fake home with only the claude dir, empty PATH, no codex, no windsurf."""
+    from scar import hosts
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir(exist_ok=True)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
+    installer.CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_hook_install_no_flag_no_tty_single_host_installs_claude(no_hosts, capsys):
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "only unserved host" in out
+    assert installer.claude_hooks_present()
+
+
+def test_hook_install_no_flag_no_tty_two_hosts_writes_nothing(no_hosts, capsys):
+    (no_hosts / "codexhome").mkdir()
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "scar hook install --runtime codex" in out
+    assert not installer.claude_hooks_present()
+    assert not installer.codex_hooks_present()
+
+
+def test_hook_install_all_wires_every_candidate(no_hosts):
+    (no_hosts / "codexhome").mkdir()
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    assert installer.codex_hooks_present()
+
+
+def test_hook_install_tty_asks_and_honours_answers(no_hosts, monkeypatch):
+    from scar import hosts
+    (no_hosts / "codexhome").mkdir()
+    monkeypatch.setattr(hosts, "is_interactive", lambda: True)
+    monkeypatch.setattr(hosts, "ask_yes_no", lambda q: "codex" in q)
+    assert main(["hook", "install"]) == 0
+    assert not installer.claude_hooks_present()
+    assert installer.codex_hooks_present()
+
+
+def test_hook_install_claude_skipped_when_plugin_serves(no_hosts, capsys):
+    plugins = installer.CLAUDE_DIR / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]}}),
+        encoding="utf-8")
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    out = capsys.readouterr().out
+    assert "provided by the scar plugin" in out and "--force" in out
+    assert not installer.claude_hooks_present()
+    assert main(["hook", "install", "--runtime", "claude", "--force"]) == 0
+    assert installer.claude_hooks_present()
+
+
+def test_hook_status_no_flag_prints_host_table_then_claude_table(no_hosts, capsys):
+    assert main(["hook", "status"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("claude")
+    assert "channel=none" in out
+    assert out.count("not installed") == 5
+
+
+def test_hook_flags_are_exclusive():
+    with pytest.raises(SystemExit):
+        main(["hook", "install", "--all", "--runtime", "claude"])
+    with pytest.raises(SystemExit):
+        main(["hook", "install", "--force"])
+
+
+def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
+    """Windsurf is repo-scoped, so detection sees it from the cwd, not $HOME."""
+    (no_hosts / ".windsurf").mkdir()
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    assert installer.cascade_hooks_present(no_hosts)
