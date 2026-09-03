@@ -9,7 +9,6 @@ authors: ["claude-code"]
 promoted_by: Kibukx
 promoted_by_source: git-config
 anchors:
-  - path: plugin/hooks/hooks.json
   - path: src/scar/codex.py
   - pattern: "hooks/hooks\.json|CODEX_HOME|codex-(pretool|posttool|session-notice)"
 evidence:

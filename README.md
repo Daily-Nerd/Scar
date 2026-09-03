@@ -60,20 +60,14 @@ cp .scars/template.md .scars/candidates/redis-sessions.md
 $EDITOR .scars/candidates/redis-sessions.md
 scar lint                        # validate format
 scar promote redis-sessions.md   # human review gate: candidate -> active
-scar hook install                # Claude Code: inject scars before agent edits
-scar skill install               # Claude Code: authoring skill into ~/.claude/skills/
-scar hook install --runtime windsurf   # Windsurf/Cascade: block-once injection
+scar hook install                # detects installed hosts, asks which to wire (--all, --runtime X)
+scar skill install               # same detection for the scar-authoring skill
+scar hook status                 # every host with the channel that serves it (settings, plugin, none)
 ```
 
-Claude Code users: the marketplace **plugin** ships the hooks and the
-scar-authoring skill together; the two commands above are the manual fallback.
-Re-run `scar skill install` after upgrading — the installed skill is a static copy.
+Claude Code users: the marketplace **plugin** ships the hooks and the scar-authoring skill together. `scar hook install` and `scar skill install` see the plugin and skip Claude unless you pass `--runtime claude --force`. Re-run `scar skill install` after upgrading a manual install; the installed skill is a static copy.
 
-Codex users: install and enable the Scar plugin, then open `/hooks` to review
-and trust its current hook definitions. The native plugin hooks push matching
-scars before `Bash` and `apply_patch` calls and report post-patch `violation:`
-tripwires without blocking or rewriting the action. Plugin updates that change
-the hook definitions require trust review again.
+Codex users: run `scar hook install --runtime codex`, then open `/hooks` in Codex to review and trust the entries. The hooks push matching scars before `Bash` and `apply_patch` calls and report post-patch `violation:` tripwires without blocking. The plugin no longer carries Codex hook definitions; the installer is the one path.
 
 Full walkthrough, lifecycle commands, and agent wiring (Claude Code plugin,
 Codex native hooks, Windsurf/Cascade hooks, MCP server, `scar draft-check`):

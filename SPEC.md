@@ -464,3 +464,7 @@ just as well as edit rows do.
 command output, and asserts the nullable semantics of §9.2. A guarantee no
 test enforces is an untestable assertion, and untestable assertions are the
 ones that reach `main` wrong.
+
+### 9.10 Install detection
+
+`scar hook install` and `scar skill install` without `--runtime` detect hosts (claude, codex, windsurf, cursor, opencode) by config directory or binary on PATH, and resolve for each the channel that already serves it: `settings` (Scar's own entries in the host's hook file), `plugin` (the scar marketplace plugin installed and not disabled), or `none`. windsurf is repo-scoped: its hooks file is written into the working repo, so the binary on PATH counts only when that repo is inside a git repository. On a terminal, one question per present, wirable, unserved host, default no. Without a terminal, exactly one such host is installed; zero or several means the commands are printed and nothing is written. Zero detected hosts says so, rather than naming the plugin. `--all` wires every such host. `--runtime claude` on a Claude Code already served by the plugin refuses unless `--force`. `--all` and `--force` apply to `install` only, and `--force` applies to `--runtime claude` only. A missing or unreadable plugin registry never counts as `plugin`.

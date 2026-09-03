@@ -26,29 +26,17 @@ def test_plugin_manifest_is_valid_and_declares_four_hook_events():
     assert set(manifest["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "Stop"}
 
 
-def test_codex_plugin_manifest_is_native_bounded_and_advisory():
-    manifest = json.loads(
-        (ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    hooks = manifest["hooks"]
-    assert set(hooks) == {"SessionStart", "PreToolUse", "PostToolUse"}
-    assert hooks["PreToolUse"][0]["matcher"] == "Bash|apply_patch"
-    assert hooks["PostToolUse"][0]["matcher"] == "apply_patch"
-    assert "Stop" not in hooks and "UserPromptSubmit" not in hooks
-
-
-def test_codex_plugin_hooks_use_plugin_root_and_codex_handlers():
-    manifest = json.loads(
-        (ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    expected = {
-        "SessionStart": "codex-session-notice",
-        "PreToolUse": "codex-pretool",
-        "PostToolUse": "codex-posttool",
-    }
-    for event, handler in expected.items():
-        commands = [hook["command"]
-                    for group in manifest["hooks"][event]
-                    for hook in group["hooks"]]
-        assert commands == [f'"${{PLUGIN_ROOT}}/hooks/run.sh" {handler}']
+def test_plugin_ships_no_second_hook_manifest():
+    """One plugin hook file read by two hosts that expand different root
+    variables produced /hooks/run.sh on every Claude Bash call (#303).
+    plugin.json is the only manifest; Codex push comes from
+    `scar hook install --runtime codex`."""
+    assert not (ROOT / "plugin" / "hooks" / "hooks.json").exists()
+    manifest = json.loads((ROOT / "plugin" / "plugin.json").read_text(encoding="utf-8"))
+    commands = [h["command"] for groups in manifest["hooks"].values()
+                for g in groups for h in g["hooks"]]
+    assert commands and all("${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" in c for c in commands)
+    assert all("${PLUGIN_ROOT}" not in c for c in commands)
 
 
 def test_marketplace_manifest_lists_the_plugin():

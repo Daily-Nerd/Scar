@@ -8,7 +8,6 @@ created: 2026-08-28
 authors: ["codex", "Kibukx"]
 anchors:
   - path: src/scar/codex.py
-  - path: plugin/hooks/hooks.json
 evidence:
   - issue: 243
   - note: live codex-cli 0.147.0 A/B emitted two tool_use_ids for one identical apply_patch after the first PreToolUse context injection

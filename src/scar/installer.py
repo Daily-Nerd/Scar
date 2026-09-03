@@ -243,6 +243,13 @@ def status() -> int:
     return 0
 
 
+def claude_hooks_present() -> bool:
+    """Every HOOKS kind owned in settings.json. Kind-exact (scar 0016)."""
+    hooks_cfg = load_settings().get("hooks", {})
+    return all(any(owns_kind(g, spec["kind"]) for g in hooks_cfg.get(spec["event"], []))
+               for spec in HOOKS)
+
+
 # ---------------------------------------------------------------------------
 # git post-commit hook (#117) — the trigger for `scar draft-check`. Separate
 # lifecycle from the Claude Code hooks above: this writes into the REPO's
@@ -544,6 +551,16 @@ def cascade_status(repo: Path) -> int:
         print(f"{event:17} {state}")
     print("  Note: hooks do not load in a Restricted Mode workspace.")
     return 0
+
+
+def cascade_hooks_present(repo: Path) -> bool:
+    config = _load_cascade_config(repo / CASCADE_CONFIG_RELPATH)
+    if config is None:
+        return False
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
+    return all(any(_cascade_is_ours(e) for e in (hooks_cfg.get(ev) or []))
+               for ev in CASCADE_EVENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -874,6 +891,16 @@ def codex_status() -> int:
     return 0
 
 
+def codex_hooks_present() -> bool:
+    config = _load_codex_config(codex_config_path())
+    if config is None:
+        return False
+    hooks_cfg = config.get("hooks")
+    hooks_cfg = hooks_cfg if isinstance(hooks_cfg, dict) else {}
+    return all(any(_codex_owns_kind(g, spec["kind"]) for g in hooks_cfg.get(spec["event"], []))
+               for spec in CODEX_HOOKS)
+
+
 def _skill_source() -> Path:
     from importlib.resources import files
     return Path(str(files("scar").joinpath("skills") / SKILL_NAME))
@@ -913,3 +940,7 @@ def skill_status() -> int:
     dest = SKILLS_DIR / SKILL_NAME
     print(f"skill {SKILL_NAME}: {'installed' if dest.exists() else 'not installed'} ({dest})")
     return 0
+
+
+def skill_present() -> bool:
+    return (SKILLS_DIR / SKILL_NAME).exists()

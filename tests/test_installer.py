@@ -86,8 +86,11 @@ def _commands(settings_path, event):
             for group in cfg.get(event, []) for h in group.get("hooks", [])]
 
 
+# These name --runtime claude explicitly: since #303 a bare `hook install`
+# detects hosts and may decide to write nothing, which would make every
+# assertion below depend on what the developer happens to have on PATH.
 def test_cli_hook_install_then_uninstall(isolated_settings, capsys):
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     settings = isolated_settings.read_text(encoding="utf-8")
     assert settings.count("/stable/bin/scar hook") == len(installer.HOOKS)
 
@@ -102,16 +105,16 @@ def test_install_keeps_every_spec_that_shares_an_event(isolated_settings):
     # Ownership used to be event-scoped, so installing the second spec stripped
     # the first and left the tool with no pre-edit injection at all. Both must
     # survive an install into an empty settings file.
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     commands = _commands(isolated_settings, "PreToolUse")
     assert "/stable/bin/scar hook precheck" in commands
     assert "/stable/bin/scar hook precheck-command" in commands
 
 
 def test_install_is_idempotent_on_a_shared_event(isolated_settings, capsys):
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     capsys.readouterr()
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     out = capsys.readouterr().out
     assert out.count("up-to-date") == len(installer.HOOKS)
     commands = _commands(isolated_settings, "PreToolUse")
@@ -130,7 +133,7 @@ def test_install_migrates_a_legacy_precheck_without_eating_its_neighbour(
          "hooks": [{"type": "command",
                     "command": "python3 ~/.claude/hooks/scar-precheck.py"}]},
     ]}}), encoding="utf-8")
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     out = capsys.readouterr().out
     assert "[precheck] settings: migrate legacy entry" in out
     commands = _commands(isolated_settings, "PreToolUse")
@@ -145,13 +148,15 @@ def test_install_preserves_foreign_hooks_on_a_shared_event(isolated_settings):
         {"matcher": "Bash", "hooks": [{"type": "command",
                                        "command": "/usr/local/bin/other-tool guard"}]},
     ]}}), encoding="utf-8")
-    assert main(["hook", "install"]) == 0
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
     assert "/usr/local/bin/other-tool guard" in _commands(isolated_settings, "PreToolUse")
 
 
-def test_status_distinguishes_kinds_sharing_one_event(isolated_settings, capsys):
+def test_status_distinguishes_kinds_sharing_one_event(isolated_settings, no_hosts, capsys):
     # Only `precheck-command` is present. Status must not report `precheck`
     # as installed just because a sibling kind occupies the same event.
+    # `no_hosts` isolates PATH/CODEX_HOME/cwd so the host table `hook status`
+    # now prints first (#303) is deterministic across machines.
     import json
     isolated_settings.parent.mkdir(parents=True, exist_ok=True)
     isolated_settings.write_text(json.dumps({"hooks": {"PreToolUse": [
@@ -179,16 +184,18 @@ def test_install_fails_loudly_when_the_written_file_lost_a_hook(
         real_save(settings, dry)
 
     monkeypatch.setattr(installer, "save_settings", lossy_save)
-    assert main(["hook", "install"]) == 1
+    assert main(["hook", "install", "--runtime", "claude"]) == 1
     assert "precheck" in capsys.readouterr().out
 
 
 def test_cli_hook_dry_run_does_not_create_settings(isolated_settings):
-    assert main(["hook", "install", "--dry-run"]) == 0
+    assert main(["hook", "install", "--runtime", "claude", "--dry-run"]) == 0
     assert not isolated_settings.exists()
 
 
-def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
+def test_cli_hook_status_reports_each_hook(isolated_settings, no_hosts, capsys):
+    # `no_hosts` isolates PATH/CODEX_HOME/cwd: the host table `hook status`
+    # now prints first (#303) must not vary with the developer's real machine.
     assert main(["hook", "status"]) == 0
     out = capsys.readouterr().out
     assert "precheck" in out
@@ -199,32 +206,51 @@ def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
     assert out.count("not installed") == 5
 
 
-def test_skill_install_dry_run_reports_target_without_writing(tmp_path, monkeypatch):
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+# `skill_home` isolates PATH, CODEX_HOME, cwd, and hosts.is_interactive the
+# same way `no_hosts` does for `hook`, and pre-creates the claude config dir
+# so claude is present by config dir, not by whatever happens to be on the
+# developer's real PATH. Bare `skill install`/`status` runs detection (#303),
+# so every test that calls them without --runtime needs this isolation to be
+# deterministic across machines.
+@pytest.fixture
+def skill_home(tmp_path, monkeypatch):
+    from scar import hosts
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
+    return claude
+
+
+def test_skill_install_dry_run_reports_target_without_writing(skill_home):
     rc = main(["skill", "install", "--dry-run"])
     assert rc == 0
-    assert not (tmp_path / ".claude" / "skills" / "scar-authoring").exists()
+    assert not (skill_home / "skills" / "scar-authoring").exists()
 
 
-def test_skill_install_copies_skill_then_uninstall_removes_it(tmp_path, monkeypatch):
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+def test_skill_install_copies_skill_then_uninstall_removes_it(skill_home):
     assert main(["skill", "install"]) == 0
-    dest = tmp_path / ".claude" / "skills" / "scar-authoring" / "SKILL.md"
+    dest = skill_home / "skills" / "scar-authoring" / "SKILL.md"
     assert dest.exists() and "scar-authoring" in dest.read_text()
     assert main(["skill", "uninstall"]) == 0
     assert not dest.parent.exists()
 
 
-def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch):
+def test_skill_reinstall_over_existing_removes_stale_files(skill_home):
     # Reinstall must rmtree the existing dir before copy: a stale file left from
     # a prior install must NOT survive a second install. Guards against a refactor
     # to copytree(dirs_exist_ok=True), which would leave orphaned files behind.
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+    # Bare `skill install` twice, no --runtime: re-running install is the
+    # documented post-upgrade step, so a host already served by `settings`
+    # (claude, after the first install) stays a candidate and is refreshed.
     assert main(["skill", "install"]) == 0
-    dest = tmp_path / ".claude" / "skills" / "scar-authoring"
+    dest = skill_home / "skills" / "scar-authoring"
     stale = dest / "STALE-LEFTOVER.txt"
     stale.write_text("orphan from a previous layout", encoding="utf-8")
     assert main(["skill", "install"]) == 0
@@ -684,3 +710,209 @@ def test_codex_plugin_ref_is_derived_from_the_cache_path(codex_home):
     plugin = _codex_plugin(codex_home)
     assert _codex_plugin_ref(plugin) == "scar@scar"
     assert _codex_plugin_ref(Path("/nowhere/hooks.json")) is None
+
+
+def test_claude_hooks_present_only_when_every_kind_is_owned(isolated_settings):
+    assert installer.claude_hooks_present() is False
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    assert installer.claude_hooks_present() is True
+
+
+def test_codex_hooks_present_reads_codex_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.setattr(installer, "find_scar", lambda: "/stable/bin/scar")
+    assert installer.codex_hooks_present() is False
+    assert main(["hook", "install", "--runtime", "codex"]) == 0
+    assert installer.codex_hooks_present() is True
+
+
+def test_cascade_hooks_present_is_repo_scoped(cascade_repo):
+    assert installer.cascade_hooks_present(cascade_repo) is False
+    assert main(["hook", "install", "--runtime", "windsurf"]) == 0
+    assert installer.cascade_hooks_present(cascade_repo) is True
+
+
+def test_skill_present_follows_skill_dir(skill_home):
+    assert installer.skill_present() is False
+    assert main(["skill", "install"]) == 0
+    assert installer.skill_present() is True
+
+
+# --- detection-driven install (#303): no --runtime means "look, then ask" ---
+
+@pytest.fixture
+def no_hosts(tmp_path, monkeypatch, isolated_settings):
+    """Fake home with only the claude dir, empty PATH, no codex, no windsurf."""
+    from scar import hosts
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir(exist_ok=True)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
+    installer.CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_hook_install_no_flag_no_tty_single_host_installs_claude(no_hosts, capsys):
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "only unserved host" in out
+    assert installer.claude_hooks_present()
+
+
+def test_hook_install_no_flag_no_tty_two_hosts_writes_nothing(no_hosts, capsys):
+    (no_hosts / "codexhome").mkdir()
+    assert main(["hook", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "scar hook install --runtime codex" in out
+    assert not installer.claude_hooks_present()
+    assert not installer.codex_hooks_present()
+
+
+def test_hook_install_all_wires_every_candidate(no_hosts):
+    (no_hosts / "codexhome").mkdir()
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    assert installer.codex_hooks_present()
+
+
+def test_hook_install_tty_asks_and_honours_answers(no_hosts, monkeypatch):
+    from scar import hosts
+    (no_hosts / "codexhome").mkdir()
+    monkeypatch.setattr(hosts, "is_interactive", lambda: True)
+    monkeypatch.setattr(hosts, "ask_yes_no", lambda q: "codex" in q)
+    assert main(["hook", "install"]) == 0
+    assert not installer.claude_hooks_present()
+    assert installer.codex_hooks_present()
+
+
+def test_hook_install_claude_skipped_when_plugin_serves(no_hosts, capsys):
+    plugins = installer.CLAUDE_DIR / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]}}),
+        encoding="utf-8")
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    out = capsys.readouterr().out
+    assert "provided by the scar plugin" in out and "--force" in out
+    assert not installer.claude_hooks_present()
+    assert main(["hook", "install", "--runtime", "claude", "--force"]) == 0
+    assert installer.claude_hooks_present()
+
+
+def test_hook_status_no_flag_prints_host_table_then_claude_table(no_hosts, capsys):
+    assert main(["hook", "status"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("claude")
+    assert "channel=none" in out
+    assert out.count("not installed") == 5
+
+
+def test_hook_flags_are_exclusive(tmp_path, monkeypatch, capsys):
+    """Picking two targets is argparse's job: exit 2 with a usage line, the
+    same as every other bad flag combination here. `--force` is not a target,
+    so it fails in the handler, and the handler never raises to the shell."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["hook", "install", "--all", "--runtime", "claude"])
+    with pytest.raises(SystemExit):
+        main(["hook", "install", "--all", "--git"])
+    capsys.readouterr()
+    assert main(["hook", "install", "--force"]) == 2
+    assert "--force needs --runtime" in capsys.readouterr().out
+
+
+def test_hook_all_applies_to_install_only(no_hosts, capsys):
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    capsys.readouterr()
+    assert main(["hook", "uninstall", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+    assert installer.claude_hooks_present()
+    assert main(["hook", "status", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+
+
+def test_hook_force_applies_to_install_only(no_hosts, capsys):
+    assert main(["hook", "install", "--runtime", "claude"]) == 0
+    capsys.readouterr()
+    assert main(["hook", "uninstall", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+    assert installer.claude_hooks_present()
+    assert main(["hook", "status", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+
+
+def test_hook_force_applies_to_claude_only(no_hosts, capsys):
+    """--force overrides the plugin check, and the plugin channel is Claude
+    Code's alone: on any other runtime it can only mislead."""
+    assert main(["hook", "install", "--runtime", "codex", "--force"]) == 2
+    assert "--force applies to --runtime claude only" in capsys.readouterr().out
+    assert not installer.codex_hooks_present()
+    assert main(["hook", "install", "--runtime", "windsurf", "--force"]) == 2
+    assert "--force applies to --runtime claude only" in capsys.readouterr().out
+    assert not installer.cascade_hooks_present(no_hosts)
+
+
+def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
+    """Windsurf is repo-scoped, so detection sees it from the cwd, not $HOME."""
+    (no_hosts / ".windsurf").mkdir()
+    assert main(["hook", "install", "--all"]) == 0
+    assert installer.claude_hooks_present()
+    assert installer.cascade_hooks_present(no_hosts)
+
+
+def test_skill_install_no_flag_single_host_installs(skill_home):
+    assert main(["skill", "install"]) == 0
+    assert installer.skill_present()
+
+
+def test_skill_install_skipped_when_plugin_serves(skill_home, capsys):
+    plugins = skill_home / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]}}), encoding="utf-8")
+    assert main(["skill", "install"]) == 0
+    assert "already served by plugin" in capsys.readouterr().out
+    assert not installer.skill_present()
+    assert main(["skill", "install", "--runtime", "claude", "--force"]) == 0
+    assert installer.skill_present()
+
+
+def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
+    assert main(["skill", "status"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("claude")
+    assert "not supported yet" in out
+    assert "skill scar-authoring: not installed" in out
+
+
+def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
+    """Same contract as hook: --all/--runtime is argparse's job (exit 2, usage
+    line), --force without --runtime fails in the handler, no raise to the
+    shell."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["skill", "install", "--all", "--runtime", "claude"])
+    capsys.readouterr()
+    assert main(["skill", "install", "--force"]) == 2
+    assert "--force needs --runtime" in capsys.readouterr().out
+
+
+def test_skill_all_applies_to_install_only(skill_home, capsys):
+    assert main(["skill", "install", "--all"]) == 0
+    assert installer.skill_present()
+    capsys.readouterr()
+    assert main(["skill", "uninstall", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+    assert installer.skill_present()
+    assert main(["skill", "status", "--all"]) == 2
+    assert "--all applies to install only" in capsys.readouterr().out
+
+
+def test_skill_force_applies_to_install_only(skill_home, capsys):
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    capsys.readouterr()
+    assert main(["skill", "uninstall", "--runtime", "claude", "--force"]) == 2
+    assert "--force applies to install only" in capsys.readouterr().out
+    assert installer.skill_present()
