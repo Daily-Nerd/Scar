@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.0](https://github.com/Daily-Nerd/Scar/compare/v0.22.0...v0.23.0) (2026-09-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **install:** with no --runtime, no terminal, and more than one detected host, scar hook install and scar skill install write nothing and print the commands to run instead of installing Claude Code by default.
+
+### Features
+
+* **install:** detect installed hosts and the channel that already serves each ([#304](https://github.com/Daily-Nerd/Scar/issues/304)) ([180cf6f](https://github.com/Daily-Nerd/Scar/commit/180cf6f53ab671e6fb9ce6636fe718aabead1c7c))
+
 ## [0.22.0](https://github.com/Daily-Nerd/Scar/compare/v0.21.0...v0.22.0) (2026-09-03)
 
 
