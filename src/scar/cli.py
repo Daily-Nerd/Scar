@@ -2714,10 +2714,13 @@ def _cmd_hook_lifecycle(args) -> int:
         uninstall,
     )
     dry = args.dry_run
-    if getattr(args, "all", False) and args.runtime:
-        raise SystemExit("--all cannot be combined with --runtime")
+    # --all sits in the target group, so argparse already rejects it next to
+    # --runtime or --git. --force is not a target, so it is checked here, and
+    # checked by returning: commands never raise to the shell.
     if getattr(args, "force", False) and not args.runtime:
-        raise SystemExit("--force needs --runtime")
+        print("--force needs --runtime: it overrides the plugin check for one "
+              "named runtime, and detection never needs overriding.")
+        return 2
     if getattr(args, "git", False):
         repo = Path.cwd()
         return {"install": lambda: git_hook_install(repo, dry=dry),
@@ -2932,8 +2935,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true",
                    help="show lifecycle changes without writing settings")
     # One invocation, one target: --git writes .git/hooks/post-commit,
-    # --runtime windsurf writes .windsurf/hooks.json, and the default writes
-    # ~/.claude/settings.json. Passing two can only mean one is ignored.
+    # --runtime windsurf writes .windsurf/hooks.json, --all writes to every
+    # unserved host detection finds, and no flag at all means detect and ask.
+    # Passing two can only mean one is ignored.
     target = p.add_mutually_exclusive_group()
     target.add_argument("--git", action="store_true",
                         help="with install/uninstall/status: target this repo's "
@@ -2951,9 +2955,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "windsurf writes this repo's committed "
                              ".windsurf/hooks.json (Cascade block-once, #197); "
                              "claude writes ~/.claude/settings.json")
-    p.add_argument("--all", action="store_true",
-                   help="with install and no --runtime: wire every detected, "
-                        "unserved host without asking")
+    target.add_argument("--all", action="store_true",
+                        help="with install: wire every detected, unserved host "
+                             "without asking. A target like the other two, so "
+                             "argparse rejects it next to --runtime or --git "
+                             "rather than letting one be silently ignored")
     p.add_argument("--force", action="store_true",
                    help="with --runtime: install into the settings file even "
                         "though the scar plugin already serves that host")

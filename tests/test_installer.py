@@ -788,11 +788,18 @@ def test_hook_status_no_flag_prints_host_table_then_claude_table(no_hosts, capsy
     assert out.count("not installed") == 5
 
 
-def test_hook_flags_are_exclusive():
+def test_hook_flags_are_exclusive(tmp_path, monkeypatch, capsys):
+    """Picking two targets is argparse's job: exit 2 with a usage line, the
+    same as every other bad flag combination here. `--force` is not a target,
+    so it fails in the handler, and the handler never raises to the shell."""
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit):
         main(["hook", "install", "--all", "--runtime", "claude"])
     with pytest.raises(SystemExit):
-        main(["hook", "install", "--force"])
+        main(["hook", "install", "--all", "--git"])
+    capsys.readouterr()
+    assert main(["hook", "install", "--force"]) == 2
+    assert "--force needs --runtime" in capsys.readouterr().out
 
 
 def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
