@@ -1,21 +1,25 @@
 ---
-id: 0
+id: 20
 type: landmine
 title: A health check that watches one direction of pipeline failure leaves the flattering direction unwatched
 severity: high
 confidence: 0.9
 created: 2026-08-30
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config
 anchors:
   - path: src/scar/cli.py
   - path: src/scar/hooks.py
+  - path: src/scar/codex.py
+  - path: src/scar/cascade.py
   - pattern: "instrument_disconnected|posttool_silent|verdict_observed"
 evidence:
   - issue: 277
   - issue: 237
 expires:
   condition: "the pipeline stops having two independently-installable halves"
-status: candidate
+status: active
 ---
 
 The precheck and posttool hooks install separately and fail separately. #237

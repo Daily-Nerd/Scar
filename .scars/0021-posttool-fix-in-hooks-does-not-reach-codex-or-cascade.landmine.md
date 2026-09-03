@@ -1,16 +1,17 @@
 ---
-id: 0
+id: 21
 type: landmine
 title: A posttool change in hooks.py does not reach codex.py or cascade.py, which carry their own copy of the same logic
 severity: high
 confidence: 0.8
 created: 2026-09-02
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config
 anchors:
   - path: src/scar/hooks.py
   - path: src/scar/codex.py
   - path: src/scar/cascade.py
-violation: "if not violations:"
 evidence:
   - issue: 277
   - issue: 293
@@ -18,7 +19,8 @@ evidence:
 expires:
   condition: "the three posttool paths share one implementation, or the adapters delegate to hooks.posttool"
   review_after: 2026-12-01
-status: candidate
+violation: "if not violations:"
+status: active
 ---
 
 The posttool verdict logic exists three times: `hooks.posttool` for Claude

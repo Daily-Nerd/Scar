@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 22
 type: landmine
 title: Codex plugin hooks are not materialized, and untrusted Codex hooks are skipped silently
 severity: high
 confidence: 0.9
 created: 2026-08-28
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config
 anchors:
   - path: plugin/hooks/hooks.json
   - path: src/scar/codex.py
@@ -17,7 +19,7 @@ evidence:
 expires:
   condition: "Codex materializes a plugin's hooks/hooks.json into the installed cache AND surfaces an error for untrusted hooks"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 Shipping a Codex hook through a plugin's `hooks/hooks.json` does not deliver it,
