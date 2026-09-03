@@ -121,6 +121,37 @@ def test_promoted_by_is_empty_on_a_scar_that_never_recorded_it():
     assert s.promoted_by == ""
 
 
+def test_promoted_by_source_parses_and_roundtrips():
+    """#295: whether promoted_by was typed or read from git config is its own
+    field, written right after promoted_by."""
+    from scar.model import Scar, parse_scar_text
+    s = Scar(title="t", path_anchors=["src/"], promoted_by="kibukx",
+              promoted_by_source="git-config")
+    text = s.to_text()
+    assert "promoted_by_source: git-config" in text
+    lines = text.splitlines()
+    assert lines.index("promoted_by_source: git-config") == lines.index("promoted_by: kibukx") + 1
+    s2 = parse_scar_text(text)
+    assert s2.promoted_by_source == "git-config"
+
+
+def test_promoted_by_source_is_none_when_absent():
+    """A scar promoted before this field existed must not get a default
+    value guessed for it; absent means None, the same missing-key-is-not-
+    a-value contract as review_after_firings (#274)."""
+    from scar.model import parse_scar_text
+    s = parse_scar_text(VALID)
+    assert s.promoted_by_source is None
+
+
+def test_promoted_by_source_not_written_without_promoted_by():
+    """The field only ever means something next to a promoted_by value; a
+    Scar with a source but no reviewer name must not write it."""
+    from scar.model import Scar
+    s = Scar(title="t", path_anchors=["src/"], promoted_by_source="explicit")
+    assert "promoted_by_source" not in s.to_text()
+
+
 def test_symbol_anchor_parses_and_roundtrips():
     from scar.model import Scar, parse_scar_text
     s = Scar(title="t", path_anchors=["src/store.py"], symbol_anchors=["SessionStore", "src/store.py::SessionStore.save"])

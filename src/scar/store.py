@@ -231,7 +231,8 @@ class ScarStore:
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
-    def promote(self, candidate: Path, reviewer: str) -> Path:
+    def promote(self, candidate: Path, reviewer: str,
+                reviewer_source: str | None = None) -> Path:
         text = candidate.read_text(encoding="utf-8")
         findings = lint_text(text)
         errors = [f for f in findings if f.level == "error"]
@@ -247,6 +248,12 @@ class ScarStore:
         # carried here was a claim nobody made. Empty reviewer stays empty
         # rather than guessing.
         scar.promoted_by = reviewer or ""
+        # #295: reviewer_source ("explicit" | "git-config") records whether
+        # the CLI got the name from --reviewer or from git config user.name.
+        # Only meaningful next to an actual reviewer, and always overwritten
+        # like promoted_by itself: whatever the candidate carried here was
+        # never a real vouch either.
+        scar.promoted_by_source = reviewer_source if reviewer else None
         slug = candidate.stem
         new_path = self.scars_dir / f"{scar.id:04d}-{slug}.{scar.type}.md"
         new_path.write_text(scar.to_text(), encoding="utf-8")

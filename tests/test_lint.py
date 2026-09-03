@@ -44,6 +44,18 @@ def test_candidate_carrying_promoted_by_is_a_warning():
     assert not any("promoted_by" in f.message for f in lint_text(active))
 
 
+def test_promoted_by_source_git_config_is_a_warning():
+    """#295: a git-config-sourced reviewer means nobody typed a name, so lint
+    flags it for a second look. Explicit stays quiet."""
+    git_config = GOOD.replace("authors: [mara]",
+                               "authors: [mara]\npromoted_by: mara\npromoted_by_source: git-config")
+    findings = lint_text(git_config)
+    assert any(f.level == "warning" and "promoted_by_source" in f.message for f in findings)
+    explicit = GOOD.replace("authors: [mara]",
+                             "authors: [mara]\npromoted_by: mara\npromoted_by_source: explicit")
+    assert not any("promoted_by_source" in f.message for f in lint_text(explicit))
+
+
 def test_unknown_type_is_error():
     findings = lint_text(GOOD.replace("type: fence", "type: wart"))
     assert any(f.level == "error" and "type" in f.message for f in findings)

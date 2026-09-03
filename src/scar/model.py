@@ -44,6 +44,11 @@ class Scar:
     # the reviewer used to be appended there with no marker, so position is
     # not a role.
     promoted_by: str = ""
+    # #295: whether promoted_by was typed via --reviewer or read from git
+    # config user.name. None means the scar predates this field (or has no
+    # promoted_by at all), never defaulted, the same missing-key-is-not-a-
+    # value contract as review_after_firings.
+    promoted_by_source: str | None = None
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
     symbol_anchors: list[str] = field(default_factory=list)
@@ -73,6 +78,8 @@ class Scar:
             lines.append("authors: [" + ", ".join(_quote(a) for a in self.authors) + "]")
         if self.promoted_by:
             lines.append(f"promoted_by: {self.promoted_by}")
+            if self.promoted_by_source:
+                lines.append(f"promoted_by_source: {self.promoted_by_source}")
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f"  - pattern: {_quote(p)}" for p in self.pattern_anchors]
@@ -203,6 +210,7 @@ def parse_scar_text(text: str) -> Scar:
         created=_field(front, "created"),
         authors=authors,
         promoted_by=_field(front, "promoted_by"),
+        promoted_by_source=_field(front, "promoted_by_source") or None,
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())

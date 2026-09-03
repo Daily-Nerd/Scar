@@ -763,8 +763,12 @@ def _cmd_promote(args) -> int:
     if not reviewer:
         reviewer = _git(store.root, "config", "user.name").stdout.strip()
         from_git = bool(reviewer)
+    # #295: the same distinction from_git already carries, in the vocabulary
+    # promoted_by_source is written with.
+    reviewer_source = "git-config" if from_git else ("explicit" if reviewer else None)
     try:
-        new_path = store.promote(matches[0], reviewer=reviewer)
+        new_path = store.promote(matches[0], reviewer=reviewer,
+                                  reviewer_source=reviewer_source)
     except ValueError as exc:
         print(str(exc))
         return 1

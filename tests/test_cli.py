@@ -248,6 +248,48 @@ def test_promote_without_reviewer_or_git_identity_keeps_authors(
     assert 'authors: ["claude-code"]' in text
 
 
+def test_promote_explicit_reviewer_records_promoted_by_source_explicit(repo, capsys):
+    """#295: --reviewer means a human typed the name, recorded as 'explicit'."""
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x", "--reviewer", "kibukx"]) == 0
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "promoted_by_source: explicit" in text
+
+
+def test_promote_git_config_fallback_records_promoted_by_source_git_config(repo, capsys):
+    """#295: the git-config fallback is a computed identity, not a typed
+    vouch, recorded as 'git-config' so lint can flag it."""
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x"]) == 0
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "promoted_by_source: git-config" in text
+
+
+def test_promote_reports_reviewer_from_git_alongside_source(repo, capsys, monkeypatch):
+    """#295: adding promoted_by_source must not drop the existing
+    reviewer_from_git signal the CLI already computes and hands to render."""
+    from scar import cli as cli_module
+
+    captured = {}
+    real_render = cli_module.output.render
+
+    def spy_render(**kwargs):
+        captured.update(kwargs)
+        return real_render(**kwargs)
+
+    monkeypatch.setattr(cli_module.output, "render", spy_render)
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    assert main(["promote", "tried-x"]) == 0
+    assert captured["data"]["reviewer_from_git"] is True
+
+
 def test_check_lists_scars_for_path(repo, capsys):
     init_scars(repo)
     (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
