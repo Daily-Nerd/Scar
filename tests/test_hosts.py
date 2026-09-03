@@ -144,18 +144,30 @@ def _host(name, present=True, wirable=True, channel="none"):
     return hosts.Host(name, present, "sig" if present else "", wirable, channel)
 
 
-def test_all_flag_installs_every_unserved_wirable_host():
+def test_all_flag_installs_every_unserved_and_refreshes_settings_hosts():
+    # Re-running install is the documented post-upgrade step: a host already
+    # served by `settings` is still a candidate, only `plugin` excludes one.
     found = [_host("claude"), _host("codex"), _host("windsurf", channel="settings"),
              _host("cursor", wirable=False)]
     d = hosts.decide(found, interactive=False, all_flag=True, ask=lambda q: False, command="hook")
-    assert d.install == ["claude", "codex"]
+    assert d.install == ["claude", "codex", "windsurf"]
 
 
 def test_no_tty_single_candidate_installs_and_says_why():
     found = [_host("claude"), _host("codex", present=False)]
     d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
     assert d.install == ["claude"]
-    assert any("only" in ln and "claude" in ln for ln in d.lines)
+    assert any("only unserved host" in ln and "claude" in ln for ln in d.lines)
+
+
+def test_no_tty_single_settings_served_candidate_refreshes():
+    # A host already wired by `settings` is not "unserved" any more, so the
+    # explanatory line must say refreshing, not installing.
+    found = [_host("claude", channel="settings"), _host("codex", present=False)]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.install == ["claude"]
+    assert any("refreshing" in ln and "claude" in ln for ln in d.lines)
+    assert not any("installing" in ln for ln in d.lines)
 
 
 def test_no_tty_several_candidates_installs_nothing_and_prints_commands():
@@ -180,10 +192,20 @@ def test_tty_asks_once_per_candidate_default_no():
     def ask(q):
         asked.append(q)
         return "codex" in q
+    # windsurf is settings-served, still a candidate, so it is asked too.
     found = [_host("claude"), _host("codex"), _host("windsurf", channel="settings")]
     d = hosts.decide(found, interactive=True, all_flag=False, ask=ask, command="hook")
-    assert len(asked) == 2
+    assert len(asked) == 3
     assert d.install == ["codex"]
+
+
+def test_tty_asks_refresh_question_for_settings_served_candidate():
+    asked = []
+    found = [_host("claude", channel="settings")]
+    d = hosts.decide(found, interactive=True, all_flag=False,
+                      ask=lambda q: asked.append(q) or True, command="hook")
+    assert asked == ["claude is already wired, refresh?"]
+    assert d.install == ["claude"]
 
 
 def test_ask_yes_no_defaults_to_no(monkeypatch):

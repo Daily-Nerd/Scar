@@ -224,16 +224,16 @@ def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch
     # Reinstall must rmtree the existing dir before copy: a stale file left from
     # a prior install must NOT survive a second install. Guards against a refactor
     # to copytree(dirs_exist_ok=True), which would leave orphaned files behind.
-    # --runtime claude named explicitly: since #303 a bare `skill install`
-    # detects hosts and, once claude is already served, decides there is
-    # nothing to install.
+    # Bare `skill install` twice, no --runtime: re-running install is the
+    # documented post-upgrade step, so a host already served by `settings`
+    # (claude, after the first install) stays a candidate and is refreshed.
     monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
     monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
-    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    assert main(["skill", "install"]) == 0
     dest = tmp_path / ".claude" / "skills" / "scar-authoring"
     stale = dest / "STALE-LEFTOVER.txt"
     stale.write_text("orphan from a previous layout", encoding="utf-8")
-    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    assert main(["skill", "install"]) == 0
     assert not stale.exists()
     assert (dest / "SKILL.md").exists()
 

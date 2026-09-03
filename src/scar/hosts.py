@@ -144,23 +144,39 @@ def ask_yes_no(question: str) -> bool:
 
 def decide(found: list[Host], *, interactive: bool, all_flag: bool,
            ask: Callable[[str], bool], command: str) -> Decision:
-    candidates = [h.name for h in found if h.present and h.wirable and h.channel == "none"]
-    served = [h for h in found if h.present and h.wirable and h.channel != "none"]
-    lines = [f"{h.name}: already served by {h.channel}, not asked" for h in served]
+    # Re-running install is the documented post-upgrade step: the installed
+    # skill is a static copy and hooks re-bind the scar binary path, so a
+    # host already served by `settings` must stay reachable through the
+    # no-flag path. Only `plugin` takes a host out of the running: the
+    # plugin channel is a different distribution entirely, not something
+    # `scar hook`/`scar skill` writes over.
+    candidates = [h for h in found if h.present and h.wirable and h.channel != "plugin"]
+    plugin_served = [h for h in found if h.present and h.wirable and h.channel == "plugin"]
+    lines = [f"{h.name}: already served by plugin, not asked" for h in plugin_served]
     if not candidates:
         lines.append("nothing to install: every detected host is already served or not wirable")
         return Decision([], lines)
+    names = [h.name for h in candidates]
     if all_flag:
-        return Decision(candidates, lines)
+        return Decision(names, lines)
     if interactive:
-        chosen = [n for n in candidates if ask(f"wire {n}?")]
+        chosen = []
+        for h in candidates:
+            question = (f"{h.name} is already wired, refresh?" if h.channel == "settings"
+                       else f"wire {h.name}?")
+            if ask(question):
+                chosen.append(h.name)
         return Decision(chosen, lines)
     if len(candidates) == 1:
         only = candidates[0]
-        lines.append(f"{only}: only unserved host detected, installing without asking "
-                     f"(no terminal to ask on)")
-        return Decision([only], lines)
+        if only.channel == "settings":
+            lines.append(f"{only.name}: only host detected, refreshing without asking "
+                         f"(no terminal to ask on)")
+        else:
+            lines.append(f"{only.name}: only unserved host detected, installing without asking "
+                         f"(no terminal to ask on)")
+        return Decision([only.name], lines)
     lines.append("several hosts detected and no terminal to ask on; nothing written. Run one of:")
-    lines.extend(f"  scar {command} install --runtime {n}" for n in candidates)
+    lines.extend(f"  scar {command} install --runtime {n}" for n in names)
     lines.append(f"  scar {command} install --all")
     return Decision([], lines)
