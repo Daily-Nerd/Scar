@@ -154,7 +154,7 @@ def decide(found: list[Host], *, interactive: bool, all_flag: bool,
     plugin_served = [h for h in found if h.present and h.wirable and h.channel == "plugin"]
     lines = [f"{h.name}: already served by plugin, not asked" for h in plugin_served]
     if not candidates:
-        lines.append("nothing to install: every detected host is already served or not wirable")
+        lines.append("nothing to install: every detected host is served by the plugin or not wirable")
         return Decision([], lines)
     names = [h.name for h in candidates]
     if all_flag:

@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
+from typing import Callable
 
 from rich_argparse import RichHelpFormatter
 
@@ -2696,6 +2697,50 @@ def _run_hook_installers(names: list[str], repo: Path, dry: bool) -> int:
     return rc
 
 
+def _force_needs_runtime(args) -> int | None:
+    """--force is not a target, so --all/--runtime exclusivity is argparse's
+    job, but --force without --runtime fails here, and by returning: every
+    command in this CLI returns exit codes and never raises to the shell.
+    Shared verbatim by `hook` and `skill` (#303)."""
+    if getattr(args, "force", False) and not args.runtime:
+        print("--force needs --runtime: it overrides the plugin check for one "
+              "named runtime, and detection never needs overriding.")
+        return 2
+    return None
+
+
+def _lifecycle_no_runtime(kind: str, args,
+                          install_many: Callable[[list[str], Path, bool], int],
+                          status_fn: Callable[[], int]) -> int:
+    """No --runtime on install/status: look at the machine first, print what
+    is there, then either decide-and-install or fall through to the existing
+    per-runtime status. Plain print, not Rich, because the non-tty branch of
+    a read command must stay unwrapped (scar 0008). `kind` doubles as the
+    `hosts.decide` command name, matching the subcommand it is called under
+    (`hook`/`skill`)."""
+    from . import hosts
+    found, repo = _detect(kind)
+    print(hosts.render_table(found))
+    if args.kind == "install":
+        decision = hosts.decide(found, interactive=hosts.is_interactive(),
+                                all_flag=getattr(args, "all", False),
+                                ask=hosts.ask_yes_no, command=kind)
+        for line in decision.lines:
+            print(line)
+        return install_many(decision.install, repo, args.dry_run)
+    print()
+    return status_fn()
+
+
+def _plugin_refusal(subject: str, target: str) -> None:
+    """The one-line refusal printed when `--runtime claude install` would
+    write over a channel the scar plugin already serves. `subject` reads
+    into "claude: {subject} provided by the scar plugin...", so it carries
+    its own verb agreement ("hooks are", "the scar-authoring skill is")."""
+    print(f"claude: {subject} provided by the scar plugin (scar@scar); "
+          f"nothing written. Pass --force to install into {target} as well.")
+
+
 def _cmd_hook_lifecycle(args) -> int:
     from . import hosts
     from .installer import (
@@ -2714,35 +2759,16 @@ def _cmd_hook_lifecycle(args) -> int:
         uninstall,
     )
     dry = args.dry_run
-    # --all sits in the target group, so argparse already rejects it next to
-    # --runtime or --git. --force is not a target, so it is checked here, and
-    # checked by returning: commands never raise to the shell.
-    if getattr(args, "force", False) and not args.runtime:
-        print("--force needs --runtime: it overrides the plugin check for one "
-              "named runtime, and detection never needs overriding.")
-        return 2
+    if (rc := _force_needs_runtime(args)) is not None:
+        return rc
     if getattr(args, "git", False):
         repo = Path.cwd()
         return {"install": lambda: git_hook_install(repo, dry=dry),
                 "uninstall": lambda: git_hook_uninstall(repo, dry=dry),
                 "status": lambda: git_hook_status(repo)}[args.kind]()
     runtime = args.runtime
-    # No --runtime: look at the machine first. Plain print, not Rich, because
-    # the non-tty branch of a read command must stay unwrapped (scar 0008).
-    if runtime is None and args.kind == "install":
-        found, repo = _detect("hook")
-        print(hosts.render_table(found))
-        decision = hosts.decide(found, interactive=hosts.is_interactive(),
-                                all_flag=getattr(args, "all", False),
-                                ask=hosts.ask_yes_no, command="hook")
-        for line in decision.lines:
-            print(line)
-        return _run_hook_installers(decision.install, repo, dry)
-    if runtime is None and args.kind == "status":
-        found, _ = _detect("hook")
-        print(hosts.render_table(found))
-        print()
-        return status()
+    if runtime is None and args.kind in ("install", "status"):
+        return _lifecycle_no_runtime("hook", args, _run_hook_installers, status)
     # uninstall with no --runtime keeps targeting Claude: removal is out of
     # the detection spec's scope, and widening it silently would rip hooks
     # out of hosts the user never named.
@@ -2750,9 +2776,7 @@ def _cmd_hook_lifecycle(args) -> int:
     if (runtime == "claude" and args.kind == "install"
             and not getattr(args, "force", False)
             and hosts.claude_plugin_enabled(CLAUDE_DIR)):
-        print("claude: hooks are provided by the scar plugin (scar@scar); "
-              "nothing written. Pass --force to install into "
-              "~/.claude/settings.json as well.")
+        _plugin_refusal("hooks are", "~/.claude/settings.json")
         return 0
     if runtime == "codex":
         return {"install": lambda: codex_install(dry=dry),
@@ -2772,39 +2796,21 @@ def _cmd_skill_lifecycle(args) -> int:
     from . import hosts
     from .installer import CLAUDE_DIR, skill_install, skill_status, skill_uninstall
     dry = args.dry_run
-    # --all sits in the target group, so argparse already rejects it next to
-    # --runtime. --force is not a target, so it is checked here, and checked
-    # by returning: commands never raise to the shell.
-    if getattr(args, "force", False) and not args.runtime:
-        print("--force needs --runtime: it overrides the plugin check for one "
-              "named runtime, and detection never needs overriding.")
-        return 2
+    if (rc := _force_needs_runtime(args)) is not None:
+        return rc
     runtime = args.runtime
-    # No --runtime: look at the machine first. Plain print, not Rich, because
-    # the non-tty branch of a read command must stay unwrapped (scar 0008).
-    if runtime is None and args.kind == "install":
-        found, _ = _detect("skill")
-        print(hosts.render_table(found))
-        decision = hosts.decide(found, interactive=hosts.is_interactive(),
-                                all_flag=getattr(args, "all", False),
-                                ask=hosts.ask_yes_no, command="skill")
-        for line in decision.lines:
-            print(line)
-        return skill_install(dry=dry) if "claude" in decision.install else 0
-    if runtime is None and args.kind == "status":
-        found, _ = _detect("skill")
-        print(hosts.render_table(found))
-        print()
-        return skill_status()
+    if runtime is None and args.kind in ("install", "status"):
+        def install_many(names: list[str], repo: Path, dry: bool) -> int:
+            del repo  # skill has exactly one wirable host: claude
+            return skill_install(dry=dry) if "claude" in names else 0
+        return _lifecycle_no_runtime("skill", args, install_many, skill_status)
     # uninstall with no --runtime keeps targeting Claude, the only wirable
     # host today: same rule as `hook`.
     runtime = runtime or "claude"
     if (runtime == "claude" and args.kind == "install"
             and not getattr(args, "force", False)
             and hosts.claude_plugin_enabled(CLAUDE_DIR)):
-        print("claude: the scar-authoring skill is provided by the scar plugin "
-              "(scar@scar); nothing written. Pass --force to install into "
-              "~/.claude/skills as well.")
+        _plugin_refusal("the scar-authoring skill is", "~/.claude/skills")
         return 0
     return {"install": lambda: skill_install(dry=dry),
             "uninstall": lambda: skill_uninstall(dry=dry),

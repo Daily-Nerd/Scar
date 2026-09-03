@@ -152,9 +152,11 @@ def test_install_preserves_foreign_hooks_on_a_shared_event(isolated_settings):
     assert "/usr/local/bin/other-tool guard" in _commands(isolated_settings, "PreToolUse")
 
 
-def test_status_distinguishes_kinds_sharing_one_event(isolated_settings, capsys):
+def test_status_distinguishes_kinds_sharing_one_event(isolated_settings, no_hosts, capsys):
     # Only `precheck-command` is present. Status must not report `precheck`
     # as installed just because a sibling kind occupies the same event.
+    # `no_hosts` isolates PATH/CODEX_HOME/cwd so the host table `hook status`
+    # now prints first (#303) is deterministic across machines.
     import json
     isolated_settings.parent.mkdir(parents=True, exist_ok=True)
     isolated_settings.write_text(json.dumps({"hooks": {"PreToolUse": [
@@ -191,7 +193,9 @@ def test_cli_hook_dry_run_does_not_create_settings(isolated_settings):
     assert not isolated_settings.exists()
 
 
-def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
+def test_cli_hook_status_reports_each_hook(isolated_settings, no_hosts, capsys):
+    # `no_hosts` isolates PATH/CODEX_HOME/cwd: the host table `hook status`
+    # now prints first (#303) must not vary with the developer's real machine.
     assert main(["hook", "status"]) == 0
     out = capsys.readouterr().out
     assert "precheck" in out
@@ -202,35 +206,51 @@ def test_cli_hook_status_reports_each_hook(isolated_settings, capsys):
     assert out.count("not installed") == 5
 
 
-def test_skill_install_dry_run_reports_target_without_writing(tmp_path, monkeypatch):
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+# `skill_home` isolates PATH, CODEX_HOME, cwd, and hosts.is_interactive the
+# same way `no_hosts` does for `hook`, and pre-creates the claude config dir
+# so claude is present by config dir, not by whatever happens to be on the
+# developer's real PATH. Bare `skill install`/`status` runs detection (#303),
+# so every test that calls them without --runtime needs this isolation to be
+# deterministic across machines.
+@pytest.fixture
+def skill_home(tmp_path, monkeypatch):
+    from scar import hosts
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
+    return claude
+
+
+def test_skill_install_dry_run_reports_target_without_writing(skill_home):
     rc = main(["skill", "install", "--dry-run"])
     assert rc == 0
-    assert not (tmp_path / ".claude" / "skills" / "scar-authoring").exists()
+    assert not (skill_home / "skills" / "scar-authoring").exists()
 
 
-def test_skill_install_copies_skill_then_uninstall_removes_it(tmp_path, monkeypatch):
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
+def test_skill_install_copies_skill_then_uninstall_removes_it(skill_home):
     assert main(["skill", "install"]) == 0
-    dest = tmp_path / ".claude" / "skills" / "scar-authoring" / "SKILL.md"
+    dest = skill_home / "skills" / "scar-authoring" / "SKILL.md"
     assert dest.exists() and "scar-authoring" in dest.read_text()
     assert main(["skill", "uninstall"]) == 0
     assert not dest.parent.exists()
 
 
-def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch):
+def test_skill_reinstall_over_existing_removes_stale_files(skill_home):
     # Reinstall must rmtree the existing dir before copy: a stale file left from
     # a prior install must NOT survive a second install. Guards against a refactor
     # to copytree(dirs_exist_ok=True), which would leave orphaned files behind.
     # Bare `skill install` twice, no --runtime: re-running install is the
     # documented post-upgrade step, so a host already served by `settings`
     # (claude, after the first install) stays a candidate and is refreshed.
-    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
     assert main(["skill", "install"]) == 0
-    dest = tmp_path / ".claude" / "skills" / "scar-authoring"
+    dest = skill_home / "skills" / "scar-authoring"
     stale = dest / "STALE-LEFTOVER.txt"
     stale.write_text("orphan from a previous layout", encoding="utf-8")
     assert main(["skill", "install"]) == 0
@@ -712,10 +732,7 @@ def test_cascade_hooks_present_is_repo_scoped(cascade_repo):
     assert installer.cascade_hooks_present(cascade_repo) is True
 
 
-def test_skill_present_follows_skill_dir(tmp_path, monkeypatch):
-    claude = tmp_path / ".claude"
-    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
-    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+def test_skill_present_follows_skill_dir(skill_home):
     assert installer.skill_present() is False
     assert main(["skill", "install"]) == 0
     assert installer.skill_present() is True
@@ -811,24 +828,6 @@ def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
     assert main(["hook", "install", "--all"]) == 0
     assert installer.claude_hooks_present()
     assert installer.cascade_hooks_present(no_hosts)
-
-
-# --- detection-driven `scar skill` (#303, Task 5) ---------------------------
-
-@pytest.fixture
-def skill_home(tmp_path, monkeypatch):
-    from scar import hosts
-    claude = tmp_path / ".claude"
-    claude.mkdir()
-    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
-    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
-    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
-    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
-    (tmp_path / "nobin").mkdir()
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
-    return claude
 
 
 def test_skill_install_no_flag_single_host_installs(skill_home):
