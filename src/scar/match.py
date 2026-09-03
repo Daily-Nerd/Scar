@@ -436,6 +436,31 @@ def armed_scar_ids(store: ScarStore, rel_path: str) -> list[int]:
             if s.id is not None]
 
 
+def armed_scar_ids_for_targets(
+        store: ScarStore,
+        targets: list[tuple[Path | str, str]]) -> dict[str, list[int]]:
+    """`armed_scar_ids` across path/content pairs with one store walk, keyed by
+    the same rel path `find_violations_for_targets` puts on a Violation (#293).
+
+    A host that edits several files per tool call owes a verdict per PATH, not
+    per call: one merged answer would attribute one file's arming to all of
+    them. Paths with nothing armed are still present, holding an empty list,
+    so a caller can tell "walked and found none" from "never looked".
+    """
+    firing = store.firing()
+    out: dict[str, list[int]] = {}
+    for target, _new_content in targets:
+        path = Path(target)
+        path = path if path.is_absolute() else store.root / path
+        try:
+            rel = str(path.resolve().relative_to(store.root))
+        except ValueError:
+            continue
+        out[rel] = [s.id for s, _ in _armed_candidates(firing, store.root, rel)
+                    if s.id is not None]
+    return out
+
+
 def find_violations(store: ScarStore, rel_path: str, new_content: str) -> list[Violation]:
     """Firing scars whose `violation` regex matches new_content on an
     already-anchored path — post-edit tripwire, not injection."""

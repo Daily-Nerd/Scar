@@ -272,6 +272,12 @@ The posttool hook records a verdict on a **clean** edit as well as a violating
 one, whenever a violation was possible on that path. That is what makes silence
 meaningful: absence of a verdict is `verdicts_unresolved`, never a pass.
 
+Every runtime does this: Claude Code, Codex and Windsurf alike. A host that
+recorded only violations would report its own healthy install as a dead hook,
+because its precheck rows raise an expectation nothing there ever resolves. A
+host that edits several files in one tool call owes one verdict row per path,
+not per call.
+
 Both flags are one-directional, exactly like the rest of this section. They can
 show an instrument is broken. Neither certifies one healthy: observing a verdict
 withdraws the alarm and claims nothing further.

@@ -41,8 +41,8 @@ from .hooks import (
     _read_payload,
     _state_dir,
 )
-from .match import (MatchCensus, find_violations, has_content_signal,
-                    rank_and_census_for_edit)
+from .match import (MatchCensus, armed_scar_ids, find_violations,
+                    has_content_signal, rank_and_census_for_edit)
 from .render import compact_block, rule_line
 from .store import ScarStore
 
@@ -228,13 +228,20 @@ def post_write_code(payload: dict) -> int:
         rel_path = str(Path(target).resolve().relative_to(store.root))
     except ValueError:
         return 0
+    armed = armed_scar_ids(store, rel_path)
     violations = find_violations(store, rel_path, _extract_edit_content(tool_info))
-    if not violations:
+    # Nothing here was capable of producing a violation, so no verdict is owed
+    # and the log must not grow on every unrelated edit in the repo.
+    if not armed and not violations:
         return 0
     for v in violations:
         print(f"scar VIOLATION [#{v.scar.id}] {v.scar.title} — {v.path} now "
               f"matches this scar's violation pattern; `scar why {v.path}`")
-    _log_violation_firing(store, target, violations, runtime=RUNTIME)
+    # Logged on the CLEAN path too (#293, the #277 mechanism reaching this
+    # runtime). Silence from this hook must be distinguishable from a clean
+    # verdict, and it only can be if a clean run leaves a row behind.
+    _log_violation_firing(store, target, violations, runtime=RUNTIME,
+                          armed_ids=armed)
     return 0
 
 
