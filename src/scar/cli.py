@@ -2667,7 +2667,7 @@ def _cmd_cascade_hook(args) -> int:
     return cascade_hook()
 
 
-def _detect(kind: str, args):
+def _detect(kind: str):
     """Which hosts exist here, and which channel already serves each one.
     Pure read: hosts.py never writes and never prompts (#303)."""
     from . import hosts, installer
@@ -2730,7 +2730,7 @@ def _cmd_hook_lifecycle(args) -> int:
     # No --runtime: look at the machine first. Plain print, not Rich, because
     # the non-tty branch of a read command must stay unwrapped (scar 0008).
     if runtime is None and args.kind == "install":
-        found, repo = _detect("hook", args)
+        found, repo = _detect("hook")
         print(hosts.render_table(found))
         decision = hosts.decide(found, interactive=hosts.is_interactive(),
                                 all_flag=getattr(args, "all", False),
@@ -2739,7 +2739,7 @@ def _cmd_hook_lifecycle(args) -> int:
             print(line)
         return _run_hook_installers(decision.install, repo, dry)
     if runtime is None and args.kind == "status":
-        found, _ = _detect("hook", args)
+        found, _ = _detect("hook")
         print(hosts.render_table(found))
         print()
         return status()
@@ -2769,12 +2769,46 @@ def _cmd_hook_lifecycle(args) -> int:
 
 
 def _cmd_skill_lifecycle(args) -> int:
-    from .installer import skill_install, skill_status, skill_uninstall
-    if args.kind == "install":
-        return skill_install(dry=args.dry_run)
-    if args.kind == "uninstall":
-        return skill_uninstall(dry=args.dry_run)
-    return skill_status()
+    from . import hosts
+    from .installer import CLAUDE_DIR, skill_install, skill_status, skill_uninstall
+    dry = args.dry_run
+    # --all sits in the target group, so argparse already rejects it next to
+    # --runtime. --force is not a target, so it is checked here, and checked
+    # by returning: commands never raise to the shell.
+    if getattr(args, "force", False) and not args.runtime:
+        print("--force needs --runtime: it overrides the plugin check for one "
+              "named runtime, and detection never needs overriding.")
+        return 2
+    runtime = args.runtime
+    # No --runtime: look at the machine first. Plain print, not Rich, because
+    # the non-tty branch of a read command must stay unwrapped (scar 0008).
+    if runtime is None and args.kind == "install":
+        found, _ = _detect("skill")
+        print(hosts.render_table(found))
+        decision = hosts.decide(found, interactive=hosts.is_interactive(),
+                                all_flag=getattr(args, "all", False),
+                                ask=hosts.ask_yes_no, command="skill")
+        for line in decision.lines:
+            print(line)
+        return skill_install(dry=dry) if "claude" in decision.install else 0
+    if runtime is None and args.kind == "status":
+        found, _ = _detect("skill")
+        print(hosts.render_table(found))
+        print()
+        return skill_status()
+    # uninstall with no --runtime keeps targeting Claude, the only wirable
+    # host today: same rule as `hook`.
+    runtime = runtime or "claude"
+    if (runtime == "claude" and args.kind == "install"
+            and not getattr(args, "force", False)
+            and hosts.claude_plugin_enabled(CLAUDE_DIR)):
+        print("claude: the scar-authoring skill is provided by the scar plugin "
+              "(scar@scar); nothing written. Pass --force to install into "
+              "~/.claude/skills as well.")
+        return 0
+    return {"install": lambda: skill_install(dry=dry),
+            "uninstall": lambda: skill_uninstall(dry=dry),
+            "status": skill_status}[args.kind]()
 
 
 def _scar_version() -> str:
@@ -2972,6 +3006,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("kind", choices=["install", "uninstall", "status"])
     p.add_argument("--dry-run", action="store_true",
                    help="show changes without writing to ~/.claude/skills")
+    # One invocation, one target: --runtime claude writes ~/.claude/skills,
+    # --all writes to every unserved host detection finds (only claude is
+    # wirable today), and no flag at all means detect and ask.
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--runtime", choices=["claude"], default=None,
+                        help="with install/uninstall/status: which host to wire. "
+                             "Omitted: detect installed hosts and ask (install), "
+                             "or show every host's channel (status); uninstall "
+                             "still targets claude")
+    target.add_argument("--all", action="store_true",
+                        help="with install: wire every detected, unserved host "
+                             "without asking. A target like --runtime, so "
+                             "argparse rejects it next to --runtime rather than "
+                             "letting one be silently ignored")
+    p.add_argument("--force", action="store_true",
+                   help="with --runtime: install even though the scar plugin "
+                        "already ships the skill")
 
     _add(sub, "mcp", _cmd_mcp, help="run the SCAR MCP stdio server")
 

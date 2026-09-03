@@ -224,13 +224,16 @@ def test_skill_reinstall_over_existing_removes_stale_files(tmp_path, monkeypatch
     # Reinstall must rmtree the existing dir before copy: a stale file left from
     # a prior install must NOT survive a second install. Guards against a refactor
     # to copytree(dirs_exist_ok=True), which would leave orphaned files behind.
+    # --runtime claude named explicitly: since #303 a bare `skill install`
+    # detects hosts and, once claude is already served, decides there is
+    # nothing to install.
     monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
     monkeypatch.setattr(installer, "SKILLS_DIR", tmp_path / ".claude" / "skills")
-    assert main(["skill", "install"]) == 0
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
     dest = tmp_path / ".claude" / "skills" / "scar-authoring"
     stale = dest / "STALE-LEFTOVER.txt"
     stale.write_text("orphan from a previous layout", encoding="utf-8")
-    assert main(["skill", "install"]) == 0
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
     assert not stale.exists()
     assert (dest / "SKILL.md").exists()
 
@@ -808,3 +811,58 @@ def test_hook_install_all_reaches_the_windsurf_writer(no_hosts):
     assert main(["hook", "install", "--all"]) == 0
     assert installer.claude_hooks_present()
     assert installer.cascade_hooks_present(no_hosts)
+
+
+# --- detection-driven `scar skill` (#303, Task 5) ---------------------------
+
+@pytest.fixture
+def skill_home(tmp_path, monkeypatch):
+    from scar import hosts
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
+    monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
+    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hosts, "is_interactive", lambda: False)
+    return claude
+
+
+def test_skill_install_no_flag_single_host_installs(skill_home):
+    assert main(["skill", "install"]) == 0
+    assert installer.skill_present()
+
+
+def test_skill_install_skipped_when_plugin_serves(skill_home, capsys):
+    plugins = skill_home / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"scar@scar": [{"scope": "user"}]}}), encoding="utf-8")
+    assert main(["skill", "install"]) == 0
+    assert "already served by plugin" in capsys.readouterr().out
+    assert not installer.skill_present()
+    assert main(["skill", "install", "--runtime", "claude", "--force"]) == 0
+    assert installer.skill_present()
+
+
+def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
+    assert main(["skill", "status"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("claude")
+    assert "not supported yet" in out
+    assert "skill scar-authoring: not installed" in out
+
+
+def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
+    """Same contract as hook: --all/--runtime is argparse's job (exit 2, usage
+    line), --force without --runtime fails in the handler, no raise to the
+    shell."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["skill", "install", "--all", "--runtime", "claude"])
+    capsys.readouterr()
+    assert main(["skill", "install", "--force"]) == 2
+    assert "--force needs --runtime" in capsys.readouterr().out
