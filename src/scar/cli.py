@@ -38,6 +38,7 @@ from .orphan import (
 )
 from .reanchor import (
     dead_symbol_anchors,
+    format_reanchor_note,
     propose_path_reanchors,
     propose_symbol_reanchors_for_scar,
 )
@@ -1167,6 +1168,10 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
     fixed: list[tuple[str, str, str]] = []
     skipped: list[tuple[str, str, str]] = []
     renamed_by_kind: dict[str, dict[str, str]] = {"path": {}, "symbol": {}}
+    # One note per applied rewrite, formatted before the file is touched so
+    # the confidence tier is read off the proposal, not re-derived later.
+    notes: list[str] = []
+    apply_date = time.strftime("%Y-%m-%d")
     for kind, dead in dead_anchors:
         plist = groups.get((kind, dead), [])
         if not plist:
@@ -1181,10 +1186,18 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
             continue
         renamed_by_kind[kind][dead] = only.proposed_anchor
         fixed.append((kind, dead, only.proposed_anchor))
+        notes.append(format_reanchor_note(
+            apply_date, kind, dead, only.proposed_anchor, only.confidence))
 
     for kind, renamed in renamed_by_kind.items():
         if renamed:
             apply_anchor_rewrite(scar_file, kind, renamed)
+
+    # Evidence notes (#296): recorded AFTER the anchor rewrite lands, via a
+    # fresh parse of the (already-rewritten) file, so this never races the
+    # surgical rewrite above with a stale in-memory anchor value.
+    for note in notes:
+        store.append_evidence_note(args.id, note)
 
     data = {
         "fixed": [{"anchor_kind": k, "dead_anchor": d, "proposed_anchor": n} for k, d, n in fixed],

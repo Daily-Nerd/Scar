@@ -2263,6 +2263,8 @@ def test_reanchor_ambiguous_reports_both_and_apply_refuses(tmp_path, monkeypatch
 
 
 def test_reanchor_apply_rewrites_exactly_one_line(tmp_path, monkeypatch, capsys):
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2287,13 +2289,20 @@ def test_reanchor_apply_rewrites_exactly_one_line(tmp_path, monkeypatch, capsys)
     after = f.read_text()
     before_lines = before.split("\n")
     after_lines = after.split("\n")
-    assert len(before_lines) == len(after_lines)
+    # One line changed (the anchor), one line added (the evidence note, #296).
+    assert len(after_lines) == len(before_lines) + 1
     diffs = [(b, a) for b, a in zip(before_lines, after_lines) if b != a]
-    assert diffs == [("  - path: src/old_module.py", "  - path: src/new_module.py")]
+    assert diffs[0] == ("  - path: src/old_module.py", "  - path: src/new_module.py")
     assert "status: active" in after  # no status flip
+    note = ('  - note: "reanchored 2026-09-02: path src/old_module.py -> '
+            'src/new_module.py (tier: high)"')
+    assert note in after
+    assert "  - commit: abc1234" in after  # existing evidence entry kept
 
 
 def test_reanchor_apply_multi_anchor_partial(tmp_path, monkeypatch, capsys):
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2322,10 +2331,180 @@ def test_reanchor_apply_multi_anchor_partial(tmp_path, monkeypatch, capsys):
     after = f.read_text()
     before_lines = before.split("\n")
     after_lines = after.split("\n")
-    assert len(before_lines) == len(after_lines)
+    assert len(after_lines) == len(before_lines) + 1
     diffs = [(b, a) for b, a in zip(before_lines, after_lines) if b != a]
-    assert diffs == [("  - path: src/old_module.py", "  - path: src/new_module.py")]
+    assert diffs[0] == ("  - path: src/old_module.py", "  - path: src/new_module.py")
     assert "  - path: src/gone.py" in after_lines  # untouched, no candidate found
+    note = ('  - note: "reanchored 2026-09-02: path src/old_module.py -> '
+            'src/new_module.py (tier: high)"')
+    assert note in after
+
+
+@symbols_extra
+def test_reanchor_apply_note_uses_symbol_anchor_kind_word(tmp_path, monkeypatch, capsys):
+    """The note names the anchor kind that moved ('symbol', not 'path'),
+    so an auditor can tell what kind of guess was recorded (#296).
+
+    Symbol proposals only fire off a REACHABLE evidence commit
+    (propose_symbol_reanchors_for_scar filters _commit_shas by _reachable):
+    a fixture with a made-up SHA like _reanchor_scar's 'abc1234' never
+    proposes anything with the [symbols] extra actually installed, so this
+    test captures the real commit that added old_helper and cites it."""
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    # Same shape as test_reanchor.py's _OLD_BODY/_NEW_NAME_SAME_SHAPE, proven
+    # to fingerprint above the high-confidence threshold on a pure rename.
+    old_body = ("def old_helper(items):\n"
+                "    total = 0\n"
+                "    for item in items:\n"
+                "        if item > 0:\n"
+                "            total += item\n"
+                "    return total\n")
+    new_body = ("def new_helper(items):\n"
+                "    total = 0\n"
+                "    for item in items:\n"
+                "        if item > 0:\n"
+                "            total += item\n"
+                "    return total\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "mod.py").write_text(old_body)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_helper")
+    evidence_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    (tmp_path / "src" / "mod.py").write_text(new_body)
+    f = tmp_path / ".scars" / "0034-symbol.deadend.md"
+    f.write_text(
+        "---\n"
+        "id: 34\n"
+        "type: deadend\n"
+        "title: reanchor test scar 34\n"
+        "severity: medium\n"
+        "confidence: 0.8\n"
+        "created: 2026-06-10\n"
+        'authors: ["claude-code"]\n'
+        "anchors:\n"
+        "  - path: src/mod.py\n"
+        "  - symbol: old_helper\n"
+        "evidence:\n"
+        f"  - commit: {evidence_sha}\n"
+        "status: active\n"
+        "---\n\n"
+        "Body text.\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "rename old_helper to new_helper + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor", "--apply", "--id", "34"]) == 0
+    out = capsys.readouterr().out
+    assert "fixed [#34] symbol old_helper -> src/mod.py::new_helper" in out
+
+    after = f.read_text()
+    assert "  - symbol: src/mod.py::new_helper" in after
+    note = ('  - note: "reanchored 2026-09-02: symbol old_helper -> '
+            'src/mod.py::new_helper (tier: high)"')
+    assert note in after
+
+
+def test_reanchor_apply_note_created_when_scar_has_no_evidence_block(tmp_path, monkeypatch, capsys):
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("e"))
+    f = tmp_path / ".scars" / "0035-moved.deadend.md"
+    f.write_text(
+        "---\n"
+        "id: 35\n"
+        "type: deadend\n"
+        "title: reanchor test scar 35, no evidence\n"
+        "severity: medium\n"
+        "confidence: 0.8\n"
+        "created: 2026-06-10\n"
+        'authors: ["claude-code"]\n'
+        "anchors:\n"
+        "  - path: src/old_module.py\n"
+        "status: active\n"
+        "---\n\n"
+        "Body text.\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module to new_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor", "--apply", "--id", "35"]) == 0
+    after = f.read_text()
+    assert "evidence:" in after
+    note = ('  - note: "reanchored 2026-09-02: path src/old_module.py -> '
+            'src/new_module.py (tier: high)"')
+    assert note in after
+
+
+def test_reanchor_apply_note_survives_parse_round_trip(tmp_path, monkeypatch, capsys):
+    from scar.model import parse_scar_text
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("f"))
+    f = tmp_path / ".scars" / "0036-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=36, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module to new_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor", "--apply", "--id", "36"]) == 0
+    scar = parse_scar_text(f.read_text())
+    # parse_scar_text unquotes evidence values (same as pattern/violation/url):
+    # the wrapper is a serialization detail, the note text is what survives.
+    note = "note: reanchored 2026-09-02: path src/old_module.py -> src/new_module.py (tier: high)"
+    assert note in scar.evidence
+    assert scar.path_anchors == ["src/new_module.py"]
+
+
+def test_reanchor_apply_note_lints_clean_no_unreachable_evidence_complaint(
+        tmp_path, monkeypatch, capsys):
+    """A note: entry needs no reachability check (only commit: does), so it
+    must not trip evidence-unreachable and must not read as missing evidence."""
+    from scar.lint import lint_text
+    import scar.cli as cli
+    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    _init_bare_git(tmp_path)
+    init_scars(tmp_path)
+    content = ("def hello():\n    return 'world from old module'\n\n"
+               "def helper():\n    return 42\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_module.py").write_text(content)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add old_module")
+    (tmp_path / "src" / "old_module.py").unlink()
+    (tmp_path / "src" / "new_module.py").write_text(content + _pad("g"))
+    f = tmp_path / ".scars" / "0037-moved.deadend.md"
+    f.write_text(_reanchor_scar(id=37, path_anchors=["src/old_module.py"]))
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "move old_module to new_module + add scar")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reanchor", "--apply", "--id", "37"]) == 0
+    findings = lint_text(f.read_text())
+    assert not any("no evidence" in fi.message for fi in findings)
+    assert not any("unreachable" in fi.message for fi in findings)
 
 
 def test_reanchor_partial_rot_finding_feeds_reanchor(tmp_path, monkeypatch, capsys):

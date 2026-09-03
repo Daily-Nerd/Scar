@@ -231,6 +231,20 @@ class ScarStore:
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
+    def append_evidence_note(self, scar_id: int, note: str) -> Path:
+        """Append *note* as a new evidence entry on a scar, leaving status
+        and every other field untouched. Same parse -> append -> reserialize
+        mechanism transition() uses for its own note (#296): an existing
+        evidence: list gains an entry and keeps the ones it already had, a
+        scar with no evidence: block gets one, both via Scar.to_text()'s own
+        rendering (nothing here special-cases either shape)."""
+        for f, s in self.parsed():
+            if s.id == scar_id:
+                s.evidence.append(note)
+                f.write_text(s.to_text(), encoding="utf-8")
+                return f
+        raise ValueError(f"no scar with id {scar_id}")
+
     def promote(self, candidate: Path, reviewer: str,
                 reviewer_source: str | None = None) -> Path:
         text = candidate.read_text(encoding="utf-8")
