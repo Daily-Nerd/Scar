@@ -186,6 +186,39 @@ def test_promote_overwrites_a_pre_seeded_promoted_by(repo):
     assert "kibukx" not in text
 
 
+def test_promote_with_explicit_reviewer_source_writes_explicit(repo):
+    """#295: the CLI computes whether the reviewer name was typed or read
+    from git config and hands it to promote as reviewer_source; explicit
+    writes 'explicit'."""
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="mara", reviewer_source="explicit")
+    text = new_path.read_text()
+    assert "promoted_by_source: explicit" in text
+
+
+def test_promote_with_git_config_reviewer_source_writes_git_config(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="mara", reviewer_source="git-config")
+    text = new_path.read_text()
+    assert "promoted_by_source: git-config" in text
+
+
+def test_promote_without_a_reviewer_writes_neither_key(repo):
+    """Old behavior: an unset git identity means nobody vouched, so neither
+    promoted_by nor promoted_by_source belongs on the file."""
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    new_path = store.promote(cand, reviewer="", reviewer_source="git-config")
+    text = new_path.read_text()
+    assert "promoted_by:" not in text
+    assert "promoted_by_source:" not in text
+
+
 def test_template_documents_revives_if():
     """revives_if (#205) must be discoverable where authors actually look —
     the template — or the field ships unused."""

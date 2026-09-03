@@ -43,6 +43,7 @@ is deliberate: consumers in hook hot-paths parse with zero dependencies.
 | `created` | yes | ISO date | |
 | `authors` | yes | inline list | who drafted it: agents as `"claude-code"` etc. The reviewer is no longer appended here |
 | `promoted_by` | active scars | string | the human who promoted it. Written only by `scar promote`, which overwrites anything a candidate carried. Empty on scars promoted before the field existed, and never inferred from `authors` |
+| `promoted_by_source` | optional | `explicit` \| `git-config` | whether `promoted_by` came from `--reviewer` or from `git config user.name`. Written only alongside `promoted_by`, never on its own. Absent on scars promoted before the field existed |
 | `anchors` | yes, ≥1 | list of `- path:`, `- pattern:`, `- symbol:`, and/or `- command:` | §4 |
 | `evidence` | recommended | list of `- commit:`/`- pr:`/`- issue:`/`- incident:`/`- note:`/`- url:` | absent ⇒ challengeable on sight; `issue:`/`url:` are durable forms that survive squash-merge |
 | `expires.condition` | recommended | quoted string | what change obsoletes this scar |
