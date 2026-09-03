@@ -138,3 +138,63 @@ def test_resolve_channels_settings_when_hooks_owned(tmp_path, monkeypatch):
     found = hosts.detect_hosts(tmp_path, None, path_env=str(tmp_path))
     by = {h.name: h for h in hosts.resolve_channels(found, claude_dir=claude, repo=None)}
     assert by["claude"].channel == "settings"
+
+
+def _host(name, present=True, wirable=True, channel="none"):
+    return hosts.Host(name, present, "sig" if present else "", wirable, channel)
+
+
+def test_all_flag_installs_every_unserved_wirable_host():
+    found = [_host("claude"), _host("codex"), _host("windsurf", channel="settings"),
+             _host("cursor", wirable=False)]
+    d = hosts.decide(found, interactive=False, all_flag=True, ask=lambda q: False, command="hook")
+    assert d.install == ["claude", "codex"]
+
+
+def test_no_tty_single_candidate_installs_and_says_why():
+    found = [_host("claude"), _host("codex", present=False)]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.install == ["claude"]
+    assert any("only" in ln and "claude" in ln for ln in d.lines)
+
+
+def test_no_tty_several_candidates_installs_nothing_and_prints_commands():
+    found = [_host("claude"), _host("codex")]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.install == []
+    joined = "\n".join(d.lines)
+    assert "scar hook install --runtime claude" in joined
+    assert "scar hook install --runtime codex" in joined
+    assert "scar hook install --all" in joined
+
+
+def test_no_tty_zero_candidates_reports_served_hosts():
+    found = [_host("claude", channel="plugin")]
+    d = hosts.decide(found, interactive=False, all_flag=False, ask=lambda q: False, command="hook")
+    assert d.install == []
+    assert any("plugin" in ln for ln in d.lines)
+
+
+def test_tty_asks_once_per_candidate_default_no():
+    asked = []
+    def ask(q):
+        asked.append(q)
+        return "codex" in q
+    found = [_host("claude"), _host("codex"), _host("windsurf", channel="settings")]
+    d = hosts.decide(found, interactive=True, all_flag=False, ask=ask, command="hook")
+    assert len(asked) == 2
+    assert d.install == ["codex"]
+
+
+def test_ask_yes_no_defaults_to_no(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    assert hosts.ask_yes_no("wire claude?") is False
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    assert hosts.ask_yes_no("wire claude?") is True
+
+
+def test_is_interactive_requires_both_streams(monkeypatch):
+    import sys
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    assert hosts.is_interactive() is False

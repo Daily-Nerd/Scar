@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass
@@ -120,3 +122,45 @@ def render_table(found: list[Host]) -> str:
             line += f"  ({h.signal})"
         lines.append(line)
     return "\n".join(lines)
+
+
+@dataclass
+class Decision:
+    install: list[str]
+    lines: list[str]
+
+
+def is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def ask_yes_no(question: str) -> bool:
+    try:
+        answer = input(f"{question} [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def decide(found: list[Host], *, interactive: bool, all_flag: bool,
+           ask: Callable[[str], bool], command: str) -> Decision:
+    candidates = [h.name for h in found if h.present and h.wirable and h.channel == "none"]
+    served = [h for h in found if h.present and h.wirable and h.channel != "none"]
+    lines = [f"{h.name}: already served by {h.channel}, not asked" for h in served]
+    if all_flag:
+        return Decision(candidates, lines)
+    if interactive:
+        chosen = [n for n in candidates if ask(f"wire {n}?")]
+        return Decision(chosen, lines)
+    if len(candidates) == 1:
+        only = candidates[0]
+        lines.append(f"{only}: only unserved host detected, installing without asking "
+                     f"(no terminal to ask on)")
+        return Decision([only], lines)
+    if candidates:
+        lines.append("several hosts detected and no terminal to ask on; nothing written. Run one of:")
+        lines.extend(f"  scar {command} install --runtime {n}" for n in candidates)
+        lines.append(f"  scar {command} install --all")
+    else:
+        lines.append("nothing to install: every detected host is already served or not wirable")
+    return Decision([], lines)
