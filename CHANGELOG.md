@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.22.0](https://github.com/Daily-Nerd/Scar/compare/v0.21.0...v0.22.0) (2026-09-03)
+
+
+### Features
+
+* **lint:** escalate a chronically-firing scar into an explicit review flag ([#276](https://github.com/Daily-Nerd/Scar/issues/276)) ([e26884b](https://github.com/Daily-Nerd/Scar/commit/e26884b0b01938420c137673e1c9e01eb4c6dc63))
+* **promote:** record whether promoted_by was typed or read from git config ([#298](https://github.com/Daily-Nerd/Scar/issues/298)) ([bcdc4d7](https://github.com/Daily-Nerd/Scar/commit/bcdc4d7b6d82c5d1b9b38365648f23ed45050064))
+* **reanchor:** record an applied rewrite as an evidence note on the scar ([#299](https://github.com/Daily-Nerd/Scar/issues/299)) ([2aa1d12](https://github.com/Daily-Nerd/Scar/commit/2aa1d12230e7c8b379dcd967a780e0c2cf4a3b2e))
+* **stats:** record blocking capability on the firing row ([#281](https://github.com/Daily-Nerd/Scar/issues/281)) ([a341b48](https://github.com/Daily-Nerd/Scar/commit/a341b48eb365bd8522175570f72b767af1b50c37))
+* **stats:** record context size on the firing row ([#283](https://github.com/Daily-Nerd/Scar/issues/283)) ([99ba9c3](https://github.com/Daily-Nerd/Scar/commit/99ba9c3e8e63aa64ed2c925cba4b4a59895139e0))
+* **stats:** record the match census before top_k truncates it ([#289](https://github.com/Daily-Nerd/Scar/issues/289)) ([715e42c](https://github.com/Daily-Nerd/Scar/commit/715e42c4f73f512b80854f6d68152c5108256246))
+
+
+### Bug Fixes
+
+* **hooks:** Codex and Windsurf posttool record a clean verdict too ([#297](https://github.com/Daily-Nerd/Scar/issues/297)) ([823af3c](https://github.com/Daily-Nerd/Scar/commit/823af3c8e463d6ee89990de0f0fe8606e5dde86f)), closes [#293](https://github.com/Daily-Nerd/Scar/issues/293)
+* **promote:** record who vouched in its own field, not inside authors ([#290](https://github.com/Daily-Nerd/Scar/issues/290)) ([d1e649a](https://github.com/Daily-Nerd/Scar/commit/d1e649a03ef7a76349da48f7772ee4755c332009)), closes [#287](https://github.com/Daily-Nerd/Scar/issues/287)
+* **stats:** make a dead posttool hook distinguishable from compliance ([#280](https://github.com/Daily-Nerd/Scar/issues/280)) ([13f0b6a](https://github.com/Daily-Nerd/Scar/commit/13f0b6ae255dfb1e89f0f61296f4f25d5890acda))
+* **stats:** record why a scar was demoted, not just that it was ([#288](https://github.com/Daily-Nerd/Scar/issues/288)) ([d6dafba](https://github.com/Daily-Nerd/Scar/commit/d6dafbab8ed389815e28535fdc929cd906f657ef)), closes [#284](https://github.com/Daily-Nerd/Scar/issues/284)
+* **stats:** stop counting a command firing as an observed edit ([#300](https://github.com/Daily-Nerd/Scar/issues/300)) ([7abeeed](https://github.com/Daily-Nerd/Scar/commit/7abeeedba8b43634c6d4ccfafbf7eac7fd173269)), closes [#294](https://github.com/Daily-Nerd/Scar/issues/294)
+
+
+### Documentation
+
+* **format:** update the stale veritrail link to vitni ([#269](https://github.com/Daily-Nerd/Scar/issues/269)) ([a842449](https://github.com/Daily-Nerd/Scar/commit/a842449ca0d2eb2fde9310dcef244c299316a84f)), closes [#268](https://github.com/Daily-Nerd/Scar/issues/268)
+* **stats:** state that the armed-window number needs git archaeology ([#291](https://github.com/Daily-Nerd/Scar/issues/291)) ([4097081](https://github.com/Daily-Nerd/Scar/commit/4097081b40fa56bcb255dbda8bdf03f8ac0ab203)), closes [#285](https://github.com/Daily-Nerd/Scar/issues/285)
+
 ## [0.21.0](https://github.com/Daily-Nerd/Scar/compare/v0.20.0...v0.21.0) (2026-08-29)
 
 
