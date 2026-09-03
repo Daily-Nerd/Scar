@@ -15,10 +15,12 @@ SCAR treats AI agents as first-class users: they trigger scars, they read scars,
 Manual fallback:
 
 ```bash
-scar hook install     # PreToolUse injection + PostToolUse violation tripwire
-scar hook status
-scar skill install    # authoring skill into ~/.claude/skills/
+scar hook install                # detects installed hosts, asks which to wire (--all, --runtime X)
+scar skill install               # same detection for the scar-authoring skill
+scar hook status                 # every host with the channel that serves it (settings, plugin, none)
 ```
+
+With no `--runtime`, install detects the hosts on this machine: on a terminal it asks per host, refreshing one already wired through its settings file and skipping one served by the plugin unless `--force`; without a terminal it installs or refreshes only when exactly one such host is detected, otherwise it prints the host table and the exact commands and writes nothing.
 
 How the hook behaves:
 
@@ -71,9 +73,7 @@ shown as `installed` may still be untrusted — trust state belongs to the host,
 and Scar does not pretend it can infer it. `scar agent doctor` verifies the
 binary path the hooks route through.
 
-The Scar Codex plugin remains available for the authoring skill. Note that a
-plugin's `hooks/hooks.json` is not materialized into every Codex install, so
-`scar hook install --runtime codex` is the supported way to get push delivery.
+The Scar plugin ships the authoring skill only on the Codex side. `scar hook install --runtime codex` is the supported way to get push delivery.
 
 MCP and direct `scar inject` remain useful pull companions and the fallback for
 users who install only `scar-cli`.

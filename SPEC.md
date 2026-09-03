@@ -458,6 +458,10 @@ denominators changed.
 hook recorded **anything**, so command rows and kind-unknown rows answer it
 just as well as edit rows do.
 
+### 9.10 Install detection
+
+`scar hook install` and `scar skill install` without `--runtime` detect hosts (claude, codex, windsurf, cursor, opencode) by config directory or binary on PATH, and resolve for each the channel that already serves it: `settings` (Scar's own entries in the host's hook file), `plugin` (the scar marketplace plugin installed and not disabled), or `none`. On a terminal, one question per present, wirable, unserved host, default no. Without a terminal, exactly one such host is installed; zero or several means the commands are printed and nothing is written. `--all` wires every such host. `--runtime X` on a host served by the plugin refuses unless `--force`. A missing or unreadable plugin registry never counts as `plugin`.
+
 ### 9.4 Enforcement
 
 `tests/test_json_contract.py` asserts every guaranteed key above against live
