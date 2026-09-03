@@ -209,7 +209,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
                 edit_id: str | None = None,
                 block_capable: bool = False,
                 context_bytes: int | None = None,
-                matched: MatchCensus | None = None) -> None:
+                matched: MatchCensus | None = None,
+                anchor_kind: str | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -281,6 +282,19 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         # writer that exists today passes it.
         if matched is not None:
             record["matched"] = matched.to_dict()
+        # #294: which runtime path produced this row, "edit" or "command".
+        # Both go through this writer with the same shape, and before this
+        # field the only difference was free text in `target`, so `scar
+        # stats` counted a command firing as an observed edit. That inflated
+        # the injection_rate denominator in the flattering direction: the
+        # command path returns early on no match, so it can never contribute
+        # a zero-hit row and only ever adds to the numerator.
+        #
+        # OMITTED, never defaulted: a MISSING key means the row predates the
+        # field, which is a different fact from "edit" and must never be read
+        # as one (the #266 convention).
+        if anchor_kind is not None:
+            record["anchor_kind"] = anchor_kind
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -414,7 +428,11 @@ def precheck() -> int:
                         demotion_reasons=_demotion_reasons(demoted),
                         matched=census,
                         edit_id=edit_id if isinstance(edit_id, str) else None,
-                        context_bytes=_context_bytes(payload))
+                        context_bytes=_context_bytes(payload),
+                        # Including the zero-hit row (#217): that row IS the
+                        # retrieval denominator, so it has to carry the kind
+                        # or the denominator lands in kind-unknown with it.
+                        anchor_kind="edit")
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than
@@ -454,7 +472,8 @@ def _precheck_command_payload(payload: dict,
                     demoted_ids=[s.id for s, _ in demoted], runtime=runtime,
                     demotion_reasons=_demotion_reasons(demoted),
                     matched=census,
-                    edit_id=edit_id if isinstance(edit_id, str) else None)
+                    edit_id=edit_id if isinstance(edit_id, str) else None,
+                    anchor_kind="command")
     except Exception:
         # Contract (module docstring): a hook must NEVER fail or delay the
         # user's command. Fail OPEN on any unexpected error.

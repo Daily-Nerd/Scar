@@ -152,8 +152,13 @@ def _fire_key(trajectory: str, scar_id: int | None, target: str) -> str:
 
 
 def _respond(store: ScarStore, trajectory: str, target: str,
-             matches: list, census: MatchCensus | None = None) -> int:
-    """The shared tail of both pre-hooks: decide, render, log, exit."""
+             matches: list, census: MatchCensus | None = None,
+             anchor_kind: str | None = None) -> int:
+    """The shared tail of both pre-hooks: decide, render, log, exit.
+
+    `anchor_kind` is what tells the two pre-hooks apart on disk (#294). They
+    share this tail and therefore share a row shape, so without it a blocked
+    command and a blocked edit are indistinguishable to `scar stats`."""
     if not matches:
         return 0
     fired = _load_fire_state()
@@ -179,7 +184,7 @@ def _respond(store: ScarStore, trajectory: str, target: str,
     # refuse the action. Surface-only matches never reach the log at all
     # (see the comment above), so every windsurf row is block-capable.
     _log_firing(store, target, scars, runtime=RUNTIME, block_capable=True,
-                matched=census)
+                matched=census, anchor_kind=anchor_kind)
     return BLOCK_EXIT
 
 
@@ -195,7 +200,8 @@ def pre_write_code(payload: dict) -> int:
     matches, census = rank_and_census_for_edit(store, Path(target),
                                                _extract_edit_content(tool_info),
                                                firing=firing)
-    return _respond(store, _trajectory(payload), target, matches, census)
+    return _respond(store, _trajectory(payload), target, matches, census,
+                    anchor_kind="edit")
 
 
 def pre_run_command(payload: dict) -> int:
@@ -209,7 +215,8 @@ def pre_run_command(payload: dict) -> int:
     from .match import rank_and_census_for_command
     firing, _broken = store.scan()
     matches, census = rank_and_census_for_command(store, command, firing=firing)
-    return _respond(store, _trajectory(payload), command, matches, census)
+    return _respond(store, _trajectory(payload), command, matches, census,
+                    anchor_kind="command")
 
 
 def post_write_code(payload: dict) -> int:

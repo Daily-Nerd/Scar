@@ -1441,6 +1441,7 @@ STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
                         "census_known", "census_unknown", "cofires_per_edit",
                         "edits_multi_fire", "path_only_ratio",
                         "edits_observed", "injection_rate",
+                        "command_firings", "firings_kind_unknown",
                         "armed_firings", "armed_unknown",
                         "firings_block_capable", "firings_advisory",
                         "firings_block_unknown", "all_firings_advisory",
@@ -1523,6 +1524,19 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
                      f"edit(s) injected a scar; {misses} missed firing(s)")
     else:
         retrieval = f"retrieval: {misses} missed firing(s) — LOWER BOUND"
+    # #294: what the retrieval line LEFT OUT. "of N observed edit(s)" is only
+    # true because command firings and rows that predate `anchor_kind` are
+    # excluded from N, and an exclusion nobody can see reads as an absence.
+    commands = block.get("command_firings") or 0
+    kind_unknown = block.get("firings_kind_unknown") or 0
+    anchors = []
+    if commands:
+        anchors.append(f"{commands} command firing(s), not observed edits")
+    if kind_unknown:
+        anchors.append(f"{kind_unknown} row(s) of unknown anchor kind "
+                       "(logged before it was recorded)")
+    anchor_line = ("anchors: " + "; ".join(anchors)
+                   + ", excluded from the edit denominators") if anchors else None
     # #266: the enforcement denominator that can actually fail. A firing on a
     # scar with no tripwire could never have been recorded as violated, so the
     # armed count is the honest denominator; `armed_unknown` names the rows
@@ -1583,12 +1597,14 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
                         "(a proxy for false-anchor rate, not the rate)")
     if unknown_census:
         cofires += f"; {unknown_census} row(s) without a census (logged before it was recorded)"
-    return [
+    lines = [
         enforcement,
         retrieval,
-        demotions,
-        cofires,
     ]
+    if anchor_line:
+        lines.append(anchor_line)
+    lines += [demotions, cofires]
+    return lines
 
 
 RETRIEVAL_FLOOR_NOTE = (
@@ -1633,6 +1649,13 @@ def _aggregate_firings(records: list[dict]) -> dict:
     edits_multi_fire = 0
     edits_observed = 0      # precheck passes recorded (#217 denominator)
     zero_hit_edits = 0      # ...of which matched nothing
+    # #294: the edit denominators above are EDIT rows only. A command firing
+    # is not an observed edit: the command path returns early on no match, so
+    # it can never contribute a zero-hit row and only ever adds to the
+    # numerator. Rows without `anchor_kind` predate the field and go in
+    # neither side; folding them into edits is the flattering reading.
+    command_firings = 0
+    firings_kind_unknown = 0
     # #266: firings on scars that carried a violation: tripwire, and firings we
     # cannot place because the row predates the field. NEVER inferred from
     # today's .scars/ — a scar armed last week was not armed last month.
@@ -1665,10 +1688,20 @@ def _aggregate_firings(records: list[dict]) -> dict:
         target = rec.get("target")
         ts_rec = rec.get("ts")
         sids = rec.get("scar_ids", [])
+        # #294: read once, used by every edit-scoped counter below. `is_edit`
+        # is a positive test on the recorded value, never `!= "command"`,
+        # which would silently absorb every legacy row into the edit side.
+        kind = rec.get("anchor_kind")
+        is_edit = kind == "edit"
         if isinstance(sids, list) and "scar_ids" in rec:
-            edits_observed += 1
-            if not sids:
-                zero_hit_edits += 1
+            if is_edit:
+                edits_observed += 1
+                if not sids:
+                    zero_hit_edits += 1
+            elif kind == "command":
+                command_firings += 1
+            else:
+                firings_kind_unknown += 1
         if isinstance(sids, list):
             for sid in sids:
                 if isinstance(sid, int):
@@ -1679,17 +1712,24 @@ def _aggregate_firings(records: list[dict]) -> dict:
                         if prev is None or ts_rec < prev:
                             fired_on[key] = ts_rec
         if isinstance(sids, list) and sids:
-            matched = rec.get("matched")
-            total = matched.get("total") if isinstance(matched, dict) else None
-            path_only = matched.get("path_only") if isinstance(matched, dict) else None
-            if isinstance(total, int) and isinstance(path_only, int):
-                census_known += 1
-                census_total_sum += total
-                census_path_only_sum += path_only
-                if total >= 2:
-                    edits_multi_fire += 1
-            else:
-                census_unknown += 1
+            # #294: EDIT rows only. A command match is content-signal by
+            # construction (match.py never matches a command on path), so
+            # every command row pushes path_only_ratio toward 0 and
+            # cofires_per_edit toward 1, both flattering, and neither is a
+            # fact about editing. Kind-unknown rows are excluded too: a
+            # per-edit mean over rows that may not be edits is not a mean.
+            if is_edit:
+                matched = rec.get("matched")
+                total = matched.get("total") if isinstance(matched, dict) else None
+                path_only = matched.get("path_only") if isinstance(matched, dict) else None
+                if isinstance(total, int) and isinstance(path_only, int):
+                    census_known += 1
+                    census_total_sum += total
+                    census_path_only_sum += path_only
+                    if total >= 2:
+                        edits_multi_fire += 1
+                else:
+                    census_unknown += 1
             armed = rec.get("armed_ids")
             eid = rec.get("edit_id")
             if isinstance(armed, list):
@@ -1813,7 +1853,14 @@ def _aggregate_firings(records: list[dict]) -> dict:
     # we see it, the instrument is disconnected (#236 held this state for a
     # month). This reports an OBSERVED impossibility; it is never a clean
     # bill of health, so an empty log is not "disconnected", it is silent.
-    instrument_disconnected = bool(violations) and edits_observed == 0
+    #
+    # The denominator here is EVERY precheck row, not `edits_observed` (#294).
+    # The question is whether the precheck hook recorded anything at all, and
+    # a command row or a row that predates `anchor_kind` answers it just as
+    # well as an edit row does. Narrowing this to edits would raise the alarm
+    # on every log written before the field existed.
+    precheck_rows = edits_observed + command_firings + firings_kind_unknown
+    instrument_disconnected = bool(violations) and precheck_rows == 0
     if instrument_disconnected:
         # Every violation in such a window has no prior firing BY
         # CONSTRUCTION, so the miss count measures the broken install, not
@@ -1839,6 +1886,12 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "path_only_ratio": (census_path_only_sum / census_total_sum
                                 if census_total_sum else None),
             "edits_observed": edits_observed,
+            # #294. `edits_observed`, `zero_hit_edits`, `injection_rate`,
+            # `cofires_per_edit` and `path_only_ratio` are all EDIT-scoped;
+            # these two name what was left out and why, so the excluded rows
+            # are visible rather than merely absent.
+            "command_firings": command_firings,
+            "firings_kind_unknown": firings_kind_unknown,
             "armed_firings": armed_firings,
             "armed_unknown": armed_unknown,
             # #277: the posttool half's own liveness. `posttool_silent` is

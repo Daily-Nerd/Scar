@@ -213,14 +213,16 @@ def pretool() -> int:
                         # #286: THIS file's census, keyed the same way the
                         # rows are, so a row never carries another file's count.
                         matched=census.get(rel_path),
-                        runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx)
+                        runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx,
+                        anchor_kind="edit")
         if not matches and _zero_hit_logging():
             for target, _ in targets:
                 # _targets already resolved every path and dropped anything
                 # outside the store, so this key always exists in the census.
                 _log_firing(store, str(target), [], runtime=RUNTIME,
                             matched=census.get(str(target.relative_to(store.root))),
-                            edit_id=edit_id, context_bytes=ctx)
+                            edit_id=edit_id, context_bytes=ctx,
+                            anchor_kind="edit")
     except Exception:
         return 0
     return 0

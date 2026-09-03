@@ -161,6 +161,10 @@ def test_codex_pretool_injects_once_across_multiple_files(
         # injected list; this is the census. Omitted only by a writer that
         # did not count, which no shipped writer is.
         "matched": {"total": 1, "content": 1, "path_only": 0},
+        # #294: an apply_patch row is an EDIT row. Without the kind on the
+        # row the aggregator cannot tell it from a shell-command firing and
+        # counts both against the observed-edit denominator.
+        "anchor_kind": "edit",
     }]
 
 
