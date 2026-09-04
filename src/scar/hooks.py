@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+from .firing_log import read_firing_log_records
 from .match import (MatchCensus, armed_scar_ids, find_violations, has_content_signal,
                     rank_and_census_for_edit)
 from .render import injection_context
@@ -123,19 +124,16 @@ def _recently_fired(repo: str, target: str) -> set[int]:
     One-liner (demoted) showings don't count — a later content-signal match
     still deserves the full body. Best-effort: any failure returns empty set
     (module contract: never fail or delay the edit)."""
-    try:
-        # 200-line tail cap is LINE-COUNT-based, not time-based: on a busy log
-        # a recent full-body showing can scroll out past 200 lines before the
-        # cooldown window elapses, so the scar re-renders full body early.
-        # Under-collapsing fails safe (over-inform), so this is not fixed.
-        lines = firing_log_path().read_text(encoding="utf-8").splitlines()[-200:]
-    except Exception:
-        return set()
+    # 200-line tail cap is LINE-COUNT-based, not time-based: on a busy log
+    # a recent full-body showing can scroll out past 200 lines before the
+    # cooldown window elapses, so the scar re-renders full body early.
+    # Under-collapsing fails safe (over-inform), so this is not fixed.
+    # Line shape is the shared reader's problem (landmine #12); FIELD shape
+    # is still ours, so the per-record blanket guard below stays.
     cutoff = time.time() - COOLDOWN_SECONDS
     recent: set[int] = set()
-    for line in lines:
+    for rec in read_firing_log_records(firing_log_path(), tail=200):
         try:
-            rec = json.loads(line)
             if rec.get("repo") != repo or rec.get("target") != target:
                 continue
             ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))

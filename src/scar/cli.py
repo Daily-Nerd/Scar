@@ -19,6 +19,7 @@ from typing import Callable
 
 from rich_argparse import RichHelpFormatter
 
+from .firing_log import read_firing_log_records
 from .lint import _is_redos_prone, lint_text
 from .match import (
     find_violations_for_diff,
@@ -1365,35 +1366,24 @@ def _dedup_key(rec: dict) -> tuple | None:
 
 
 def _read_firing_log(log_path: Path) -> list[dict]:
-    """Read the machine-global firing log, keeping only dict records. The log
-    is written best-effort from a fail-open hook, so ANY JSON shape can appear
-    on a line (landmine #12) — `null`, `[]`, numbers all parse fine and then
-    crash at rec.get(); skip everything that isn't a dict.
+    """Read the machine-global firing log, deduplicated for reporting.
+
+    Line-shape defence (landmine #12: blanket per-line guard, keep only dicts,
+    distrust slice math) lives in firing_log.read_firing_log_records, which
+    hooks calls too. Do not re-add a local copy here; two copies drifting is
+    what the landmine records.
 
     Rows describing the same tool call are collapsed (#250) — see _dedup_key.
     """
     records = []
     seen: set[tuple] = set()
-    if log_path.exists():
-        for line in log_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
+    for rec in read_firing_log_records(log_path):
+        key = _dedup_key(rec)
+        if key is not None:
+            if key in seen:
                 continue
-            try:
-                # scar 0012 prescribes a BLANKET per-line guard, not a narrow
-                # except tuple: a reader that escapes into precheck's outer
-                # fail-open kills injection permanently.
-                rec = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(rec, dict):
-                continue
-            key = _dedup_key(rec)
-            if key is not None:
-                if key in seen:
-                    continue
-                seen.add(key)
-            records.append(rec)
+            seen.add(key)
+        records.append(rec)
     return records
 
 
