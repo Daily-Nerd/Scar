@@ -372,3 +372,29 @@ def test_redos_prone_revives_if_is_an_error():
     findings = lint_text(GOOD.replace(
         "status: active", 'revives_if: "(a+)+$"\nstatus: archived'))
     assert any(f.level == "error" and "revives_if" in f.message for f in findings)
+
+
+def test_promoted_by_source_git_config_interactive_is_quiet():
+    """#308: a human at a terminal promoted it. Warning here was the false
+    positive the issue is about."""
+    interactive = GOOD.replace(
+        "authors: [mara]",
+        "authors: [mara]\npromoted_by: mara\n"
+        "promoted_by_source: git-config-interactive")
+    assert not any("promoted_by_source" in f.message
+                   for f in lint_text(interactive))
+
+
+def test_git_config_warning_does_not_claim_nobody_typed_a_name():
+    """#308: 'nobody typed a reviewer name' asserts something the data cannot
+    support for scars promoted before interactivity was recorded. The warning
+    must report what is unknown, not assert what did not happen."""
+    git_config = GOOD.replace(
+        "authors: [mara]",
+        "authors: [mara]\npromoted_by: mara\npromoted_by_source: git-config")
+    messages = [f.message for f in lint_text(git_config)
+                if "promoted_by_source" in f.message]
+
+    assert messages, "the unattended case must still warn"
+    assert "nobody typed a reviewer name" not in messages[0]
+    assert "no interactive terminal recorded" in messages[0]

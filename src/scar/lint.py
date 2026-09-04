@@ -193,10 +193,14 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         # agent running promote under the human's git identity produces this
         # exact value with nobody having actually looked. Warning, not
         # error: the promotion still stands, this just asks for a second look.
+        # #308: say what is UNKNOWN, not what did not happen. This same value
+        # is on every scar promoted before interactivity was recorded, and a
+        # human may well have typed nothing while sitting right there. An
+        # interactive promotion now records git-config-interactive instead.
         findings.append(Finding(
             "warning", f"promoted_by_source: git-config: {scar.promoted_by} "
-            "was promoted under a git identity, nobody typed a reviewer "
-            "name; confirm a human reviewed it"))
+            "was promoted under a git identity, with no reviewer typed and "
+            "no interactive terminal recorded; confirm a human reviewed it"))
     if (not scar.path_anchors and not scar.pattern_anchors
             and not scar.symbol_anchors and not scar.command_anchors):
         findings.append(Finding("error", "no anchors — scar protects nothing"))
