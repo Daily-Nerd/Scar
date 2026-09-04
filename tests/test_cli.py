@@ -4050,3 +4050,54 @@ def test_stats_reports_armed_firings_and_refuses_to_guess_for_old_rows(
     assert data["total_firings"] == 4
     assert data["armed_firings"] == 1
     assert data["armed_unknown"] == 1
+
+
+def test_promote_at_a_tty_records_an_interactive_reviewer(repo, capsys, monkeypatch):
+    """#308: a person running promote at a terminal IS the reviewer, even
+    without --reviewer. Record that, so lint can stop treating it as an
+    unattended agent promotion."""
+    import sys as _sys
+
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+
+    assert main(["promote", "tried-x"]) == 0
+
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "promoted_by_source: git-config-interactive" in text
+
+
+def test_promote_without_a_tty_stays_plain_git_config(repo, capsys, monkeypatch):
+    """#308: the unattended case is what the warning was written for, so it
+    must keep its existing value rather than being quietly upgraded."""
+    import sys as _sys
+
+    init_scars(repo)
+    subprocess.run(["git", "config", "user.name", "Repo Reviewer"],
+                   cwd=repo, check=True)
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+
+    assert main(["promote", "tried-x"]) == 0
+
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "promoted_by_source: git-config\n" in text
+    assert "git-config-interactive" not in text
+
+
+def test_explicit_reviewer_at_a_tty_is_still_explicit(repo, capsys, monkeypatch):
+    """A typed name is the strongest signal there is; interactivity must not
+    downgrade or relabel it."""
+    import sys as _sys
+
+    init_scars(repo)
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+
+    assert main(["promote", "tried-x", "--reviewer", "kibukx"]) == 0
+
+    text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
+    assert "promoted_by_source: explicit" in text

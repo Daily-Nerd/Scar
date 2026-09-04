@@ -750,6 +750,16 @@ def _cmd_status(args) -> int:
     return 0
 
 
+def _stdin_is_a_terminal() -> bool:
+    """True when a person is driving this invocation. Never raises: a closed
+    or replaced stdin has no isatty, and promote must not die over a question
+    it can safely answer "no" to."""
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
 def _cmd_promote(args) -> int:
     store = _require_store()
     if store is None:
@@ -767,9 +777,17 @@ def _cmd_promote(args) -> int:
     if not reviewer:
         reviewer = _git(store.root, "config", "user.name").stdout.strip()
         from_git = bool(reviewer)
-    # #295: the same distinction from_git already carries, in the vocabulary
-    # promoted_by_source is written with.
-    reviewer_source = "git-config" if from_git else ("explicit" if reviewer else None)
+    # #295 gave promoted_by_source two values; #308 splits the git-config one,
+    # because "the name came from git config" answered the wrong question. The
+    # question lint actually asks is whether a PERSON vouched, and a human
+    # running promote at a terminal is a person whether or not they retyped
+    # their own name. stdin only, deliberately: `scar promote x > log` is still
+    # a human at a keyboard, so a redirected stdout must not read as unattended.
+    if reviewer and from_git:
+        reviewer_source = ("git-config-interactive" if _stdin_is_a_terminal()
+                           else "git-config")
+    else:
+        reviewer_source = "explicit" if reviewer else None
     try:
         new_path = store.promote(matches[0], reviewer=reviewer,
                                   reviewer_source=reviewer_source)
