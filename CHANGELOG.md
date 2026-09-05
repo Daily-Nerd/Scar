@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.24.0](https://github.com/Daily-Nerd/Scar/compare/v0.23.0...v0.24.0) (2026-09-05)
+
+
+### Features
+
+* **firing-log:** one shared validated reader for the firing log ([#313](https://github.com/Daily-Nerd/Scar/issues/313)) ([d316922](https://github.com/Daily-Nerd/Scar/commit/d31692205715e63380b8ac104643de4ceac0338d))
+
+
+### Bug Fixes
+
+* **promote:** record whether a promotion happened at a terminal ([#315](https://github.com/Daily-Nerd/Scar/issues/315)) ([f28e8eb](https://github.com/Daily-Nerd/Scar/commit/f28e8eb90a5fb3161aa40565dbfb218d1b9b4160)), closes [#308](https://github.com/Daily-Nerd/Scar/issues/308)
+
 ## [0.23.0](https://github.com/Daily-Nerd/Scar/compare/v0.22.0...v0.23.0) (2026-09-03)
 
 
