@@ -7,10 +7,10 @@ confidence: 0.9
 created: 2026-06-30
 authors: ["claude-code", "kibukx"]
 anchors:
-  - path: src/scar/cli.py
   - path: src/scar/output.py
-  - pattern: "output\.render\("
+  - pattern: "def plain\(\):"
 evidence:
+  - note: "2026-09-05 anchors: path src/scar/cli.py dropped, it is 3000+ lines and the tty gate is 17 of them. The 18 output.render( call sites only invoke the already-safe dispatcher, so that pattern is replaced by def plain():, which marks the 14 non-tty contract closures this scar actually protects"
   - issue: 78
   - note: 187-test suite asserts plain substrings like '0001-bad.deadend.md' and long anchor paths on main([...]) under capsys
 expires:
