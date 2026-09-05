@@ -7,11 +7,11 @@ confidence: 0.9
 created: 2026-06-30
 authors: ["claude-code", "Kibukx"]
 anchors:
-  - path: src/scar/lint.py
-  - path: src/scar/match.py
   - pattern: "rx\.search\("
   - pattern: "MAX_ANCHOR_SCAN"
+  - pattern: "_is_redos_prone"
 evidence:
+  - note: "2026-09-05 anchors: both whole-file path anchors dropped, lint.py and match.py serve many concerns beyond ReDoS. _is_redos_prone added so the GATE itself stays anchored, since the body says the gate is the defense and the 64 KiB cap is not"
   - issue: 88
 expires:
   condition: "lint gains full regex-safety analysis OR the matcher runs on a hardened regex engine with a hard timeout"

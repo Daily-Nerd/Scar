@@ -8,8 +8,13 @@ created: 2026-06-11
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: .scars/
+  - command: "git push.*--force"
+  - command: "git rebase"
+  - command: "git filter-repo|git filter-branch"
+  - command: "git commit.*--amend"
 violation: "commit: [0-9a-f]{7,40}"
 evidence:
+  - note: "2026-09-05 anchors: path .scars/ KEPT on purpose. The violation tripwire commit: [0-9a-f]{7,40} only evaluates on files an anchor matched, so dropping it to cut firings would silently disarm the scar. Command anchors added instead, so the history-rewrite half fires on the act rather than on any scar edit"
   - note: v0.1.0 public release (2026-06-11): fresh-start force-push orphaned 3 commit SHAs cited by scars 0001 and 0002; SHAs still resolve on GitHub by URL but fail in any fresh clone, and GitHub may GC them eventually
 expires:
   condition: "evidence schema gains a resolvable form (full URL or archived diff) or lint warns on bare SHAs at promotion"

@@ -9,8 +9,9 @@ authors: ["claude-code", "kibukx"]
 anchors:
   - path: src/scar/orphan.py
   - path: src/scar/match.py
-  - path: .scars/
+  - pattern: "\n\s*-\s*pattern:"
 evidence:
+  - note: "2026-09-05 anchors: path .scars/ replaced by a pattern matching a scar frontmatter pattern: entry. The directory anchor fired on every scar edit, while the hazard only exists when a pattern anchor is being authored"
   - pr: 40
   - note: scar 1 grep pattern matched only its own body, never experiments/anchor-survival/RESULTS.md
 expires:
