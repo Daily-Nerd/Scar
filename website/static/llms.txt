@@ -24,6 +24,6 @@ Repository: https://github.com/Daily-Nerd/Scar
 
 ## For agents
 
-- Authoring contract: run `scar agent skill` for the full scar-authoring skill text, or install via `scar skill install` (Claude Code).
+- Authoring contract: run `scar agent skill` for the full scar-authoring skill text, or install the skill file via `scar skill install`, which writes to a native path for Claude Code, Codex, Cursor, opencode, or Windsurf (see [agent integration](https://daily-nerd.github.io/Scar/agents) for which of those are confirmed to load it versus written-but-unverified).
 - Machine query surface: `scar inject --path <p> | --diff <d>` (hook JSON), `scar mcp` (MCP stdio server).
 - Write candidates only to .scars/candidates/ — never directly to .scars/. Humans promote.

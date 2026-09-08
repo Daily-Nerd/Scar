@@ -8,6 +8,30 @@ description: Native Claude Code and Codex plugin hooks, Windsurf/Cascade hooks, 
 
 SCAR treats AI agents as first-class users: they trigger scars, they read scars, and they author scars (into `candidates/`, behind the human promotion gate).
 
+## Where `scar skill install` writes
+
+`scar skill install` puts the scar-authoring skill at a native path per host. Every
+path below comes from that host's own documentation for where it looks for skills,
+except Claude Code, which SCAR has actually watched load the file. Nobody has yet
+confirmed the other four hosts read the file SCAR writes there. Run
+`scar skill status` to see the resolved path and installed/not-installed state for
+every host on this machine.
+
+| Host | Destination | Confirmed loading it? |
+|---|---|---|
+| Claude Code | `~/.claude/skills/scar-authoring/` | Yes, observed in daily use |
+| Codex | `~/.codex/skills/scar-authoring/` | No. File is written and present on disk; nobody has watched Codex load it |
+| Cursor | `~/.cursor/skills/scar-authoring/` | No. Path is per vendor documentation only |
+| opencode | `~/.config/opencode/skills/scar-authoring/` | No. Path is per vendor documentation only |
+| Windsurf | `~/.codeium/windsurf/skills/scar-authoring/` | No. Path is per vendor documentation only |
+
+Windsurf was renamed Devin Desktop in mid-2026, but its on-disk paths still use the
+old `windsurf`/`codeium` names, which is why the host key here is still `windsurf`.
+
+`scar skill install --all` writes to every detected, unserved host at once; `scar
+skill install --runtime <host>` targets one. Install refuses to write to a host it
+did not detect on the machine, rather than create a skill directory nothing reads.
+
 ## Claude Code (reference integration)
 
 **Recommended: install the plugin** from the marketplace — hooks and the scar-authoring skill arrive together.
