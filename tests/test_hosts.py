@@ -153,7 +153,7 @@ def test_windsurf_skill_detection_is_home_scoped(tmp_path):
 def test_windsurf_skill_present_via_path_with_no_repo_and_no_home_dir(tmp_path):
     # The binary-on-PATH repo-scope guard exists only to protect hooks
     # (cascade_install writes <cwd>/.windsurf/hooks.json with no guard of its
-    # own). Skills are home-scoped (WINDSURF_SKILLS_DIR), so kind="skill"
+    # own). Skills are home-scoped (installer.skill_dests), so kind="skill"
     # deliberately skips that guard. With no ~/.codeium/windsurf directory and
     # repo=None, the binary alone must still mark windsurf present here — if
     # the guard were ever re-added unconditionally, this would silently break
