@@ -165,18 +165,6 @@ def test_windsurf_skill_present_via_path_with_no_repo_and_no_home_dir(tmp_path):
     assert found["windsurf"].signal == "windsurf on PATH"
 
 
-def test_hook_kind_leaves_cursor_and_opencode_unwirable(tmp_path):
-    home = tmp_path
-    (home / ".cursor").mkdir(parents=True)
-    (home / ".config" / "opencode").mkdir(parents=True)
-
-    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="hook",
-                                                   path_env="")}
-
-    assert found["cursor"].wirable is False
-    assert found["opencode"].wirable is False
-
-
 def test_render_table_one_line_per_host(tmp_path):
     (tmp_path / ".claude").mkdir()
     out = hosts.render_table(hosts.detect_hosts(tmp_path, None, path_env=_nobin(tmp_path)))

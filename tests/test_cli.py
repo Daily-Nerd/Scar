@@ -4170,9 +4170,9 @@ def test_skill_install_refusal_honors_the_patched_home_not_the_real_one(
     assert (home / ".claude" / "skills" / installer.SKILL_NAME / "SKILL.md").is_file()
 
 
-def test_skill_status_reports_every_host_destination(capsys):
-    assert main(["skill", "status"]) == 0
-
-    out = capsys.readouterr().out
-    for name in ("claude", "codex", "cursor", "opencode", "windsurf"):
-        assert f"[{name}]" in out
+# test_skill_status_reports_every_host_destination lived here. It took only
+# capsys, so it ran detection and status against the real home, the real
+# PATH and the real cwd, and its assertion could not fail on any machine.
+# test_skill_status_prints_host_table_then_skill_line in tests/test_installer.py
+# makes the same per-host assertion under the isolated `skill_home` fixture,
+# and additionally checks each printed destination stays inside that home.

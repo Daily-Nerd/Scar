@@ -926,6 +926,12 @@ def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
     # just claude: the destination registry (Task 1) and the host-aware
     # skill functions (Task 2) turned "not installed" into a per-host line.
     assert "skill scar-authoring [claude]: not installed" in out
+    for name in installer.SKILL_HOSTS:
+        assert f"[{name}]" in out
+        # Every printed destination is under this fixture's tmp home. A path
+        # outside it means a destination stopped following the seam and the
+        # status table is describing the developer's real machine.
+        assert str(skill_home.parent) in out.split(f"[{name}]: ")[1].splitlines()[0]
 
 
 def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
