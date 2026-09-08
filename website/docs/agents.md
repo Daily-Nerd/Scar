@@ -28,7 +28,10 @@ every host on this machine.
 Windsurf was renamed Devin Desktop in mid-2026, but its on-disk paths still use the
 old `windsurf`/`codeium` names, which is why the host key here is still `windsurf`.
 
-`scar skill install --all` writes to every detected, unserved host at once; `scar
+`scar skill install --all` writes to every detected host the plugin does not
+already serve, including hosts an earlier `scar skill install` already wrote to:
+re-running install is the documented step after an upgrade, because the installed
+skill is a static copy. `scar
 skill install --runtime <host>` targets one. Install refuses to write to a host it
 did not detect on the machine, rather than create a skill directory nothing reads.
 

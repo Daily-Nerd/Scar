@@ -4,14 +4,14 @@ type: deadend
 title: Host detection must take home from installer.CLAUDE_DIR, never Path.home() — a bare call passes locally and fails every other machine
 severity: high
 confidence: 0.9
-created: 2026-09-08
+created: 2026-09-07
 authors: ["claude-code"]
 anchors:
   - pattern: "detect_hosts\("
   - symbol: src/scar/cli.py::_detect
 evidence:
   - issue: 318
-  - note: "2026-09-08, during the multi-host skill install work: the skill-install refusal resolved home with Path.home(). Under HOME=empty the suite went 1031 passed / 2 FAILED, both PRE-EXISTING tests, printing 'claude not detected on this machine, nothing written'. Fixed by reusing _detect(). Branch SHAs deliberately omitted: scar #5 fired on the amend that wrote this, and squash-merge would orphan them."
+  - note: "2026-09-07, during the multi-host skill install work: the skill-install refusal resolved home with Path.home(). Under HOME=empty the suite went 1031 passed / 2 FAILED, both PRE-EXISTING tests, printing 'claude not detected on this machine, nothing written'. Fixed by reusing _detect(). Branch SHAs deliberately omitted: scar #5 fired on the amend that wrote this, and squash-merge would orphan them."
 expires:
   condition: "detect_hosts takes home from one injected seam no caller can bypass"
   review_after: 2027-03-08

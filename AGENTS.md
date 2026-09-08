@@ -26,8 +26,11 @@ The full authoring contract — qualification criteria, the candidates-only writ
 path, mandatory YAML frontmatter, and the regex over-escaping trap — is packaged
 as the `scar-authoring` skill.
 
-- **Claude Code:** install the plugin (recommended) or `scar skill install` to
-  drop the skill into `~/.claude/skills/`. It auto-loads on trigger.
+- **Claude Code, Codex, Cursor, opencode, Windsurf:** `scar skill install`
+  detects which of those hosts are on the machine and writes the skill to each
+  one's native skills directory. On Claude Code the plugin is the recommended
+  route and carries the same skill. The per-host destination table is in
+  [website/docs/agents.md](website/docs/agents.md).
 - **MCP agents (Cursor/Windsurf/opencode):** the `scar_draft` tool enforces the
   candidates-only path and lints before writing; its description carries the
   digest.
