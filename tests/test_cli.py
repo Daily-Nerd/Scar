@@ -4108,9 +4108,10 @@ def test_skill_install_accepts_every_supported_runtime(tmp_path, monkeypatch, ca
     # machine running it: PATH is pinned to an empty directory so no real
     # `codex` binary can carry detection, installer.CLAUDE_DIR is patched so
     # home resolves under tmp_path, and CODEX_HOME is pinned to a directory
-    # under that same tmp home — codex_home() reads $CODEX_HOME directly
-    # (installer.py:736-739), so this is the one lever that actually decides
-    # whether codex reads as present here.
+    # under that same tmp home. codex_home() reads $CODEX_HOME directly, so
+    # it is the one lever that decides both whether codex reads as present
+    # here AND where the skill lands: detection and skill_dests() resolve
+    # the Codex home through that same function.
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
@@ -4119,16 +4120,17 @@ def test_skill_install_accepts_every_supported_runtime(tmp_path, monkeypatch, ca
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
     (tmp_path / "nobin").mkdir()
-    dest = tmp_path / ".codex" / "skills"
-    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", dest)
 
     assert main(["skill", "install", "--runtime", "codex"]) == 0
 
-    assert (dest / installer.SKILL_NAME / "SKILL.md").is_file()
+    assert (codex_home / "skills" / installer.SKILL_NAME / "SKILL.md").is_file()
 
 
 def test_skill_install_refuses_an_undetected_host(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(installer, "CURSOR_SKILLS_DIR", tmp_path / ".cursor" / "skills")
+    # CLAUDE_DIR is the home seam skill_dests() resolves every destination
+    # through, so patching it puts the cursor destination under tmp_path.
+    # The refusal must fire before anything is written there.
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
     monkeypatch.setattr(hosts, "detect_hosts", lambda *a, **k: [])
 
     rc = main(["skill", "install", "--runtime", "cursor"])
@@ -4151,7 +4153,6 @@ def test_skill_install_refusal_honors_the_patched_home_not_the_real_one(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
-    monkeypatch.setattr(installer, "SKILLS_DIR", home / ".claude" / "skills")
     monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
     (tmp_path / "nobin").mkdir()
 

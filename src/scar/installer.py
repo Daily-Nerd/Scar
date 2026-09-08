@@ -17,35 +17,40 @@ from pathlib import Path
 CLAUDE_DIR = Path.home() / ".claude"
 HOOKS_DIR = CLAUDE_DIR / "hooks"
 SETTINGS = CLAUDE_DIR / "settings.json"
-SKILLS_DIR = CLAUDE_DIR / "skills"
 SKILL_NAME = "scar-authoring"
-
-CODEX_SKILLS_DIR = Path.home() / ".codex" / "skills"
-CURSOR_SKILLS_DIR = Path.home() / ".cursor" / "skills"
-OPENCODE_SKILLS_DIR = Path.home() / ".config" / "opencode" / "skills"
-# Windsurf is Devin Desktop since 2026-06-02, but every on-disk path still
-# uses the old names. Renaming this key would break existing installs to fix
-# a label. Verified 2026-09-07: this directory already holds real skills.
-WINDSURF_SKILLS_DIR = Path.home() / ".codeium" / "windsurf" / "skills"
 
 SKILL_HOSTS = ("claude", "codex", "cursor", "opencode", "windsurf")
 
 
-def skill_dest(host: str) -> Path:
-    """Directory that holds the skill folder for `host`.
+def skill_dests() -> dict[str, Path]:
+    """Every host's skill directory, resolved per call.
 
-    Built per call rather than as a module dict so a test monkeypatching
-    SKILLS_DIR is still honored. Every host gets its own native path: a
-    shared directory only works while every host keeps honoring it, and a
-    silent stop would be indistinguishable from success.
+    Home comes from CLAUDE_DIR, the one seam detection also resolves it
+    through (cli.py _detect reads CLAUDE_DIR.parent), and codex comes from
+    codex_home() because Codex honours $CODEX_HOME. A destination frozen
+    from Path.home() at import time would disagree with detection: install
+    would land in a directory the running agent never reads, and report
+    success. Every host gets its own native path, because a shared directory
+    only works while every host keeps honouring it, and a silent stop would
+    be indistinguishable from success.
     """
+    home = CLAUDE_DIR.parent
     return {
-        "claude": SKILLS_DIR,
-        "codex": CODEX_SKILLS_DIR,
-        "cursor": CURSOR_SKILLS_DIR,
-        "opencode": OPENCODE_SKILLS_DIR,
-        "windsurf": WINDSURF_SKILLS_DIR,
-    }[host]
+        "claude": CLAUDE_DIR / "skills",
+        "codex": codex_home() / "skills",
+        "cursor": home / ".cursor" / "skills",
+        "opencode": home / ".config" / "opencode" / "skills",
+        # Windsurf is Devin Desktop since 2026-06-02, but every on-disk path
+        # still uses the old names. Renaming this key would break existing
+        # installs to fix a label. Observed 2026-09-07 on the maintainer's
+        # machine: this directory already holds real skills.
+        "windsurf": home / ".codeium" / "windsurf" / "skills",
+    }
+
+
+def skill_dest(host: str) -> Path:
+    """Directory that holds the skill folder for `host`."""
+    return skill_dests()[host]
 
 # The pre-command-anchor script each kind was migrated from. Only these three
 # kinds ever had one; the mapping is per-kind so a legacy `precheck` script is
