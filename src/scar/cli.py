@@ -2822,20 +2822,31 @@ def _cmd_skill_lifecycle(args) -> int:
     runtime = args.runtime
     if runtime is None and args.kind in ("install", "status"):
         def install_many(names: list[str], repo: Path, dry: bool) -> int:
-            del repo  # skill has exactly one wirable host: claude
-            return skill_install(dry=dry) if "claude" in names else 0
+            del repo  # every skill destination is home-scoped
+            rc = 0
+            for name in names:
+                rc |= skill_install(name, dry=dry)
+            return rc
         return _lifecycle_no_runtime("skill", args, install_many, skill_status)
-    # uninstall with no --runtime keeps targeting Claude, the only wirable
-    # host today: same rule as `hook`.
+    # uninstall with no --runtime keeps targeting Claude: removal is out of
+    # the detection spec's scope, same rule as `hook`.
     runtime = runtime or "claude"
     if (runtime == "claude" and args.kind == "install"
             and not getattr(args, "force", False)
             and hosts.claude_plugin_enabled(CLAUDE_DIR)):
         _plugin_refusal("the scar-authoring skill is", "~/.claude/skills")
         return 0
-    return {"install": lambda: skill_install(dry=dry),
-            "uninstall": lambda: skill_uninstall(dry=dry),
-            "status": skill_status}[args.kind]()
+    if args.kind == "install":
+        detected = {h.name for h in hosts.detect_hosts(
+            Path.home(), None, kind="skill") if h.present}
+        if runtime not in detected:
+            # Refusing beats creating the tree: a directory scar invents is
+            # one no host reads, and the failure would be silent.
+            print(f"{runtime} not detected on this machine, nothing written")
+            return 1
+    return {"install": lambda: skill_install(runtime, dry=dry),
+            "uninstall": lambda: skill_uninstall(runtime, dry=dry),
+            "status": lambda: skill_status(runtime)}[args.kind]()
 
 
 def _scar_version() -> str:
@@ -3029,19 +3040,20 @@ def build_parser() -> argparse.ArgumentParser:
          help="run the Windsurf/Cascade hook adapter (stdin JSON; installed by "
               "`scar hook install --runtime windsurf`, not run by hand)")
 
+    from . import installer
+
     p = _add(sub, "skill", _cmd_skill_lifecycle, help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])
     p.add_argument("--dry-run", action="store_true",
                    help="show changes without writing to ~/.claude/skills")
-    # One invocation, one target: --runtime claude writes ~/.claude/skills,
-    # --all writes to every unserved host detection finds (only claude is
-    # wirable today), and no flag at all means detect and ask.
+    # One invocation, one target: --runtime names any host in the destination
+    # registry (installer.SKILL_HOSTS), --all writes to every unserved host
+    # detection finds, and no flag at all means detect and ask.
     target = p.add_mutually_exclusive_group()
-    target.add_argument("--runtime", choices=["claude"], default=None,
+    target.add_argument("--runtime", choices=list(installer.SKILL_HOSTS), default=None,
                         help="with install/uninstall/status: which host to wire. "
                              "Omitted: detect installed hosts and ask (install), "
-                             "or show every host's channel (status); uninstall "
-                             "still targets claude")
+                             "or show every host's channel (status)")
     target.add_argument("--all", action="store_true",
                         help="with install: wire every detected, unserved host "
                              "without asking. A target like --runtime, so "

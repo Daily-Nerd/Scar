@@ -150,6 +150,21 @@ def test_windsurf_skill_detection_is_home_scoped(tmp_path):
     assert str(home / ".codeium" / "windsurf") in found["windsurf"].signal
 
 
+def test_windsurf_skill_present_via_path_with_no_repo_and_no_home_dir(tmp_path):
+    # The binary-on-PATH repo-scope guard exists only to protect hooks
+    # (cascade_install writes <cwd>/.windsurf/hooks.json with no guard of its
+    # own). Skills are home-scoped (WINDSURF_SKILLS_DIR), so kind="skill"
+    # deliberately skips that guard. With no ~/.codeium/windsurf directory and
+    # repo=None, the binary alone must still mark windsurf present here — if
+    # the guard were ever re-added unconditionally, this would silently break
+    # `scar skill install --runtime windsurf` and no other test would notice.
+    bindir = _bin(tmp_path, "windsurf")
+    found = {h.name: h for h in hosts.detect_hosts(tmp_path, None, kind="skill",
+                                                   path_env=str(bindir))}
+    assert found["windsurf"].present is True
+    assert found["windsurf"].signal == "windsurf on PATH"
+
+
 def test_hook_kind_leaves_cursor_and_opencode_unwirable(tmp_path):
     home = tmp_path
     (home / ".cursor").mkdir(parents=True)

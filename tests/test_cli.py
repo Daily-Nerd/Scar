@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scar import symbols
+from scar import hosts, installer, symbols
 from scar.cli import main
 from scar.store import init_scars
 
@@ -4101,3 +4101,31 @@ def test_explicit_reviewer_at_a_tty_is_still_explicit(repo, capsys, monkeypatch)
 
     text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
     assert "promoted_by_source: explicit" in text
+
+
+def test_skill_install_accepts_every_supported_runtime(tmp_path, monkeypatch, capsys):
+    dest = tmp_path / ".codex" / "skills"
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", dest)
+
+    assert main(["skill", "install", "--runtime", "codex"]) == 0
+
+    assert (dest / installer.SKILL_NAME / "SKILL.md").is_file()
+
+
+def test_skill_install_refuses_an_undetected_host(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(installer, "CURSOR_SKILLS_DIR", tmp_path / ".cursor" / "skills")
+    monkeypatch.setattr(hosts, "detect_hosts", lambda *a, **k: [])
+
+    rc = main(["skill", "install", "--runtime", "cursor"])
+
+    assert rc == 1
+    assert "not detected" in capsys.readouterr().out
+    assert not (tmp_path / ".cursor").exists()
+
+
+def test_skill_status_reports_every_host_destination(capsys):
+    assert main(["skill", "status"]) == 0
+
+    out = capsys.readouterr().out
+    for name in ("claude", "codex", "cursor", "opencode", "windsurf"):
+        assert f"[{name}]" in out
