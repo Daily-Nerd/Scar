@@ -933,17 +933,18 @@ def _skill_source() -> Path:
     return Path(str(files("scar").joinpath("skills") / SKILL_NAME))
 
 
-def skill_install(dry: bool = False) -> int:
+def skill_install(host: str = "claude", dry: bool = False) -> int:
     src = _skill_source()
     if not src.is_dir():
         print(f"skill source not found: {src}")
         return 1
-    dest = SKILLS_DIR / SKILL_NAME
+    root = skill_dest(host)
+    dest = root / SKILL_NAME
     print(f"[skill] install {SKILL_NAME} -> {dest}")
     if dry:
         print("install: done (dry-run, nothing written)")
         return 0
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
@@ -951,10 +952,10 @@ def skill_install(dry: bool = False) -> int:
     return 0
 
 
-def skill_uninstall(dry: bool = False) -> int:
-    dest = SKILLS_DIR / SKILL_NAME
+def skill_uninstall(host: str = "claude", dry: bool = False) -> int:
+    dest = skill_dest(host) / SKILL_NAME
     if not dest.exists():
-        print(f"[skill] {SKILL_NAME}: not installed")
+        print(f"[skill] {SKILL_NAME}: not installed ({host})")
         return 0
     print(f"[skill] remove {dest}")
     if not dry:
@@ -963,11 +964,16 @@ def skill_uninstall(dry: bool = False) -> int:
     return 0
 
 
-def skill_status() -> int:
-    dest = SKILLS_DIR / SKILL_NAME
-    print(f"skill {SKILL_NAME}: {'installed' if dest.exists() else 'not installed'} ({dest})")
+def skill_present(host: str = "claude") -> bool:
+    return (skill_dest(host) / SKILL_NAME).exists()
+
+
+def skill_status(host: str | None = None) -> int:
+    """One host, or every host when none is named. Printing the resolved
+    destination is the point: these paths come from vendor documentation,
+    so a person has to be able to see where a skill actually landed."""
+    for name in ((host,) if host else SKILL_HOSTS):
+        dest = skill_dest(name) / SKILL_NAME
+        state = "installed" if dest.exists() else "not installed"
+        print(f"skill {SKILL_NAME} [{name}]: {state} ({dest})")
     return 0
-
-
-def skill_present() -> bool:
-    return (SKILLS_DIR / SKILL_NAME).exists()

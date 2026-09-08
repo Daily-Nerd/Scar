@@ -915,7 +915,10 @@ def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
     out = capsys.readouterr().out
     assert out.splitlines()[0].startswith("claude")
     assert "not supported yet" in out
-    assert "skill scar-authoring: not installed" in out
+    # skill_status(host=None) now reports every host from SKILL_HOSTS, not
+    # just claude: the destination registry (Task 1) and the host-aware
+    # skill functions (Task 2) turned "not installed" into a per-host line.
+    assert "skill scar-authoring [claude]: not installed" in out
 
 
 def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
@@ -973,4 +976,48 @@ def test_skill_dest_refuses_an_unknown_host():
 def test_skill_hosts_matches_the_dest_table():
     for host in installer.SKILL_HOSTS:
         assert installer.skill_dest(host)
+
+
+def test_install_writes_the_skill_to_a_non_claude_host(tmp_path, monkeypatch):
+    dest = tmp_path / ".codex" / "skills"
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", dest)
+
+    assert installer.skill_install("codex") == 0
+
+    assert (dest / installer.SKILL_NAME / "SKILL.md").is_file()
+    assert installer.skill_present("codex") is True
+
+
+def test_install_is_idempotent_per_host(tmp_path, monkeypatch):
+    dest = tmp_path / ".cursor" / "skills"
+    monkeypatch.setattr(installer, "CURSOR_SKILLS_DIR", dest)
+
+    assert installer.skill_install("cursor") == 0
+    first = (dest / installer.SKILL_NAME / "SKILL.md").read_text(encoding="utf-8")
+    assert installer.skill_install("cursor") == 0
+
+    assert (dest / installer.SKILL_NAME / "SKILL.md").read_text(encoding="utf-8") == first
+
+
+def test_uninstall_removes_only_the_named_host(tmp_path, monkeypatch):
+    codex = tmp_path / ".codex" / "skills"
+    claude = tmp_path / ".claude" / "skills"
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", codex)
+    monkeypatch.setattr(installer, "SKILLS_DIR", claude)
+    installer.skill_install("codex")
+    installer.skill_install("claude")
+
+    assert installer.skill_uninstall("codex") == 0
+
+    assert installer.skill_present("codex") is False
+    assert installer.skill_present("claude") is True
+
+
+def test_dry_run_writes_nothing(tmp_path, monkeypatch):
+    dest = tmp_path / ".codex" / "skills"
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", dest)
+
+    assert installer.skill_install("codex", dry=True) == 0
+
+    assert not dest.exists()
     assert installer.skill_present()
