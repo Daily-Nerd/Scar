@@ -4104,6 +4104,21 @@ def test_explicit_reviewer_at_a_tty_is_still_explicit(repo, capsys, monkeypatch)
 
 
 def test_skill_install_accepts_every_supported_runtime(tmp_path, monkeypatch, capsys):
+    # Detection must be fully controlled by the test, not inherited from the
+    # machine running it: PATH is pinned to an empty directory so no real
+    # `codex` binary can carry detection, installer.CLAUDE_DIR is patched so
+    # home resolves under tmp_path, and CODEX_HOME is pinned to a directory
+    # under that same tmp home — codex_home() reads $CODEX_HOME directly
+    # (installer.py:736-739), so this is the one lever that actually decides
+    # whether codex reads as present here.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
     dest = tmp_path / ".codex" / "skills"
     monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", dest)
 
