@@ -114,10 +114,52 @@ def test_wirable_and_hints_for_hook_kind(tmp_path):
     assert not by["opencode"].wirable and by["opencode"].hint == "scar agent config opencode"
 
 
-def test_skill_kind_wires_claude_only(tmp_path):
+def test_skill_kind_wires_every_known_host(tmp_path):
+    # Superseded by Task 3: codex, cursor, opencode and windsurf all gained a
+    # real skill destination, so none of them carries the "not supported
+    # yet" hint under kind="skill" any more (that test used to assert codex
+    # was the exception; now claude is not).
     by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, kind="skill", path_env=_nobin(tmp_path))}
-    assert by["claude"].wirable
-    assert not by["codex"].wirable and "not supported yet" in by["codex"].hint
+    for name in ("claude", "codex", "windsurf", "cursor", "opencode"):
+        assert by[name].wirable, name
+        assert by[name].hint is None, name
+
+
+def test_skill_kind_marks_the_new_hosts_wirable(tmp_path):
+    home = tmp_path
+    for rel in (".claude", ".codex", ".cursor", ".config/opencode",
+                ".codeium/windsurf"):
+        (home / rel).mkdir(parents=True)
+
+    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="skill",
+                                                   path_env="")}
+
+    for name in ("claude", "codex", "cursor", "opencode", "windsurf"):
+        assert found[name].present is True, name
+        assert found[name].wirable is True, name
+
+
+def test_windsurf_skill_detection_is_home_scoped(tmp_path):
+    home = tmp_path
+    (home / ".codeium" / "windsurf").mkdir(parents=True)
+
+    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="skill",
+                                                   path_env="")}
+
+    assert found["windsurf"].present is True
+    assert str(home / ".codeium" / "windsurf") in found["windsurf"].signal
+
+
+def test_hook_kind_leaves_cursor_and_opencode_unwirable(tmp_path):
+    home = tmp_path
+    (home / ".cursor").mkdir(parents=True)
+    (home / ".config" / "opencode").mkdir(parents=True)
+
+    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="hook",
+                                                   path_env="")}
+
+    assert found["cursor"].wirable is False
+    assert found["opencode"].wirable is False
 
 
 def test_render_table_one_line_per_host(tmp_path):

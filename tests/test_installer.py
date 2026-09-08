@@ -923,7 +923,10 @@ def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
     assert main(["skill", "status"]) == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0].startswith("claude")
-    assert "not supported yet" in out
+    # Task 3 widened detect_hosts(kind="skill") to mark codex, cursor,
+    # opencode and windsurf wirable too, so no host in this table carries
+    # the "not supported yet" hint any more.
+    assert "not supported yet" not in out
     # skill_status(host=None) now reports every host from SKILL_HOSTS, not
     # just claude: the destination registry (Task 1) and the host-aware
     # skill functions (Task 2) turned "not installed" into a per-host line.

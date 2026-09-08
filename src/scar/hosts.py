@@ -26,14 +26,16 @@ class Host:
     hint: str | None = None
 
 
-# name, home-relative config dir (None = repo-scoped), binary on PATH,
-# wirable for hooks, wirable for the skill
+# name, hook config dir (None = repo-scoped), skill config dir, binary,
+# wirable for hooks, wirable for the skill. The two directory columns differ
+# for windsurf alone: its hooks are a committed repo file, its global skills
+# live under home.
 _SPECS = (
-    ("claude", ".claude", "claude", True, True),
-    ("codex", ".codex", "codex", True, False),
-    ("windsurf", None, "windsurf", True, False),
-    ("cursor", ".cursor", "cursor", False, False),
-    ("opencode", ".config/opencode", "opencode", False, False),
+    ("claude", ".claude", ".claude", "claude", True, True),
+    ("codex", ".codex", ".codex", "codex", True, True),
+    ("windsurf", None, ".codeium/windsurf", "windsurf", True, True),
+    ("cursor", ".cursor", ".cursor", "cursor", False, True),
+    ("opencode", ".config/opencode", ".config/opencode", "opencode", False, True),
 )
 
 
@@ -60,7 +62,8 @@ def detect_hosts(
 ) -> list[Host]:
     which_path = path_env if path_env is not None else os.environ.get("PATH", "")
     found: list[Host] = []
-    for name, rel, binary, hook_ok, skill_ok in _SPECS:
+    for name, hook_rel, skill_rel, binary, hook_ok, skill_ok in _SPECS:
+        rel = skill_rel if kind == "skill" else hook_rel
         signal = ""
         cfg = None
         if name == "codex" and codex_dir is not None:
@@ -69,13 +72,16 @@ def detect_hosts(
             cfg = home / rel
         elif repo is not None:
             cfg = repo / ".windsurf"
-        # windsurf is the one repo-scoped host: cascade_install writes
-        # <cwd>/.windsurf/hooks.json with no repo guard of its own, so the
-        # binary alone must not make it a candidate. Inside a git repo that
-        # path is a file the user can review and commit; outside one it is a
-        # stray directory in whatever folder the shell happened to be in.
+        # windsurf is the one repo-scoped host, and only for hooks:
+        # cascade_install writes <cwd>/.windsurf/hooks.json with no repo
+        # guard of its own, so the binary alone must not make it a
+        # candidate. Inside a git repo that path is a file the user can
+        # review and commit; outside one it is a stray directory in
+        # whatever folder the shell happened to be in. Its skills live at a
+        # home-scoped directory instead (~/.codeium/windsurf), so this guard
+        # does not apply to kind="skill".
         on_path = bool(shutil.which(binary, path=which_path))
-        if name == "windsurf" and on_path:
+        if name == "windsurf" and on_path and kind != "skill":
             on_path = repo is not None and _in_git_repo(repo)
         if cfg is not None and cfg.is_dir():
             signal = str(cfg)
@@ -120,11 +126,16 @@ def resolve_channels(
     for h in found:
         if not (h.present and h.wirable):
             continue
+        if kind == "skill":
+            if h.name == "claude" and claude_plugin_enabled(claude_dir):
+                h.channel = "plugin"
+            elif installer.skill_present(h.name):
+                h.channel = "settings"
+            continue
         if h.name == "claude":
             if claude_plugin_enabled(claude_dir):
                 h.channel = "plugin"
-            elif (installer.skill_present() if kind == "skill"
-                  else installer.claude_hooks_present()):
+            elif installer.claude_hooks_present():
                 h.channel = "settings"
         elif h.name == "codex" and installer.codex_hooks_present():
             h.channel = "settings"
