@@ -20,6 +20,33 @@ SETTINGS = CLAUDE_DIR / "settings.json"
 SKILLS_DIR = CLAUDE_DIR / "skills"
 SKILL_NAME = "scar-authoring"
 
+CODEX_SKILLS_DIR = Path.home() / ".codex" / "skills"
+CURSOR_SKILLS_DIR = Path.home() / ".cursor" / "skills"
+OPENCODE_SKILLS_DIR = Path.home() / ".config" / "opencode" / "skills"
+# Windsurf is Devin Desktop since 2026-06-02, but every on-disk path still
+# uses the old names. Renaming this key would break existing installs to fix
+# a label. Verified 2026-09-07: this directory already holds real skills.
+WINDSURF_SKILLS_DIR = Path.home() / ".codeium" / "windsurf" / "skills"
+
+SKILL_HOSTS = ("claude", "codex", "cursor", "opencode", "windsurf")
+
+
+def skill_dest(host: str) -> Path:
+    """Directory that holds the skill folder for `host`.
+
+    Built per call rather than as a module dict so a test monkeypatching
+    SKILLS_DIR is still honored. Every host gets its own native path: a
+    shared directory only works while every host keeps honoring it, and a
+    silent stop would be indistinguishable from success.
+    """
+    return {
+        "claude": SKILLS_DIR,
+        "codex": CODEX_SKILLS_DIR,
+        "cursor": CURSOR_SKILLS_DIR,
+        "opencode": OPENCODE_SKILLS_DIR,
+        "windsurf": WINDSURF_SKILLS_DIR,
+    }[host]
+
 # The pre-command-anchor script each kind was migrated from. Only these three
 # kinds ever had one; the mapping is per-kind so a legacy `precheck` script is
 # never mistaken for ownership of a different kind on the same event.

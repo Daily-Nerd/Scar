@@ -946,4 +946,31 @@ def test_skill_force_applies_to_install_only(skill_home, capsys):
     capsys.readouterr()
     assert main(["skill", "uninstall", "--runtime", "claude", "--force"]) == 2
     assert "--force applies to install only" in capsys.readouterr().out
+
+
+def test_skill_dest_resolves_every_host_to_its_native_path(monkeypatch):
+    home = Path("/tmp/fake-home")
+    monkeypatch.setattr(installer, "SKILLS_DIR", home / ".claude" / "skills")
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", home / ".codex" / "skills")
+    monkeypatch.setattr(installer, "CURSOR_SKILLS_DIR", home / ".cursor" / "skills")
+    monkeypatch.setattr(installer, "OPENCODE_SKILLS_DIR",
+                        home / ".config" / "opencode" / "skills")
+    monkeypatch.setattr(installer, "WINDSURF_SKILLS_DIR",
+                        home / ".codeium" / "windsurf" / "skills")
+
+    assert installer.skill_dest("claude") == home / ".claude" / "skills"
+    assert installer.skill_dest("codex") == home / ".codex" / "skills"
+    assert installer.skill_dest("cursor") == home / ".cursor" / "skills"
+    assert installer.skill_dest("opencode") == home / ".config" / "opencode" / "skills"
+    assert installer.skill_dest("windsurf") == home / ".codeium" / "windsurf" / "skills"
+
+
+def test_skill_dest_refuses_an_unknown_host():
+    with pytest.raises(KeyError):
+        installer.skill_dest("emacs")
+
+
+def test_skill_hosts_matches_the_dest_table():
+    for host in installer.SKILL_HOSTS:
+        assert installer.skill_dest(host)
     assert installer.skill_present()
