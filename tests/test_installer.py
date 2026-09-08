@@ -1045,6 +1045,24 @@ def test_uninstall_removes_only_the_named_host(tmp_path, monkeypatch):
     assert installer.skill_present("claude") is True
 
 
+def test_uninstall_on_a_host_with_nothing_installed_names_that_host(
+        tmp_path, monkeypatch, capsys):
+    """The not-installed branch is per host now. Saying only "not installed"
+    across five destinations tells a reader nothing about WHICH one was
+    empty, and this is the message they get when they mistype --runtime."""
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    installer.skill_install("claude")
+    capsys.readouterr()
+
+    assert installer.skill_uninstall("codex") == 0
+
+    out = capsys.readouterr().out
+    assert "not installed (codex)" in out
+    assert "claude" not in out
+    assert installer.skill_present("claude") is True
+
+
 def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
     dest = tmp_path / ".codex" / "skills"
