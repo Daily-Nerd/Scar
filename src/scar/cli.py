@@ -2823,9 +2823,12 @@ def _cmd_skill_lifecycle(args) -> int:
     if runtime is None and args.kind in ("install", "status"):
         def install_many(names: list[str], repo: Path, dry: bool) -> int:
             del repo  # every skill destination is home-scoped
+            # Worst exit code wins, same as _run_hook_installers. `|=` agrees
+            # with max only while every code is 0 or 1: 1|2 is 3, which is
+            # not a code this CLI ever returns.
             rc = 0
             for name in names:
-                rc |= skill_install(name, dry=dry)
+                rc = max(rc, skill_install(name, dry=dry))
             return rc
         return _lifecycle_no_runtime("skill", args, install_many, skill_status)
     # uninstall with no --runtime keeps targeting Claude: removal is out of
@@ -3049,7 +3052,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "skill", _cmd_skill_lifecycle, help="install, remove, or inspect the scar-authoring skill")
     p.add_argument("kind", choices=["install", "uninstall", "status"])
     p.add_argument("--dry-run", action="store_true",
-                   help="show changes without writing to ~/.claude/skills")
+                   help="show changes without writing to the host's skills directory")
     # One invocation, one target: --runtime names any host in the destination
     # registry (installer.SKILL_HOSTS), --all writes to every unserved host
     # detection finds, and no flag at all means detect and ask.
