@@ -20,7 +20,7 @@ every host on this machine.
 | Host | Destination | Confirmed loading it? |
 |---|---|---|
 | Claude Code | `~/.claude/skills/scar-authoring/` | Yes, observed in daily use |
-| Codex | `~/.codex/skills/scar-authoring/` | No. File is written and present on disk; nobody has watched Codex load it |
+| Codex | `$CODEX_HOME/skills/scar-authoring/`, and `~/.codex/skills/scar-authoring/` when that variable is unset | No. File is written and present on disk; nobody has watched Codex load it |
 | Cursor | `~/.cursor/skills/scar-authoring/` | No. Path is per vendor documentation only |
 | opencode | `~/.config/opencode/skills/scar-authoring/` | No. Path is per vendor documentation only |
 | Windsurf | `~/.codeium/windsurf/skills/scar-authoring/` | No. Path is per vendor documentation only |
