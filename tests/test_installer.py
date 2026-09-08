@@ -220,6 +220,15 @@ def skill_home(tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
     monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
     monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    # skill_status(host=None) reports every SKILL_HOSTS entry, so every host
+    # dir needs its own tmp_path sibling here too, or a bare `skill status`
+    # under this fixture reads the real machine's ~/.codex, ~/.cursor, etc.
+    monkeypatch.setattr(installer, "CODEX_SKILLS_DIR", tmp_path / ".codex" / "skills")
+    monkeypatch.setattr(installer, "CURSOR_SKILLS_DIR", tmp_path / ".cursor" / "skills")
+    monkeypatch.setattr(installer, "OPENCODE_SKILLS_DIR",
+                        tmp_path / ".config" / "opencode" / "skills")
+    monkeypatch.setattr(installer, "WINDSURF_SKILLS_DIR",
+                        tmp_path / ".codeium" / "windsurf" / "skills")
     monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
     (tmp_path / "nobin").mkdir()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
@@ -949,6 +958,7 @@ def test_skill_force_applies_to_install_only(skill_home, capsys):
     capsys.readouterr()
     assert main(["skill", "uninstall", "--runtime", "claude", "--force"]) == 2
     assert "--force applies to install only" in capsys.readouterr().out
+    assert installer.skill_present()
 
 
 def test_skill_dest_resolves_every_host_to_its_native_path(monkeypatch):
@@ -1020,4 +1030,3 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     assert installer.skill_install("codex", dry=True) == 0
 
     assert not dest.exists()
-    assert installer.skill_present()
