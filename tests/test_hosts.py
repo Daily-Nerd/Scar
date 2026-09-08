@@ -114,10 +114,55 @@ def test_wirable_and_hints_for_hook_kind(tmp_path):
     assert not by["opencode"].wirable and by["opencode"].hint == "scar agent config opencode"
 
 
-def test_skill_kind_wires_claude_only(tmp_path):
+def test_skill_kind_wires_every_known_host(tmp_path):
+    # Superseded by Task 3: codex, cursor, opencode and windsurf all gained a
+    # real skill destination, so none of them carries the "not supported
+    # yet" hint under kind="skill" any more (that test used to assert codex
+    # was the exception; now claude is not).
     by = {h.name: h for h in hosts.detect_hosts(tmp_path, None, kind="skill", path_env=_nobin(tmp_path))}
-    assert by["claude"].wirable
-    assert not by["codex"].wirable and "not supported yet" in by["codex"].hint
+    for name in ("claude", "codex", "windsurf", "cursor", "opencode"):
+        assert by[name].wirable, name
+        assert by[name].hint is None, name
+
+
+def test_skill_kind_marks_the_new_hosts_wirable(tmp_path):
+    home = tmp_path
+    for rel in (".claude", ".codex", ".cursor", ".config/opencode",
+                ".codeium/windsurf"):
+        (home / rel).mkdir(parents=True)
+
+    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="skill",
+                                                   path_env="")}
+
+    for name in ("claude", "codex", "cursor", "opencode", "windsurf"):
+        assert found[name].present is True, name
+        assert found[name].wirable is True, name
+
+
+def test_windsurf_skill_detection_is_home_scoped(tmp_path):
+    home = tmp_path
+    (home / ".codeium" / "windsurf").mkdir(parents=True)
+
+    found = {h.name: h for h in hosts.detect_hosts(home, None, kind="skill",
+                                                   path_env="")}
+
+    assert found["windsurf"].present is True
+    assert str(home / ".codeium" / "windsurf") in found["windsurf"].signal
+
+
+def test_windsurf_skill_present_via_path_with_no_repo_and_no_home_dir(tmp_path):
+    # The binary-on-PATH repo-scope guard exists only to protect hooks
+    # (cascade_install writes <cwd>/.windsurf/hooks.json with no guard of its
+    # own). Skills are home-scoped (installer.skill_dests), so kind="skill"
+    # deliberately skips that guard. With no ~/.codeium/windsurf directory and
+    # repo=None, the binary alone must still mark windsurf present here — if
+    # the guard were ever re-added unconditionally, this would silently break
+    # `scar skill install --runtime windsurf` and no other test would notice.
+    bindir = _bin(tmp_path, "windsurf")
+    found = {h.name: h for h in hosts.detect_hosts(tmp_path, None, kind="skill",
+                                                   path_env=str(bindir))}
+    assert found["windsurf"].present is True
+    assert found["windsurf"].signal == "windsurf on PATH"
 
 
 def test_render_table_one_line_per_host(tmp_path):

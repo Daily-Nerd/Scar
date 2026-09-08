@@ -17,8 +17,40 @@ from pathlib import Path
 CLAUDE_DIR = Path.home() / ".claude"
 HOOKS_DIR = CLAUDE_DIR / "hooks"
 SETTINGS = CLAUDE_DIR / "settings.json"
-SKILLS_DIR = CLAUDE_DIR / "skills"
 SKILL_NAME = "scar-authoring"
+
+SKILL_HOSTS = ("claude", "codex", "cursor", "opencode", "windsurf")
+
+
+def skill_dests() -> dict[str, Path]:
+    """Every host's skill directory, resolved per call.
+
+    Home comes from CLAUDE_DIR, the one seam detection also resolves it
+    through (cli.py _detect reads CLAUDE_DIR.parent), and codex comes from
+    codex_home() because Codex honours $CODEX_HOME. A destination frozen
+    from Path.home() at import time would disagree with detection: install
+    would land in a directory the running agent never reads, and report
+    success. Every host gets its own native path, because a shared directory
+    only works while every host keeps honouring it, and a silent stop would
+    be indistinguishable from success.
+    """
+    home = CLAUDE_DIR.parent
+    return {
+        "claude": CLAUDE_DIR / "skills",
+        "codex": codex_home() / "skills",
+        "cursor": home / ".cursor" / "skills",
+        "opencode": home / ".config" / "opencode" / "skills",
+        # Windsurf is Devin Desktop since 2026-06-02, but every on-disk path
+        # still uses the old names. Renaming this key would break existing
+        # installs to fix a label. Observed 2026-09-07 on the maintainer's
+        # machine: this directory already holds real skills.
+        "windsurf": home / ".codeium" / "windsurf" / "skills",
+    }
+
+
+def skill_dest(host: str) -> Path:
+    """Directory that holds the skill folder for `host`."""
+    return skill_dests()[host]
 
 # The pre-command-anchor script each kind was migrated from. Only these three
 # kinds ever had one; the mapping is per-kind so a legacy `precheck` script is
@@ -906,17 +938,18 @@ def _skill_source() -> Path:
     return Path(str(files("scar").joinpath("skills") / SKILL_NAME))
 
 
-def skill_install(dry: bool = False) -> int:
+def skill_install(host: str = "claude", dry: bool = False) -> int:
     src = _skill_source()
     if not src.is_dir():
         print(f"skill source not found: {src}")
         return 1
-    dest = SKILLS_DIR / SKILL_NAME
+    root = skill_dest(host)
+    dest = root / SKILL_NAME
     print(f"[skill] install {SKILL_NAME} -> {dest}")
     if dry:
         print("install: done (dry-run, nothing written)")
         return 0
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
@@ -924,10 +957,10 @@ def skill_install(dry: bool = False) -> int:
     return 0
 
 
-def skill_uninstall(dry: bool = False) -> int:
-    dest = SKILLS_DIR / SKILL_NAME
+def skill_uninstall(host: str = "claude", dry: bool = False) -> int:
+    dest = skill_dest(host) / SKILL_NAME
     if not dest.exists():
-        print(f"[skill] {SKILL_NAME}: not installed")
+        print(f"[skill] {SKILL_NAME}: not installed ({host})")
         return 0
     print(f"[skill] remove {dest}")
     if not dry:
@@ -936,11 +969,16 @@ def skill_uninstall(dry: bool = False) -> int:
     return 0
 
 
-def skill_status() -> int:
-    dest = SKILLS_DIR / SKILL_NAME
-    print(f"skill {SKILL_NAME}: {'installed' if dest.exists() else 'not installed'} ({dest})")
+def skill_present(host: str = "claude") -> bool:
+    return (skill_dest(host) / SKILL_NAME).exists()
+
+
+def skill_status(host: str | None = None) -> int:
+    """One host, or every host when none is named. Printing the resolved
+    destination is the point: these paths come from vendor documentation,
+    so a person has to be able to see where a skill actually landed."""
+    for name in ((host,) if host else SKILL_HOSTS):
+        dest = skill_dest(name) / SKILL_NAME
+        state = "installed" if dest.exists() else "not installed"
+        print(f"skill {SKILL_NAME} [{name}]: {state} ({dest})")
     return 0
-
-
-def skill_present() -> bool:
-    return (SKILLS_DIR / SKILL_NAME).exists()

@@ -219,7 +219,11 @@ def skill_home(tmp_path, monkeypatch):
     claude.mkdir()
     monkeypatch.setattr(installer, "CLAUDE_DIR", claude)
     monkeypatch.setattr(installer, "SETTINGS", claude / "settings.json")
-    monkeypatch.setattr(installer, "SKILLS_DIR", claude / "skills")
+    # Patching CLAUDE_DIR is the whole isolation: skill_dests() resolves home
+    # as CLAUDE_DIR.parent, so every host destination moves under tmp_path
+    # with it, and a bare `skill status` cannot reach the real machine's
+    # ~/.cursor, ~/.codeium or ~/.config/opencode. Codex is the exception
+    # and gets CODEX_HOME below, because Codex itself honours that variable.
     monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
     (tmp_path / "nobin").mkdir()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
@@ -914,8 +918,20 @@ def test_skill_status_prints_host_table_then_skill_line(skill_home, capsys):
     assert main(["skill", "status"]) == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0].startswith("claude")
-    assert "not supported yet" in out
-    assert "skill scar-authoring: not installed" in out
+    # Task 3 widened detect_hosts(kind="skill") to mark codex, cursor,
+    # opencode and windsurf wirable too, so no host in this table carries
+    # the "not supported yet" hint any more.
+    assert "not supported yet" not in out
+    # skill_status(host=None) now reports every host from SKILL_HOSTS, not
+    # just claude: the destination registry (Task 1) and the host-aware
+    # skill functions (Task 2) turned "not installed" into a per-host line.
+    assert "skill scar-authoring [claude]: not installed" in out
+    for name in installer.SKILL_HOSTS:
+        assert f"[{name}]" in out
+        # Every printed destination is under this fixture's tmp home. A path
+        # outside it means a destination stopped following the seam and the
+        # status table is describing the developer's real machine.
+        assert str(skill_home.parent) in out.split(f"[{name}]: ")[1].splitlines()[0]
 
 
 def test_skill_flags_are_exclusive(tmp_path, monkeypatch, capsys):
@@ -947,3 +963,110 @@ def test_skill_force_applies_to_install_only(skill_home, capsys):
     assert main(["skill", "uninstall", "--runtime", "claude", "--force"]) == 2
     assert "--force applies to install only" in capsys.readouterr().out
     assert installer.skill_present()
+
+
+def test_skill_dest_resolves_every_host_to_its_native_path(tmp_path, monkeypatch):
+    # One seam moves every destination. Patching installer.CLAUDE_DIR is the
+    # documented way to relocate home (cli.py _detect resolves it as
+    # CLAUDE_DIR.parent), so a destination that does not follow it disagrees
+    # with detection about where the host lives.
+    home = tmp_path / "fake-home"
+    monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
+
+    assert installer.skill_dest("claude") == home / ".claude" / "skills"
+    assert installer.skill_dest("codex") == home / ".codex" / "skills"
+    assert installer.skill_dest("cursor") == home / ".cursor" / "skills"
+    assert installer.skill_dest("opencode") == home / ".config" / "opencode" / "skills"
+    assert installer.skill_dest("windsurf") == home / ".codeium" / "windsurf" / "skills"
+
+
+def test_skill_dest_for_codex_follows_codex_home(tmp_path, monkeypatch):
+    """Codex honours $CODEX_HOME and so does detection, through
+    installer.codex_home() (cli.py _detect). A destination built from
+    Path.home() ignores it, so `skill install --runtime codex` writes into a
+    directory Codex never reads and prints `install: done.` over it."""
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("CODEX_HOME", str(elsewhere))
+
+    assert installer.codex_home() == elsewhere
+    assert installer.skill_dest("codex") == elsewhere / "skills"
+
+
+def test_skill_dest_refuses_an_unknown_host():
+    with pytest.raises(KeyError):
+        installer.skill_dest("emacs")
+
+
+def test_skill_hosts_matches_the_dest_table():
+    """Three lists name the skill hosts: the skill_ok column of hosts._SPECS,
+    installer.SKILL_HOSTS, and the destination table. Nothing in the code
+    binds them, and a host present in the first but missing from the third
+    raises KeyError out of skill_install, through a path documented as never
+    raising to the shell (cli.py _lifecycle_flag_guard). Set equality is the
+    binding."""
+    from scar import hosts
+
+    detectable = {name for name, _h, _s, _b, _hook_ok, skill_ok in hosts._SPECS if skill_ok}
+
+    assert set(installer.skill_dests()) == set(installer.SKILL_HOSTS) == detectable
+
+
+def test_install_writes_the_skill_to_a_non_claude_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    dest = tmp_path / ".codex" / "skills"
+
+    assert installer.skill_install("codex") == 0
+
+    assert (dest / installer.SKILL_NAME / "SKILL.md").is_file()
+    assert installer.skill_present("codex") is True
+
+
+def test_install_is_idempotent_per_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    dest = tmp_path / ".cursor" / "skills"
+
+    assert installer.skill_install("cursor") == 0
+    first = (dest / installer.SKILL_NAME / "SKILL.md").read_text(encoding="utf-8")
+    assert installer.skill_install("cursor") == 0
+
+    assert (dest / installer.SKILL_NAME / "SKILL.md").read_text(encoding="utf-8") == first
+
+
+def test_uninstall_removes_only_the_named_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    installer.skill_install("codex")
+    installer.skill_install("claude")
+
+    assert installer.skill_uninstall("codex") == 0
+
+    assert installer.skill_present("codex") is False
+    assert installer.skill_present("claude") is True
+
+
+def test_uninstall_on_a_host_with_nothing_installed_names_that_host(
+        tmp_path, monkeypatch, capsys):
+    """The not-installed branch is per host now. Saying only "not installed"
+    across five destinations tells a reader nothing about WHICH one was
+    empty, and this is the message they get when they mistype --runtime."""
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    installer.skill_install("claude")
+    capsys.readouterr()
+
+    assert installer.skill_uninstall("codex") == 0
+
+    out = capsys.readouterr().out
+    assert "not installed (codex)" in out
+    assert "claude" not in out
+    assert installer.skill_present("claude") is True
+
+
+def test_dry_run_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    dest = tmp_path / ".codex" / "skills"
+
+    assert installer.skill_install("codex", dry=True) == 0
+
+    assert not dest.exists()

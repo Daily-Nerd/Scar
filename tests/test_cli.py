@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scar import symbols
+from scar import hosts, installer, symbols
 from scar.cli import main
 from scar.store import init_scars
 
@@ -4101,3 +4101,78 @@ def test_explicit_reviewer_at_a_tty_is_still_explicit(repo, capsys, monkeypatch)
 
     text = (repo / ".scars" / "0001-tried-x.deadend.md").read_text()
     assert "promoted_by_source: explicit" in text
+
+
+def test_skill_install_accepts_every_supported_runtime(tmp_path, monkeypatch, capsys):
+    # Detection must be fully controlled by the test, not inherited from the
+    # machine running it: PATH is pinned to an empty directory so no real
+    # `codex` binary can carry detection, installer.CLAUDE_DIR is patched so
+    # home resolves under tmp_path, and CODEX_HOME is pinned to a directory
+    # under that same tmp home. codex_home() reads $CODEX_HOME directly, so
+    # it is the one lever that decides both whether codex reads as present
+    # here AND where the skill lands: detection and skill_dests() resolve
+    # the Codex home through that same function.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+
+    assert main(["skill", "install", "--runtime", "codex"]) == 0
+
+    assert (codex_home / "skills" / installer.SKILL_NAME / "SKILL.md").is_file()
+
+
+def test_skill_install_refuses_an_undetected_host(tmp_path, monkeypatch, capsys):
+    # CLAUDE_DIR is the home seam skill_dests() resolves every destination
+    # through, so patching it puts the cursor destination under tmp_path.
+    # The refusal must fire before anything is written there.
+    monkeypatch.setattr(installer, "CLAUDE_DIR", tmp_path / ".claude")
+    monkeypatch.setattr(hosts, "detect_hosts", lambda *a, **k: [])
+
+    rc = main(["skill", "install", "--runtime", "cursor"])
+
+    assert rc == 1
+    assert "not detected" in capsys.readouterr().out
+    assert not (tmp_path / ".cursor").exists()
+
+
+def test_skill_install_refusal_honors_the_patched_home_not_the_real_one(
+        tmp_path, monkeypatch, capsys):
+    """Regression test for a defect this branch shipped once already: the
+    refusal used to resolve home via a bare Path.home() call, so it ignored
+    installer.CLAUDE_DIR whenever something patches it and only "worked" by
+    accident on a machine that happens to have a real ~/.claude. PATH is
+    pinned to an empty directory here, so the ONLY way "claude" can be
+    detected present is through the patched installer.CLAUDE_DIR, exactly
+    the seam _detect("skill") already uses for the no-runtime path.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+
+    # Absent: the patched host directory does not exist yet, so the refusal
+    # must fire even though this same process's REAL home may well have one.
+    rc = main(["skill", "install", "--runtime", "claude"])
+    assert rc == 1
+    assert "not detected" in capsys.readouterr().out
+    assert not (home / ".claude" / "skills").exists()
+
+    # Present: creating the patched directory is enough on its own, with no
+    # change to the real machine, to make the install proceed.
+    (home / ".claude").mkdir()
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    assert (home / ".claude" / "skills" / installer.SKILL_NAME / "SKILL.md").is_file()
+
+
+# test_skill_status_reports_every_host_destination lived here. It took only
+# capsys, so it ran detection and status against the real home, the real
+# PATH and the real cwd, and its assertion could not fail on any machine.
+# test_skill_status_prints_host_table_then_skill_line in tests/test_installer.py
+# makes the same per-host assertion under the isolated `skill_home` fixture,
+# and additionally checks each printed destination stays inside that home.
