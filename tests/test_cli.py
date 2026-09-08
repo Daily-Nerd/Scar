@@ -4123,6 +4123,37 @@ def test_skill_install_refuses_an_undetected_host(tmp_path, monkeypatch, capsys)
     assert not (tmp_path / ".cursor").exists()
 
 
+def test_skill_install_refusal_honors_the_patched_home_not_the_real_one(
+        tmp_path, monkeypatch, capsys):
+    """Regression test for a defect this branch shipped once already: the
+    refusal used to resolve home via a bare Path.home() call, so it ignored
+    installer.CLAUDE_DIR whenever something patches it and only "worked" by
+    accident on a machine that happens to have a real ~/.claude. PATH is
+    pinned to an empty directory here, so the ONLY way "claude" can be
+    detected present is through the patched installer.CLAUDE_DIR, exactly
+    the seam _detect("skill") already uses for the no-runtime path.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(installer, "CLAUDE_DIR", home / ".claude")
+    monkeypatch.setattr(installer, "SKILLS_DIR", home / ".claude" / "skills")
+    monkeypatch.setenv("PATH", str(tmp_path / "nobin"))
+    (tmp_path / "nobin").mkdir()
+
+    # Absent: the patched host directory does not exist yet, so the refusal
+    # must fire even though this same process's REAL home may well have one.
+    rc = main(["skill", "install", "--runtime", "claude"])
+    assert rc == 1
+    assert "not detected" in capsys.readouterr().out
+    assert not (home / ".claude" / "skills").exists()
+
+    # Present: creating the patched directory is enough on its own, with no
+    # change to the real machine, to make the install proceed.
+    (home / ".claude").mkdir()
+    assert main(["skill", "install", "--runtime", "claude"]) == 0
+    assert (home / ".claude" / "skills" / installer.SKILL_NAME / "SKILL.md").is_file()
+
+
 def test_skill_status_reports_every_host_destination(capsys):
     assert main(["skill", "status"]) == 0
 

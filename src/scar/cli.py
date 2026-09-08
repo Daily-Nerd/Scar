@@ -2837,8 +2837,12 @@ def _cmd_skill_lifecycle(args) -> int:
         _plugin_refusal("the scar-authoring skill is", "~/.claude/skills")
         return 0
     if args.kind == "install":
-        detected = {h.name for h in hosts.detect_hosts(
-            Path.home(), None, kind="skill") if h.present}
+        # Same detection seam _lifecycle_no_runtime uses via _detect("skill"):
+        # a second way to resolve "home" here (e.g. a bare Path.home() call)
+        # would ignore whatever a test or a caller has patched onto
+        # installer.CLAUDE_DIR, the one fact this branch is supposed to
+        # share with the rest of the CLI.
+        detected = {h.name for h in _detect("skill")[0] if h.present}
         if runtime not in detected:
             # Refusing beats creating the tree: a directory scar invents is
             # one no host reads, and the failure would be silent.
