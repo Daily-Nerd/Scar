@@ -61,7 +61,7 @@ The pre-edit hook injects the scar; the post-edit check runs the regex against t
 
 ## Injection and the fatigue budget
 
-Hard rule: **max 3 scars injected per edit, max ~120 words each**, ranked by `severity × confidence × anchor specificity`. Path-only matches render as one-line hints; the full body is injected only when content or a symbol actually trips the pattern, and a body already shown for the same file within 4 hours collapses to a one-liner. A scar system that warns constantly is a scar system that gets uninstalled.
+Hard rule: **max 3 scars injected per edit, max ~120 words each**, ranked by `severity × confidence × anchor specificity`. Path-only matches render as one-line hints; the full body is injected only when content or a symbol actually trips the pattern, and a body already shown for the same file within 4 hours collapses to a one-liner. When the cap cut scars, the injected header says so (`3 of 5 matched shown`) and points at `scar why` for the rest. A scar system that warns constantly is a scar system that gets uninstalled.
 
 ## Lifecycle
 
