@@ -31,7 +31,7 @@ from .match import (
     armed_scar_ids_for_targets,
     find_violations_for_targets,
     has_content_signal,
-    rank_and_census_for_targets,
+    rank_census_and_total_for_targets,
 )
 from .render import injection_context
 from .store import ScarStore
@@ -174,7 +174,8 @@ def pretool() -> int:
         if store is None or not targets:
             return 0
         firing, broken = store.scan()
-        matches, census = rank_and_census_for_targets(store, targets, firing=firing)
+        matches, census, distinct_total = rank_census_and_total_for_targets(
+            store, targets, firing=firing)
 
         full, demoted = [], []
         for match in matches:
@@ -188,7 +189,8 @@ def pretool() -> int:
                 full.append(match.scar)
 
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=_demoted_for_render(demoted))
+                                    demoted=_demoted_for_render(demoted),
+                                    matched_total=distinct_total)
         if context:
             _emit("PreToolUse", context)
 

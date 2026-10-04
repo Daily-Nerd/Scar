@@ -633,3 +633,22 @@ def test_no_content_signal_keeps_pure_rank_order(tmp_path):
         (m.scar.id for m in hits),
         key=lambda i: next(-m.rank for m in hits if m.scar.id == i))
     assert 5 not in [m.scar.id for m in hits][:3] or len(hits) == 3
+
+
+def test_targets_distinct_total_counts_each_scar_once_across_targets(tmp_path):
+    """#321: five scars match BOTH files. The pre-cap total for a merged
+    multi-target injection is 5 distinct scars, never 10 (one per target)."""
+    from scar.match import rank_census_and_total_for_targets
+    store = make_repo(tmp_path)
+    for i in range(3, 6):
+        (tmp_path / ".scars" / f"000{i}-x{i}.fence.md").write_text(
+            FENCE.replace("id: 1", f"id: {i}"))
+    (tmp_path / ".scars" / "0002-y.fence.md").exists()
+    targets = [(tmp_path / "payments" / "a.py", "import redis"),
+               (tmp_path / "payments" / "b.py", "nothing"),
+               (Path("/elsewhere/c.py"), "import redis")]
+    matches, census, distinct = rank_census_and_total_for_targets(
+        store, targets, top_k=2)
+    assert len(matches) == 2
+    assert census["payments/a.py"].total + census["payments/b.py"].total > distinct
+    assert distinct == census["payments/a.py"].total

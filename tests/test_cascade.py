@@ -434,3 +434,49 @@ def test_corrupt_fire_state_does_not_crash(repo, monkeypatch, capsys):
     cascade.fire_state_path().write_text("{not json", encoding="utf-8")
     feed(monkeypatch, write_payload(repo, "lower the sleep to 3"))
     assert main(["cascade-hook"]) == cascade.BLOCK_EXIT
+
+
+# --- the cap is named in the block text (#321) ---
+
+def test_block_text_names_the_pre_cap_total_when_the_cap_cut(repo, monkeypatch, capsys):
+    for i in range(3, 7):
+        (repo / ".scars" / f"000{i}-uv{i}.deadend.md").write_text(
+            COMMAND_SCAR.replace("id: 2", f"id: {i}").replace(
+                "Bare uv sync strips extras", f"Uv scar {i}"))
+    (repo / ".scars" / "0002-uv-sync.deadend.md").write_text(COMMAND_SCAR)
+    feed(monkeypatch, command_payload(repo, "uv sync"))
+    assert main(["cascade-hook"]) == cascade.BLOCK_EXIT
+    err = capsys.readouterr().err
+    assert "3 of 5 matched shown" in err
+    assert len(err) < 900
+
+
+def test_block_text_is_unchanged_when_nothing_was_cut(repo, monkeypatch, capsys):
+    feed(monkeypatch, write_payload(repo, "lower the sleep to 3"))
+    assert main(["cascade-hook"]) == cascade.BLOCK_EXIT
+    err = capsys.readouterr().err
+    assert "matched shown" not in err
+    assert "1 scar(s) record why it went wrong before" in err
+
+
+def test_block_text_ignores_a_census_smaller_than_what_it_shows():
+    from scar.model import Scar
+    s = Scar(type="fence", title="t", id=1, severity="high", confidence=0.9,
+             status="active", body="Body.")
+    base = cascade._block_text([s])
+    assert cascade._block_text([s], matched_total=0) == base
+    assert cascade._block_text([s], matched_total=None) == base
+    assert cascade._block_text([s], matched_total=1) == base
+
+
+def test_block_text_makes_no_cut_claim_for_a_partition_not_a_cap(repo, monkeypatch, capsys):
+    """Two matches, under the cap: one blocks, the other is surfaced to the
+    human on stdout only. Nothing was cut, so the block must not say 1 of 2."""
+    (repo / ".scars" / "0002-path-only.fence.md").write_text(
+        FENCE.replace("id: 1", "id: 2").replace("Sleep is 7s for vendor window", "Path only")
+        .replace('  - pattern: "lower.{0,10}sleep"\n', ""))
+    feed(monkeypatch, write_payload(repo, "lower the sleep to 3"))
+    assert main(["cascade-hook"]) == cascade.BLOCK_EXIT
+    captured = capsys.readouterr()
+    assert "scar [#2]" in captured.out       # the second match went to the human
+    assert "matched shown" not in captured.err

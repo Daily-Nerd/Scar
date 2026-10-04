@@ -418,7 +418,8 @@ def precheck() -> int:
             else:
                 full.append(m.scar)
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=_demoted_for_render(demoted))
+                                    demoted=_demoted_for_render(demoted),
+                                    matched_total=census.total if census else None)
         hits = [m.scar for m in matches]
         if context:
             _emit("PreToolUse", context)
@@ -465,7 +466,8 @@ def _precheck_command_payload(payload: dict,
             else:
                 full.append(m.scar)
         context = injection_context(full, broken, store.scars_dir,
-                                    demoted=_demoted_for_render(demoted))
+                                    demoted=_demoted_for_render(demoted),
+                                    matched_total=census.total)
         if context:
             _emit("PreToolUse", context)
         edit_id = payload.get("tool_use_id")

@@ -282,7 +282,9 @@ def test_codex_pretool_preserves_global_three_scar_budget(
     feed(monkeypatch, codex_patch(repo, patch))
     assert main(["hook", "codex-pretool"]) == 0
     ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
-    assert "3 match(es)" in ctx
+    # #321: both files match the same five scars, so the pre-cap total is the
+    # five DISTINCT scars, not ten (one per file).
+    assert "3 of 5 matched shown" in ctx
     assert ctx.count("[fence #") == 3
 
 

@@ -43,7 +43,7 @@ from .hooks import (
 )
 from .match import (MatchCensus, armed_scar_ids, find_violations,
                     has_content_signal, rank_and_census_for_edit)
-from .render import compact_block, rule_line
+from .render import compact_block, cut_total, rule_line
 from .store import ScarStore
 
 # NOT 2, which is what Cascade reads as "block". argparse also exits 2 on an
@@ -120,16 +120,19 @@ def _remember_fired(keys: list[str]) -> bool:
     return True
 
 
-def _block_text(scars: list) -> str:
+def _block_text(scars: list, matched_total: int | None = None) -> str:
     """What the agent reads on the bounced action. Compact tier only — this
     renders as an error in the Cascade UI, and the agent needs the constraint,
-    not the essay."""
+    not the essay. When the fatigue cap cut matches, the closing line says so
+    in a clause (#321); no census, or one that shows no cut, changes nothing."""
+    cut = cut_total(len(scars), matched_total)
+    shown = "" if cut is None else f"{len(scars)} of {cut} matched shown. "
     return (
         f"SCAR blocked this action once — {len(scars)} scar(s) record why it "
         "went wrong before. Read them, then retry: the identical action goes "
         "through, informed.\n\n"
         + compact_block(scars)
-        + "\n\nFull records in .scars/ (`scar why <path>`).")
+        + f"\n\n{shown}Full records in .scars/ (`scar why <path>`).")
 
 
 def _partition(matches: list, fired: dict[str, float], trajectory: str,
@@ -173,7 +176,10 @@ def _respond(store: ScarStore, trajectory: str, target: str,
     if not to_block:
         return 0
     scars = [m.scar for m in to_block]
-    print(_block_text(scars), file=sys.stderr)
+    # Only a cap cut counts: matches the partition above sent to stdout instead
+    # of the block were not cut, so the census must exceed the whole list.
+    capped = census.total if census and census.total > len(matches) else None
+    print(_block_text(scars, capped), file=sys.stderr)
     # Firing log parity (#106) records what the AGENT saw, and here only a
     # block reaches it — a stdout line went to the human. So the surface-only
     # matches are NOT logged, and in particular not as `demoted_ids`: that

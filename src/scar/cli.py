@@ -24,8 +24,9 @@ from .lint import _is_redos_prone, lint_text
 from .match import (
     find_violations_for_diff,
     has_content_signal,
+    rank_and_census_for_edit,
+    rank_diff_with_total,
     rank_matches_for_diff,
-    rank_matches_for_edit,
     rank_matches_for_paths,
 )
 from .model import Scar, parse_scar_text
@@ -2250,6 +2251,8 @@ def _cmd_inject(args) -> int:
     # Max 3 injected is a format-level guarantee (SPEC/ROADMAP), not a tuning
     # knob — clamp so no caller can widen the fatigue budget (#91).
     top_k = min(args.top_k, 3)
+    # Pre-cut total for the header (#321). None where no honest count exists.
+    matched_total: int | None = None
     if args.diff:
         try:
             diff_text = Path(args.diff).read_text(encoding="utf-8")
@@ -2257,20 +2260,23 @@ def _cmd_inject(args) -> int:
             # ValueError covers NUL-byte paths; a hook must never crash on
             # whatever lands in --diff — fall back to treating it as text
             diff_text = args.diff
-        matches = rank_matches_for_diff(store, diff_text, top_k=top_k)
+        matches, matched_total = rank_diff_with_total(store, diff_text, top_k=top_k)
     elif getattr(args, "shell_command", None):
-        from .match import rank_matches_for_command
-        matches = rank_matches_for_command(store, args.shell_command, top_k=top_k)
+        from .match import rank_and_census_for_command
+        matches, cmd_census = rank_and_census_for_command(
+            store, args.shell_command, top_k=top_k)
+        matched_total = cmd_census.total
     elif args.path:
-        matches = rank_matches_for_edit(store, Path(args.path).resolve(),
-                                        args.content or "", top_k=top_k)
+        matches, edit_census = rank_and_census_for_edit(
+            store, Path(args.path).resolve(), args.content or "", top_k=top_k)
+        matched_total = edit_census.total if edit_census else None
     else:
         matches = []
     full = [m.scar for m in matches if has_content_signal(m)]
     demoted = [(m.scar, "path-only match")
                for m in matches if not has_content_signal(m)]
     context = injection_context(full, store.broken(), store.scars_dir,
-                                demoted=demoted)
+                                demoted=demoted, matched_total=matched_total)
     if context:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": args.hook_event, "additionalContext": context}}))
