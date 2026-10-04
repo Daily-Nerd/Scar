@@ -96,3 +96,38 @@ def test_no_demoted_is_backward_compatible():
     old = injection_context([scar], [], Path(".scars"))
     new = injection_context([scar], [], Path(".scars"), demoted=None)
     assert old == new
+
+
+# --- the cap is named in the header when it cut scars (#321) ---
+
+def test_header_names_the_pre_cap_total_when_the_cap_cut(
+):
+    ctx = injection_context([_scar(), _scar(id=8)], [], Path(".scars"),
+                            matched_total=5)
+    assert "2 of 5 matched shown" in ctx
+    assert "`scar why` on the path" in ctx
+
+
+def test_header_counts_demoted_scars_as_shown_when_the_cap_cut():
+    ctx = injection_context([_scar()], [], Path(".scars"),
+                            demoted=[(_scar(id=8), "path-only match")],
+                            matched_total=4)
+    assert "2 of 4 matched shown" in ctx
+
+
+def test_header_is_byte_identical_when_nothing_was_cut():
+    scar = _scar()
+    base = injection_context([scar], [], Path(".scars"))
+    assert injection_context([scar], [], Path(".scars"), matched_total=1) == base
+    assert injection_context([scar], [], Path(".scars"), matched_total=None) == base
+    assert "of" not in base.split("\n")[0].split("(")[1]
+
+
+def test_header_ignores_a_census_smaller_than_what_was_rendered():
+    scar = _scar()
+    base = injection_context([scar, _scar(id=8)], [], Path(".scars"))
+    for bogus in (0, 1):
+        assert injection_context([scar, _scar(id=8)], [], Path(".scars"),
+                                 matched_total=bogus) == base
+    assert "None" not in injection_context([scar], [], Path(".scars"),
+                                           matched_total=None)

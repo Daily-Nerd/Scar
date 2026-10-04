@@ -205,13 +205,17 @@ def _match_target(firing: list, root: Path, rel_path: str,
     return ranked
 
 
+def _dedup_key(match: ScarMatch) -> int | str:
+    return match.scar.id if match.scar.id is not None else match.source.as_posix()
+
+
 def merge_best_matches(match_lists: list[list[ScarMatch]],
                        top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Dedup matches across targets, keeping each scar's best rank."""
     best: dict[int | str, ScarMatch] = {}
     for matches in match_lists:
         for match in matches:
-            key = match.scar.id if match.scar.id is not None else match.source.as_posix()
+            key = _dedup_key(match)
             if key not in best or match.rank > best[key].rank:
                 best[key] = match
     return _select_top(sorted(best.values(), key=lambda m: -m.rank), top_k)
@@ -281,19 +285,21 @@ def _rank_command(store: ScarStore, command: str,
     return ranked
 
 
-def rank_and_census_for_targets(store: ScarStore,
-                                targets: list[tuple[Path | str, str]],
-                                top_k: int = DEFAULT_TOP_K,
-                                firing: list | None = None,
-                                ) -> tuple[list[ScarMatch], dict[str, MatchCensus]]:
-    """rank_matches_for_targets plus one census per target, keyed by path
-    relative to the store (#286). Taken before the per-target cut and before
-    merge_best_matches dedups across files, because the multi-file writers
-    log one row per file. A target outside the store gets no entry."""
+def rank_census_and_total_for_targets(store: ScarStore,
+                                      targets: list[tuple[Path | str, str]],
+                                      top_k: int = DEFAULT_TOP_K,
+                                      firing: list | None = None,
+                                      ) -> tuple[list[ScarMatch],
+                                                 dict[str, MatchCensus], int]:
+    """rank_and_census_for_targets plus the number of DISTINCT scars that
+    matched any target before the cut (#321). The per-target census cannot give
+    that: summing it counts one scar once per file, so a header built from it
+    would overstate. The key is the same one merge_best_matches dedups on."""
     if firing is None:
         firing = store.firing()
     lists = []
     census: dict[str, MatchCensus] = {}
+    distinct: set[int | str] = set()
     for target, new_content in targets:
         path = Path(target)
         path = path if path.is_absolute() else store.root / path
@@ -303,8 +309,23 @@ def rank_and_census_for_targets(store: ScarStore,
             continue
         ranked = _match_target(firing, store.root, rel, new_content)
         census[rel] = census_of(ranked)
+        distinct.update(_dedup_key(m) for m in ranked)
         lists.append(_select_top(ranked, top_k))
-    return merge_best_matches(lists, top_k), census
+    return merge_best_matches(lists, top_k), census, len(distinct)
+
+
+def rank_and_census_for_targets(store: ScarStore,
+                                targets: list[tuple[Path | str, str]],
+                                top_k: int = DEFAULT_TOP_K,
+                                firing: list | None = None,
+                                ) -> tuple[list[ScarMatch], dict[str, MatchCensus]]:
+    """rank_matches_for_targets plus one census per target, keyed by path
+    relative to the store (#286). Taken before the per-target cut and before
+    merge_best_matches dedups across files, because the multi-file writers
+    log one row per file. A target outside the store gets no entry."""
+    matches, census, _distinct = rank_census_and_total_for_targets(
+        store, targets, top_k, firing)
+    return matches, census
 
 
 def rank_matches_for_targets(store: ScarStore,
@@ -353,6 +374,14 @@ def rank_matches_for_diff(store: ScarStore, diff_text: str,
                           top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Top-k firing scar matches across a unified diff (one store walk)."""
     return rank_matches_for_targets(store, _diff_targets(diff_text), top_k)
+
+
+def rank_diff_with_total(store: ScarStore, diff_text: str,
+                         top_k: int = DEFAULT_TOP_K) -> tuple[list[ScarMatch], int]:
+    """rank_matches_for_diff plus the distinct pre-cut total (#321)."""
+    matches, _census, distinct = rank_census_and_total_for_targets(
+        store, _diff_targets(diff_text), top_k)
+    return matches, distinct
 
 
 @dataclass(frozen=True)

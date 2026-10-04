@@ -965,3 +965,40 @@ def test_log_firing_records_empty_armed_ids_rather_than_omitting_them(
 
     rec = json.loads((tmp_path / "state" / "firing-log.jsonl").read_text().strip())
     assert rec["armed_ids"] == []
+
+
+# --- the cap is named in the injected header (#321) ---
+
+def test_precheck_header_names_the_pre_cap_total_when_top_k_cut(repo, monkeypatch, capsys):
+    """Five scars match payments/, top_k keeps three. The header must say so
+    instead of rendering `3 match(es)` as if that were everything."""
+    for i in range(2, 6):
+        (repo / ".scars" / f"000{i}-x{i}.fence.md").write_text(
+            SECOND_FENCE.replace("id: 2", f"id: {i}").replace("Retry needs backoff", f"S{i}"))
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "3 of 5 matched shown" in ctx
+    assert "3 match(es)" not in ctx
+
+
+def test_precheck_header_is_unchanged_when_nothing_was_cut(repo, monkeypatch, capsys):
+    feed(monkeypatch, {"tool_input": {"file_path": str(repo / "payments" / "retry.py"),
+                                      "new_string": "lower the sleep to 3"}})
+    assert main(["hook", "precheck"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "(1 match(es))" in ctx
+    assert "matched shown" not in ctx
+
+
+def test_precheck_command_header_names_the_pre_cap_total_when_top_k_cut(
+        command_repo, monkeypatch, capsys):
+    for i in range(3, 7):
+        (command_repo / ".scars" / f"000{i}-uv{i}.deadend.md").write_text(
+            COMMAND_SCAR.replace("id: 2", f"id: {i}").replace(
+                "Bare uv sync strips extras", f"Uv scar {i}"))
+    feed(monkeypatch, {"tool_input": {"command": "uv sync"}, "cwd": str(command_repo)})
+    assert main(["hook", "precheck-command"]) == 0
+    ctx = out_json(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert "3 of 5 matched shown" in ctx

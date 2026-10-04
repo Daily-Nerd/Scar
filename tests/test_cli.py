@@ -326,8 +326,9 @@ def test_inject_top_k_clamped_to_three(repo, capsys):
     assert main(["inject", "--path", "src/thing.py", "--content", "",
                  "--top-k", "50"]) == 0
     ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
-    assert "3 match(es)" in ctx
-    assert "match(es)" in ctx and "5 match(es)" not in ctx
+    # #321: the header names the cut instead of rendering 3 as the whole set.
+    assert "3 of 5 matched shown" in ctx
+    assert "5 match(es)" not in ctx
 
 
 def test_inject_diff_with_binary_file_never_crashes(repo, capsys, tmp_path):
@@ -4176,3 +4177,37 @@ def test_skill_install_refusal_honors_the_patched_home_not_the_real_one(
 # test_skill_status_prints_host_table_then_skill_line in tests/test_installer.py
 # makes the same per-host assertion under the isolated `skill_home` fixture,
 # and additionally checks each printed destination stays inside that home.
+
+
+def test_inject_diff_total_counts_each_scar_once_across_files(repo, capsys):
+    # #321: five scars match both files of the diff; the pre-cap total is 5
+    # distinct scars, not 10.
+    init_scars(repo)
+    for i in range(1, 6):
+        (repo / ".scars" / f"000{i}-s{i}.deadend.md").write_text(
+            _active_scar(i, f"Scar number {i}"))
+    diff = """\
+diff --git a/src/a.py b/src/a.py
+--- a/src/a.py
++++ b/src/a.py
+@@ -1 +1 @@
+-x
++y
+diff --git a/src/b.py b/src/b.py
+--- a/src/b.py
++++ b/src/b.py
+@@ -1 +1 @@
+-x
++y
+"""
+    assert main(["inject", "--diff", diff]) == 0
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "3 of 5 matched shown" in ctx
+
+
+def test_inject_header_unchanged_when_nothing_was_cut(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "0001-s1.deadend.md").write_text(_active_scar(1, "Only one"))
+    assert main(["inject", "--path", "src/thing.py", "--content", ""]) == 0
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "(1 match(es))" in ctx

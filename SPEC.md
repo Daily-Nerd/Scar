@@ -117,7 +117,7 @@ Also `PostToolUse`/stop-hook prompt: *"You appear to have abandoned approach X a
 
 ### 4.3 Ranking and the fatigue budget
 
-Hard rule: **max 3 scars injected per edit, max ~120 words each.** A scar system that warns constantly is a scar system that gets uninstalled. Ranking: `severity_weight × confidence × anchor_specificity`, sorted descending (`confidence` is the static authored weight — see §5). Everything else is reachable via `scar why` but not pushed.
+Hard rule: **max 3 scars injected per edit, max ~120 words each.** A scar system that warns constantly is a scar system that gets uninstalled. Ranking: `severity_weight × confidence × anchor_specificity`, sorted descending (`confidence` is the static authored weight, see §5). Everything else is reachable via `scar why` but not pushed. The cut is never silent (#321): when more scars matched than the cap allows, the injection header reads `3 of 5 matched shown` (the count is distinct scars, taken before the cut). With no census the header makes no claim about a total, and when nothing was cut it is unchanged.
 
 ## 5. Lifecycle
 

@@ -29,6 +29,17 @@ def rule_line(body: str, max_chars: int = 140) -> str:
     return rule[:max_chars]
 
 
+def cut_total(shown: int, matched_total: int | None) -> int | None:
+    """The pre-cap total, but only when it is a believable claim that the cap
+    cut something (#321). None means no census (the target was outside the
+    store, or the caller never counted), which is not a zero: the header then
+    says nothing about a total. A total at or below what is shown cannot mean
+    a cut, so it is dropped too rather than rendered as a nonsense ratio."""
+    if matched_total is None or matched_total <= shown:
+        return None
+    return matched_total
+
+
 def compact_block(scars: list[Scar]) -> str:
     """The most conservative tier: label line + one rule line per scar, no
     bodies. For channels where the render itself costs the user something —
@@ -39,10 +50,15 @@ def compact_block(scars: list[Scar]) -> str:
 
 def injection_context(scars: list[Scar], broken: list[Path],
                       scars_dir: Path, max_body: int = MAX_BODY_CHARS,
-                      demoted: list[tuple[Scar, str]] | None = None) -> str:
+                      demoted: list[tuple[Scar, str]] | None = None,
+                      matched_total: int | None = None) -> str:
     """The additionalContext payload: full matched blocks + demoted one-liners
     + broken-file warning. Demotion is visible, never silent (principle 3):
-    a demoted scar keeps its label line plus the reason it was demoted."""
+    a demoted scar keeps its label line plus the reason it was demoted.
+
+    `matched_total` is the number of distinct scars that matched BEFORE the
+    fatigue cap (#321). The cap is the one silent path, so when it cut, the
+    header says how many were shown out of how many matched."""
     parts = []
     demoted = demoted or []
     total = len(scars) + len(demoted)
@@ -50,9 +66,12 @@ def injection_context(scars: list[Scar], broken: list[Path],
         blocks = [f"{label_line(s)}\n{s.body[:max_body]}" for s in scars]
         blocks += [f"{label_line(s)} — {reason}; full record: `scar why` on the path"
                    for s, reason in demoted]
+        cut = cut_total(total, matched_total)
+        count = (f"{total} match(es)" if cut is None else
+                 f"{total} of {cut} matched shown; the rest: `scar why` on the path")
         parts.append(
             "SCAR pre-edit check — negative knowledge anchored to code you are "
-            f"about to modify ({total} match(es)). Honor these unless the "
+            f"about to modify ({count}). Honor these unless the "
             "user explicitly overrides; full records in .scars/.\n\n"
             + "\n\n".join(blocks))
     if broken:
