@@ -508,14 +508,17 @@ def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
         return 1
-    failed = 0
     files = store._scar_files() + store.candidates()
     findings_by_file: list[tuple[str, list]] = []
+    # Files, not findings: a file with several errors counts once, and the
+    # cross-store duplicate-id errors below add to the same set.
+    failed_files: set[str] = set()
     for f in files:
         findings = lint_text(f.read_text(encoding="utf-8"))
-        findings_by_file.append((str(f.relative_to(store.root)), findings))
+        rel = str(f.relative_to(store.root))
+        findings_by_file.append((rel, findings))
         if any(fi.level == "error" for fi in findings):
-            failed += 1
+            failed_files.add(rel)
 
     # Cross-store author drift (#182): the per-file rule in lint_text cannot
     # see a handle split ACROSS scars. Group every author by casefold; a fold
@@ -530,6 +533,29 @@ def _cmd_lint(args) -> int:
                                  parse_scar_text(f.read_text(encoding="utf-8"))))
         except ParseError:
             continue
+    # Duplicate ids: two branches that each promote a candidate both compute
+    # max id + 1, so after the second merge two scars share a number. Every
+    # file carrying a shared id gets the error, naming the others and the next
+    # free id. Detection only: which scar keeps the number is a human call,
+    # because firing-log rows and evidence notes already reference it.
+    id_files: dict[int, list[str]] = {}
+    for rel, parsed in parsed_files:
+        # 0 is the template's "assigned at promotion" placeholder, so every
+        # candidate carries it; real ids start at 1.
+        if parsed.id is not None and parsed.id > 0:
+            id_files.setdefault(parsed.id, []).append(rel)
+    shared = {i: rels for i, rels in id_files.items() if len(rels) > 1}
+    if shared:
+        next_free = store.next_id()
+        for scar_id, rels in sorted(shared.items()):
+            for rel in rels:
+                others = ", ".join(r for r in rels if r != rel)
+                findings_by_file.append((rel, [Finding(
+                    "error", f"duplicate id {scar_id} also carried by {others}; "
+                    f"renumber one of them (next free id is {next_free})")]))
+                failed_files.add(rel)
+    failed = len(failed_files)
+
     author_files: dict[str, dict[str, list[str]]] = {}
     for rel, parsed in parsed_files:
         for author in parsed.authors:
