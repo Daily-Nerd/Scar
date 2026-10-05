@@ -59,7 +59,7 @@ Do not reintroduce Redis (or any evicting store) for sessions unless sessions
 become stateless/re-derivable. Postgres-backed sessions are intentional.
 ```
 
-An `id` identifies one scar. `scar lint` reports an id carried by more than one file as an error on each of them (two branches that each promote a candidate both take the next number), naming the other files and the next free id. It does not renumber: firing-log rows and evidence notes already reference the number, so which scar keeps it is a human call.
+An `id` identifies one scar. `scar lint` reports an id carried by more than one numbered scar file as an error on each of them (two branches that each promote a candidate both take the next number), naming the other files and the next free id. It does not renumber: firing-log rows and evidence notes already reference the number, so which scar keeps it is a human call. Candidates are not checked: promotion assigns their id, and they never fire.
 
 ### Type semantics
 

@@ -535,14 +535,15 @@ def _cmd_lint(args) -> int:
             continue
     # Duplicate ids: two branches that each promote a candidate both compute
     # max id + 1, so after the second merge two scars share a number. Every
-    # file carrying a shared id gets the error, naming the others and the next
-    # free id. Detection only: which scar keeps the number is a human call,
-    # because firing-log rows and evidence notes already reference it.
+    # numbered scar file carrying a shared id gets the error, naming the others
+    # and the next free id. Candidates are left out: promote overwrites their
+    # id, they never fire, and lifecycle commands skip them, so an id on one
+    # means nothing. Detection only: which scar keeps the number is a human
+    # call, because firing-log rows and evidence notes already reference it.
+    numbered = {str(f.relative_to(store.root)) for f in store._scar_files()}
     id_files: dict[int, list[str]] = {}
     for rel, parsed in parsed_files:
-        # 0 is the template's "assigned at promotion" placeholder, so every
-        # candidate carries it; real ids start at 1.
-        if parsed.id is not None and parsed.id > 0:
+        if rel in numbered and parsed.id is not None:
             id_files.setdefault(parsed.id, []).append(rel)
     shared = {i: rels for i, rels in id_files.items() if len(rels) > 1}
     if shared:

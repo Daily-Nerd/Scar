@@ -4297,13 +4297,32 @@ def test_lint_duplicate_between_active_and_archived_scar(repo, capsys):
     assert capsys.readouterr().out.count("duplicate id 3") == 2
 
 
-def test_lint_duplicate_id_in_a_candidate_counts(repo, capsys):
+def test_lint_candidate_sharing_an_id_with_an_active_scar_is_not_an_error(repo, capsys):
+    """Promotion overwrites a candidate's id and candidates never fire, so an id
+    left on one (say, copied from an active scar) means nothing."""
     init_scars(repo)
     _write_scar(repo, "0001-a.deadend.md", 1)
     cand = repo / ".scars" / "candidates" / "tried-x.md"
     cand.write_text(CANDIDATE.replace("---\n", "---\nid: 1\n", 1))
-    assert main(["lint"]) == 1
-    assert "candidates/tried-x.md" in capsys.readouterr().out
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "duplicate id" not in out
+    assert "0 with errors" in out
+
+
+def test_lint_duplicate_message_omits_a_candidate_carrying_the_same_id(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    _write_scar(repo, "0001-b.deadend.md", 1, title="Tried Y, failed")
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(
+        CANDIDATE.replace("---\n", "---\nid: 1\n", 1))
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    dups = [f for f in data["findings"] if "duplicate id" in f["message"]]
+    assert len(dups) == 2
+    assert all("candidates" not in f["message"] for f in dups)
+    assert all("candidates" not in f["file"] for f in dups)
+    assert data["failed"] == 2
 
 
 def test_lint_duplicate_id_does_not_double_count_a_file_already_failing(repo, capsys):
