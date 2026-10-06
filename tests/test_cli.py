@@ -4352,3 +4352,352 @@ def test_lint_placeholder_id_zero_on_candidates_is_not_a_duplicate(repo, capsys)
             CANDIDATE.replace("---\n", "---\nid: 0\n", 1))
     assert main(["lint"]) == 0
     assert "duplicate id" not in capsys.readouterr().out
+
+
+# --- dead-shape lint warnings (#325) ---
+
+def _shape_scar(anchors, *, scar_id=1, status="active", violation=None,
+                title="shape under test"):
+    """A scar file body. `anchors` is a list of (kind, value) pairs; a
+    scar_id of None writes a candidate-style file with no id line."""
+    lines = ["---"]
+    if scar_id is not None:
+        lines.append(f"id: {scar_id}")
+    lines += ["type: fence", f"title: {title}", "severity: medium",
+              "confidence: 0.8", "created: 2026-08-01", 'authors: ["kib"]',
+              "anchors:"]
+    lines += [f'  - {kind}: "{value}"' for kind, value in anchors]
+    lines += ["evidence:", "  - issue: 325", f"status: {status}"]
+    if violation:
+        lines.append(f'violation: "{violation}"')
+    lines += ["---", "", "body", ""]
+    return "\n".join(lines)
+
+
+def _shape_repo(repo, *, fillers=24, markers=None):
+    """Commit `fillers` plain files. `markers` maps a filler index to its
+    text, so a test can plant content a pattern anchor will find."""
+    init_scars(repo)
+    markers = markers or {}
+    for i in range(fillers):
+        d = repo / "pkg"
+        d.mkdir(exist_ok=True)
+        (d / f"mod{i}.py").write_text(markers.get(i, "x = 1\n"))
+    _shape_commit(repo)
+    return repo
+
+
+def _shape_commit(repo):
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "seed"], cwd=repo, check=True)
+
+
+def _shape_lint(repo, capsys):
+    rc = main(["lint", "--json"])
+    return rc, json.loads(capsys.readouterr().out)
+
+
+def _shape_msgs(data, needle):
+    return [f["message"] for f in data["findings"] if needle in f["message"]]
+
+
+CANNOT_ARM = "violation can never arm"
+
+
+def test_lint_warns_when_command_only_scar_carries_a_violation(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-cmd.fence.md").write_text(_shape_scar(
+        [("command", "uv sync")], violation="uv pip"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    msgs = _shape_msgs(data, CANNOT_ARM)
+    assert len(msgs) == 1
+    assert "command anchors never arm a violation" in msgs[0]
+    assert chr(0x2014) not in msgs[0]
+
+
+def test_lint_warns_when_violation_path_anchor_matches_no_tracked_file(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-gone.fence.md").write_text(_shape_scar(
+        [("path", "nowhere/")], violation="bad_call"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    msgs = _shape_msgs(data, CANNOT_ARM)
+    assert len(msgs) == 1
+    assert "no path, symbol or path-matching pattern anchor matches a tracked file" in msgs[0]
+    assert "command anchors" not in msgs[0]
+    assert chr(0x2014) not in msgs[0]
+
+
+def test_lint_no_arm_warning_when_path_anchor_is_live(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-live.fence.md").write_text(_shape_scar(
+        [("path", "pkg/")], violation="bad_call"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_no_arm_warning_when_pattern_matches_a_tracked_path(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-pat.fence.md").write_text(_shape_scar(
+        [("pattern", r"mod3\.py")], violation="bad_call"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_arm_warning_when_pattern_matches_content_only(repo, capsys):
+    # Content never arms a violation (the matcher probes with empty content),
+    # so a pattern living only in file bodies leaves the violation dead.
+    _shape_repo(repo, markers={0: "needle_token = 1\n"})
+    (repo / ".scars" / "0001-body.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")], violation="bad_call"))
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, CANNOT_ARM)) == 1
+
+
+def test_lint_arm_check_ignores_scars_without_a_violation(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-novio.fence.md").write_text(_shape_scar(
+        [("path", "nowhere/")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_scars_own_file_does_not_arm_its_violation(repo, capsys):
+    _shape_repo(repo)
+    name = "0001-self.fence.md"
+    (repo / ".scars" / name).write_text(_shape_scar(
+        [("path", f".scars/{name}")], violation="bad_call"))
+    _shape_commit(repo)
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, CANNOT_ARM)) == 1
+
+
+def test_lint_other_scar_files_do_arm_a_scars_dir_anchor(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-dir.fence.md").write_text(_shape_scar(
+        [("path", ".scars/")], violation="bad_call"))
+    _shape_commit(repo)
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_arm_check_skips_archived_scars(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-old.fence.md").write_text(_shape_scar(
+        [("path", "nowhere/")], status="archived", violation="bad_call"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_arm_check_skipped_without_git(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-cmd.fence.md").write_text(_shape_scar(
+        [("command", "uv sync")], violation="uv pip"))
+    monkeypatch.chdir(tmp_path)
+    rc, data = _shape_lint(tmp_path, capsys)
+    assert rc == 0
+    assert _shape_msgs(data, CANNOT_ARM) == []
+
+
+def test_lint_arm_warning_reaches_plain_output(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-cmd.fence.md").write_text(_shape_scar(
+        [("command", "uv sync")], violation="uv pip"))
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert ".scars/0001-cmd.fence.md" in out and CANNOT_ARM in out
+    assert "0 with errors" in out
+
+
+DEAD_CAND = "candidate path anchor"
+
+
+def test_lint_candidate_dead_path_anchor_warns_naming_it(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "dead.md").write_text(_shape_scar(
+        [("path", "missing/dir/")], scar_id=None, status="candidate"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    msgs = _shape_msgs(data, DEAD_CAND)
+    assert len(msgs) == 1
+    assert "'missing/dir/'" in msgs[0]
+    assert "before promotion" in msgs[0]
+    assert chr(0x2014) not in msgs[0]
+    hit = [f for f in data["findings"] if DEAD_CAND in f["message"]][0]
+    assert hit["level"] == "warning"
+    assert hit["file"] == ".scars/candidates/dead.md"
+
+
+def test_lint_candidate_live_path_anchor_is_quiet(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "live.md").write_text(_shape_scar(
+        [("path", "pkg/")], scar_id=None, status="candidate"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, DEAD_CAND) == []
+
+
+def test_lint_candidate_reports_only_its_dead_anchor(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "mixed.md").write_text(_shape_scar(
+        [("path", "pkg/"), ("path", "ghost/")], scar_id=None,
+        status="candidate"))
+    _, data = _shape_lint(repo, capsys)
+    msgs = _shape_msgs(data, DEAD_CAND)
+    assert len(msgs) == 1 and "'ghost/'" in msgs[0]
+
+
+def test_lint_dead_anchor_check_leaves_numbered_scars_alone(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-gone.fence.md").write_text(_shape_scar(
+        [("path", "nowhere/")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, DEAD_CAND) == []
+
+
+def test_lint_candidate_with_only_pattern_anchors_is_not_reported(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "pat.md").write_text(_shape_scar(
+        [("pattern", "nothing_matches_this")], scar_id=None,
+        status="candidate"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, DEAD_CAND) == []
+
+
+def test_lint_dead_candidate_anchor_skipped_without_git(tmp_path, monkeypatch, capsys):
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "candidates" / "dead.md").write_text(_shape_scar(
+        [("path", "missing/")], scar_id=None, status="candidate"))
+    monkeypatch.chdir(tmp_path)
+    rc, data = _shape_lint(tmp_path, capsys)
+    assert rc == 0
+    assert _shape_msgs(data, DEAD_CAND) == []
+
+
+BROAD_PAT = "pattern anchor '"
+
+
+def test_lint_warns_on_pattern_matching_content_of_a_quarter(repo, capsys):
+    # 24 fillers + scaffold: plant the marker in enough files to reach 25%.
+    _shape_repo(repo, markers={i: "needle_token = 1\n" for i in range(12)})
+    (repo / ".scars" / "0001-wide.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")]))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    msgs = _shape_msgs(data, BROAD_PAT)
+    assert len(msgs) == 1
+    assert "'needle_token'" in msgs[0]
+    assert "of tracked files" in msgs[0] and "narrow" in msgs[0]
+    assert chr(0x2014) not in msgs[0]
+
+
+def test_lint_warns_on_pattern_matching_paths_of_a_quarter(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-wide.fence.md").write_text(_shape_scar(
+        [("pattern", r"^pkg/")]))
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, BROAD_PAT)) == 1
+
+
+def test_lint_silent_on_narrow_pattern_anchor(repo, capsys):
+    _shape_repo(repo, markers={0: "needle_token = 1\n"})
+    (repo / ".scars" / "0001-thin.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, BROAD_PAT) == []
+
+
+def test_pattern_breadth_skipped_in_small_repos(repo, capsys):
+    init_scars(repo)
+    for i in range(5):
+        (repo / f"f{i}.py").write_text("needle_token\n")
+    _shape_commit(repo)
+    (repo / ".scars" / "0001-wide.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, BROAD_PAT) == []
+
+
+def test_pattern_breadth_excludes_the_scars_own_file(repo, capsys):
+    # Fill to exactly one match short of 25% of the tracked files, then let
+    # the scar's own body (which quotes the pattern) supply the last one.
+    init_scars(repo)
+    (repo / "pkg").mkdir()
+    for i in range(24):
+        (repo / "pkg" / f"mod{i}.py").write_text("x = 1\n")
+    (repo / ".scars" / "0001-self.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")]))
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    total = len(subprocess.run(["git", "ls-files"], cwd=repo, check=True,
+                               capture_output=True, text=True).stdout.split())
+    need = -(-total // 4)  # ceil(25%)
+    for i in range(need - 1):
+        (repo / "pkg" / f"mod{i}.py").write_text("needle_token\n")
+    _shape_commit(repo)
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, BROAD_PAT) == []
+    # Control: one more outside match reaches the line, so the quiet above is
+    # the exclusion working and not a miscounted fixture.
+    (repo / "pkg" / f"mod{need - 1}.py").write_text("needle_token\n")
+    _shape_commit(repo)
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, BROAD_PAT)) == 1
+
+
+def test_pattern_breadth_skips_archived_scars(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-old.fence.md").write_text(_shape_scar(
+        [("pattern", r"^pkg/")], status="archived"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, BROAD_PAT) == []
+
+
+def test_pattern_breadth_ignores_an_invalid_regex(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-bad.fence.md").write_text(_shape_scar(
+        [("pattern", "([")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, BROAD_PAT) == []
+
+
+def test_all_three_dead_shape_warnings_leave_lint_clean_of_errors(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-cmd.fence.md").write_text(_shape_scar(
+        [("command", "uv sync")], violation="uv pip"))
+    (repo / ".scars" / "0002-wide.fence.md").write_text(_shape_scar(
+        [("pattern", r"^pkg/")], scar_id=2, title="wide pattern"))
+    (repo / ".scars" / "candidates" / "dead.md").write_text(_shape_scar(
+        [("path", "missing/")], scar_id=None, status="candidate"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0 and data["failed"] == 0
+    assert _shape_msgs(data, CANNOT_ARM)
+    assert _shape_msgs(data, DEAD_CAND)
+    assert _shape_msgs(data, BROAD_PAT)
+    assert {f["level"] for f in data["findings"]
+            if f["message"].startswith(("violation", "candidate", "pattern"))} == {"warning"}
+    assert main(["lint"]) == 0
+    assert "0 with errors" in capsys.readouterr().out
+
+
+def test_pattern_breadth_scans_past_the_hot_path_bound(repo, capsys):
+    # Offline lint reads the whole body (limit=None), as orphan liveness does
+    # (#259). A marker past the 64 KiB hot-path bound must still count.
+    deep = "# pad\n" * 14000 + "needle_token = 1\n"
+    assert len(deep) > 64 * 1024
+    _shape_repo(repo, markers={i: deep for i in range(12)})
+    (repo / ".scars" / "0001-deep.fence.md").write_text(_shape_scar(
+        [("pattern", "needle_token")]))
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, BROAD_PAT)) == 1
+
+
+def test_lint_command_plus_dead_path_anchor_gets_the_generic_reason(repo, capsys):
+    # Only a command-ONLY scar earns the command-anchor reason; with a path
+    # anchor present the fix is the path, not the anchor kind.
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-mix.fence.md").write_text(_shape_scar(
+        [("command", "uv sync"), ("path", "nowhere/")], violation="bad_call"))
+    _, data = _shape_lint(repo, capsys)
+    msgs = _shape_msgs(data, CANNOT_ARM)
+    assert len(msgs) == 1 and "command anchors" not in msgs[0]

@@ -611,6 +611,78 @@ def _cmd_lint(args) -> int:
                         "— too broad to discriminate; narrow it to the "
                         "files the scar actually protects")]))
 
+    # Three dead shapes (#325), all warnings: each is sometimes deliberate,
+    # and an error would block promotion on a judgment call.
+    if ctx is not None:
+        from .match import _anchor_signal, _pattern_anchor_matches
+        from .orphan import _path_anchor_live
+
+        # A violation that can never arm. The matcher arms a violation only
+        # when _anchor_signal is positive on an edited PATH with empty content,
+        # so this asks that same function over the tracked files rather than
+        # restating it (lint and the hooks must not disagree). The scar's own
+        # file is skipped, as it is in _armed_candidates (#148). `any` stops
+        # at the first arming path, so only an unarmable scar pays for a full
+        # sweep, and symbol anchors degrade to no signal without the extra.
+        for rel, parsed in parsed_files:
+            if parsed.status not in ("active", "challenged") or not parsed.violation:
+                continue
+            if any(_anchor_signal(parsed, p, "", store.root)[0] > 0
+                   for p in ctx.tracked_paths if p != rel):
+                continue
+            if (parsed.command_anchors and not parsed.path_anchors
+                    and not parsed.symbol_anchors and not parsed.pattern_anchors):
+                why = "command anchors never arm a violation"
+            else:
+                why = ("no path, symbol or path-matching pattern anchor "
+                       "matches a tracked file")
+            findings_by_file.append((rel, [Finding(
+                "warning", f"violation can never arm: {why}; the violation "
+                "regex is dead text until an anchor matches an edited path")]))
+
+        # A candidate path anchor that points at nothing. Orphan and
+        # partial-rot detection skip candidates, and promote only advises
+        # afterwards, so say it while the candidate is still being read. The
+        # code may not exist yet on purpose, hence a nudge and not an order.
+        for rel, parsed in parsed_files:
+            if rel in numbered:
+                continue
+            for anchor in parsed.path_anchors:
+                if not _path_anchor_live(anchor, ctx.tracked_paths):
+                    findings_by_file.append((rel, [Finding(
+                        "warning", f"candidate path anchor '{anchor}' matches "
+                        "no tracked file; before promotion, check the path "
+                        "(a scar anchored to nothing never fires)")]))
+
+        # Broad pattern anchors: the path-breadth rule above, applied to the
+        # pattern anchors it ignores. A pattern is matched against the path
+        # AND the content of the file being edited, so it counts a file when
+        # either matches. Anchors combine with OR, so a broad pattern beside
+        # a narrow path anchor narrows nothing. Same floor and line as the
+        # path check, same self-exclusion as _pattern_anchor_live, and the
+        # whole body is scanned (limit=None) for the reason given there.
+        n_tracked = len(ctx.tracked_paths)
+        if n_tracked >= 20:
+            for rel, parsed in parsed_files:
+                if parsed.status not in ("active", "challenged"):
+                    continue
+                for pattern in parsed.pattern_anchors:
+                    covered = sum(
+                        1 for p in ctx.tracked_paths
+                        if p != rel and (
+                            _pattern_anchor_matches(pattern, p)
+                            or (ctx.file_contents.get(p) and
+                                _pattern_anchor_matches(
+                                    pattern, ctx.file_contents[p],
+                                    limit=None))))
+                    share = covered / n_tracked
+                    if share >= 0.25:
+                        findings_by_file.append((rel, [Finding(
+                            "warning", f"pattern anchor '{pattern}' matches "
+                            f"{share:.0%} of tracked files ({covered}/{n_tracked}) "
+                            "by path or content; too broad to discriminate, "
+                            "narrow it to what the scar actually guards")]))
+
     # Firing-count review (#274): a scar that keeps firing without being
     # revised. Advisory like every other lifecycle signal here — only the
     # opt-in --fail-firing-review turns it into an exit code.
