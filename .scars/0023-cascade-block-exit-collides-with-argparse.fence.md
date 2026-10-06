@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 23
 type: fence
 title: Cascade's block code is 2, and so is argparse's error code — never exit 2 directly from cascade-hook
 severity: high
 confidence: 0.9
 created: 2026-08-04
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: src/scar/cascade.py
   - path: src/scar/installer.py
   - pattern: "cascade-hook"
 evidence:
   - issue: 197
-  - note: ".windsurf/hooks.json is committed and workspace-level, so a teammate on an older scar-cli runs whatever command string we wrote"
+  - note: .windsurf/hooks.json is committed and workspace-level, so a teammate on an older scar-cli runs whatever command string we wrote
 expires:
   condition: "Cascade gains a non-blocking context channel (an additionalContext equivalent), so blocking is no longer the injection path at all"
   review_after: 2027-02-04
-status: candidate
+status: active
 ---
 
 `scar cascade-hook` signals "block this action" with sentinel exit code 20,
