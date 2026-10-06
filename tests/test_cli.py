@@ -4211,3 +4211,144 @@ def test_inject_header_unchanged_when_nothing_was_cut(repo, capsys):
     assert main(["inject", "--path", "src/thing.py", "--content", ""]) == 0
     ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
     assert "(1 match(es))" in ctx
+
+
+# --- duplicate scar ids across files ---
+
+def _write_scar(repo, name, scar_id, status="active", title="Tried X, failed"):
+    head = "id: %d\n" % scar_id if scar_id is not None else ""
+    body = CANDIDATE.replace("status: candidate", f"status: {status}").replace(
+        "title: Tried X, failed", f"title: {title}")
+    path = repo / ".scars" / name
+    path.write_text("---\n" + head + body.split("---\n", 2)[1] + "---\n\nbody\n")
+    return path
+
+
+def test_lint_duplicate_id_is_an_error_on_both_files(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    _write_scar(repo, "0001-b.deadend.md", 1, title="Tried Y, failed")
+    assert main(["lint"]) == 1
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if "duplicate id" in ln]
+    assert len(lines) == 2
+    a = next(ln for ln in lines if ln.startswith(".scars/0001-a"))
+    b = next(ln for ln in lines if ln.startswith(".scars/0001-b"))
+    assert "id 1" in a and ".scars/0001-b.deadend.md" in a and "next free id is 2" in a
+    assert "also carried by .scars/0001-a.deadend.md;" in b
+    assert "also carried by .scars/0001-b.deadend.md;" in a
+    assert "2 with errors" in out
+    assert chr(0x2014) not in a
+
+
+def test_lint_duplicate_id_in_json_output(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    _write_scar(repo, "0001-b.deadend.md", 1, title="Tried Y, failed")
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    dups = [f for f in data["findings"] if "duplicate id" in f["message"]]
+    assert {f["file"] for f in dups} == {".scars/0001-a.deadend.md",
+                                         ".scars/0001-b.deadend.md"}
+    assert all(f["level"] == "error" for f in dups)
+    assert data["failed"] == 2
+
+
+def test_lint_distinct_ids_report_no_duplicate(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    _write_scar(repo, "0002-b.deadend.md", 2, title="Tried Y, failed")
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "duplicate id" not in out
+    assert "0 with errors" in out
+
+
+def test_lint_candidate_without_id_is_not_a_duplicate(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    (repo / ".scars" / "candidates" / "tried-y.md").write_text(CANDIDATE)
+    assert main(["lint"]) == 0
+    assert "duplicate id" not in capsys.readouterr().out
+
+
+def test_lint_three_files_sharing_one_id_name_both_others(repo, capsys):
+    init_scars(repo)
+    for n in "abc":
+        _write_scar(repo, f"0004-{n}.deadend.md", 4, title=f"Tried {n}, failed")
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    dups = [f for f in data["findings"] if "duplicate id" in f["message"]]
+    assert len(dups) == 3
+    first = next(f for f in dups if f["file"].endswith("0004-a.deadend.md"))
+    assert "0004-b.deadend.md" in first["message"]
+    assert "0004-c.deadend.md" in first["message"]
+    assert "next free id is 5" in first["message"]
+    assert data["failed"] == 3
+
+
+def test_lint_duplicate_between_active_and_archived_scar(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0003-live.deadend.md", 3)
+    _write_scar(repo, "0003-old.deadend.md", 3, status="archived",
+                title="Tried Z, failed")
+    assert main(["lint"]) == 1
+    assert capsys.readouterr().out.count("duplicate id 3") == 2
+
+
+def test_lint_candidate_sharing_an_id_with_an_active_scar_is_not_an_error(repo, capsys):
+    """Promotion overwrites a candidate's id and candidates never fire, so an id
+    left on one (say, copied from an active scar) means nothing."""
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace("---\n", "---\nid: 1\n", 1))
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "duplicate id" not in out
+    assert "0 with errors" in out
+
+
+def test_lint_duplicate_message_omits_a_candidate_carrying_the_same_id(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    _write_scar(repo, "0001-b.deadend.md", 1, title="Tried Y, failed")
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(
+        CANDIDATE.replace("---\n", "---\nid: 1\n", 1))
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    dups = [f for f in data["findings"] if "duplicate id" in f["message"]]
+    assert len(dups) == 2
+    assert all("candidates" not in f["message"] for f in dups)
+    assert all("candidates" not in f["file"] for f in dups)
+    assert data["failed"] == 2
+
+
+def test_lint_duplicate_id_does_not_double_count_a_file_already_failing(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    bad = _write_scar(repo, "0001-b.deadend.md", 1, title="Tried Y, failed")
+    bad.write_text(bad.read_text().replace("severity: medium", "severity: bogus"))
+    assert main(["lint", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["failed"] == 2
+
+
+def test_lint_unparseable_file_does_not_crash_duplicate_check(repo, capsys):
+    init_scars(repo)
+    _write_scar(repo, "0001-a.deadend.md", 1)
+    (repo / ".scars" / "0002-bad.deadend.md").write_text("# nope\n")
+    assert main(["lint"]) == 1
+    assert "duplicate id" not in capsys.readouterr().out
+
+
+def test_lint_placeholder_id_zero_on_candidates_is_not_a_duplicate(repo, capsys):
+    """The template ships `id: 0` ("assigned at promotion"), so every candidate
+    written from it carries 0. That is unassigned, not a shared number."""
+    init_scars(repo)
+    for name in ("tried-x", "tried-y"):
+        (repo / ".scars" / "candidates" / f"{name}.md").write_text(
+            CANDIDATE.replace("---\n", "---\nid: 0\n", 1))
+    assert main(["lint"]) == 0
+    assert "duplicate id" not in capsys.readouterr().out

@@ -652,3 +652,30 @@ def test_targets_distinct_total_counts_each_scar_once_across_targets(tmp_path):
     assert len(matches) == 2
     assert census["payments/a.py"].total + census["payments/b.py"].total > distinct
     assert distinct == census["payments/a.py"].total
+
+
+def test_targets_two_files_sharing_an_id_both_survive_the_merge(tmp_path):
+    """A shared id (two branches each promoted a candidate) must not make the
+    multi-target path drop one scar: dedup keys on the file, not the number."""
+    from scar.match import rank_census_and_total_for_targets
+    store = make_repo(tmp_path)
+    (tmp_path / ".scars" / "0001-zz-twin.fence.md").write_text(
+        FENCE.replace("Sleep is 7s", "Twin of the sleep scar"))
+    targets = [(tmp_path / "payments" / "a.py", "x"),
+               (tmp_path / "payments" / "b.py", "x")]
+    matches, _census, distinct = rank_census_and_total_for_targets(
+        store, targets, top_k=5)
+    files = sorted(m.source.name for m in matches)
+    assert files == ["0001-vendor.fence.md", "0001-zz-twin.fence.md"]
+    assert distinct == 2
+
+
+def test_targets_one_scar_via_two_files_still_collapses_to_best_rank(tmp_path):
+    from scar.match import rank_census_and_total_for_targets
+    store = make_repo(tmp_path)
+    targets = [(tmp_path / "payments" / "a.py", "x"),
+               (tmp_path / "payments" / "b.py", "x")]
+    matches, _census, distinct = rank_census_and_total_for_targets(
+        store, targets, top_k=5)
+    assert [m.scar.id for m in matches] == [1]
+    assert distinct == 1

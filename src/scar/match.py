@@ -205,14 +205,17 @@ def _match_target(firing: list, root: Path, rel_path: str,
     return ranked
 
 
-def _dedup_key(match: ScarMatch) -> int | str:
-    return match.scar.id if match.scar.id is not None else match.source.as_posix()
+def _dedup_key(match: ScarMatch) -> str:
+    # The source file, not the id: one scar is one file, and two files can
+    # carry the same id (two branches each promoted a candidate). Keying on the
+    # id would collapse two different scars and drop the lower-ranked one.
+    return match.source.as_posix()
 
 
 def merge_best_matches(match_lists: list[list[ScarMatch]],
                        top_k: int = DEFAULT_TOP_K) -> list[ScarMatch]:
     """Dedup matches across targets, keeping each scar's best rank."""
-    best: dict[int | str, ScarMatch] = {}
+    best: dict[str, ScarMatch] = {}
     for matches in match_lists:
         for match in matches:
             key = _dedup_key(match)
@@ -299,7 +302,7 @@ def rank_census_and_total_for_targets(store: ScarStore,
         firing = store.firing()
     lists = []
     census: dict[str, MatchCensus] = {}
-    distinct: set[int | str] = set()
+    distinct: set[str] = set()
     for target, new_content in targets:
         path = Path(target)
         path = path if path.is_absolute() else store.root / path
