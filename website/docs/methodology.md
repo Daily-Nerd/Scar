@@ -14,6 +14,7 @@ This page is the permanent record of how the number is produced, what the first 
 
 - SCAR fires **pre-edit**: a `PreToolUse` hook injects negative knowledge anchored to the code being touched, before the agent edits it.
 - A scar may declare an optional `violation: "<regex>"` — a **post-edit tripwire** (`PostToolUse` / `scar check --diff`) that runs against the diff the agent just produced.
+- `scar sweep` runs the same tripwire over every tracked file the scar arms on, read-only, and writes no firing rows.
 - The firing log records both events, giving a **fired→violated rate per scar**.
 
 Honesty is carved into the design:
@@ -98,4 +99,5 @@ scar init
 scar stats          # enforcement, retrieval floor, and demotion counts for this repo
 SCAR_LOG_ZERO_HITS=1        # opt in to recording no-match edits — earns a retrieval RATE
 scar check --diff changes.patch --exit-code   # the same tripwire, CI-side
+scar sweep                                    # the same tripwire over the whole tree, no firing rows
 ```

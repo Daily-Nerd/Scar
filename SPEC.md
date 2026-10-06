@@ -85,6 +85,7 @@ Plus a **content fingerprint** (normalized-token hash of the protected region) u
 ```
 scar init                 # create .scars/ with a seeded example candidate; installs nothing (hooks are explicit: scar hook install)
 scar check <path|diff>    # scars relevant to a path or staged diff; exit code for CI
+scar sweep                # run every armed violation over the whole tree; read-only, exit 0 unless --exit-code
 scar why <path>           # human-readable history of pain for a file/dir
 scar challenge <id>       # open a challenge: contest staleness with evidence
 scar harvest              # mine git history, emit candidate scars to .scars/candidates/
@@ -169,8 +170,8 @@ All harvest output is `candidates/`, never active. Precision over recall: a harv
 
 ## 9. Machine-readable output contract
 
-Nine subcommands accept `--json`: `lint`, `status`, `check`, `why`, `stats`,
-`gc`, `orphan`, `reanchor`, `draft-check`. Two more are machine-mode by
+Ten subcommands accept `--json`: `lint`, `status`, `check`, `sweep`, `why`,
+`stats`, `gc`, `orphan`, `reanchor`, `draft-check`. Two more are machine-mode by
 design: `scar inject` (hook JSON or silence) and `scar brief --compact`.
 
 Everything in this section is a **promise to external consumers**. It exists
@@ -226,6 +227,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `lint` | `files` int, `findings` array, `failed` int, `orphans`, `partial_rot`, `symbol_drift`, `revivals`, `reverse_hints`, `unreachable_evidence` arrays, `shallow_clone` bool | `findings[]`: `file`, `level`, `message` |
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
+| `sweep` | `files` int (tracked files swept), `skipped` int (tracked files with no readable content: oversized or binary), `scars` int (scars armed on at least one swept file), `hits` array | `hits[]`: `id` int, `type`, `severity`, `title`, `source` (scar file, repo-relative), `path`, `line` int (1-based), `excerpt` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
 | `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `command_firings` int, `firings_kind_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines` |

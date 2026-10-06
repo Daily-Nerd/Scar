@@ -40,6 +40,7 @@ GUARANTEED: dict[str, set[str]] = {
     "status": {"scars_dir", "active", "challenged", "candidates", "review_due",
                "orphan_detected", "orphaned", "partial_rot", "broken", "counts"},
     "check": {"paths", "scars"},
+    "sweep": {"files", "skipped", "scars", "hits"},
     "why": {"path", "records"},
     "stats": {"repo", "total_firings", "per_scar", "most_fired", "last_fired",
               "never_fired", "demotions", "edits_observed", "injection_rate",
@@ -62,6 +63,7 @@ ARGV: dict[str, list[str]] = {
     "lint": ["lint", "--json"],
     "status": ["status", "--json"],
     "check": ["check", "src/", "--json"],
+    "sweep": ["sweep", "--json"],
     "why": ["why", "src/", "--json"],
     "stats": ["stats", "--json"],
     "gc": ["gc", "--dry-run", "--json"],
@@ -76,6 +78,8 @@ ITEM_KEYS: dict[tuple[str, str], set[str]] = {
     ("status", "active"): {"id", "type", "severity", "title"},
     ("check", "scars"): {"id", "type", "severity", "confidence", "status",
                          "title", "body"},
+    ("sweep", "hits"): {"id", "type", "severity", "title", "source", "path",
+                        "line", "excerpt"},
     ("why", "records"): {"id", "type", "status", "title", "file", "body"},
     ("stats", "per_scar"): {"id", "count", "violations"},
     ("gc", "candidates"): {"name", "age_days"},
@@ -271,3 +275,17 @@ def test_spec_documents_every_json_subcommand():
 def test_contract_table_matches_the_documented_commands():
     """This file and SPEC §9.3 must describe the same set of commands."""
     assert set(GUARANTEED) == _json_subcommands_from_spec()
+
+
+def test_sweep_hit_item_keys_are_present(repo, capsys):
+    """The shared fixture's scar has no `violation:`, so sweep.hits is empty
+    there and the ITEM_KEYS clause would skip. Plant a hit so it is enforced."""
+    (repo / ".scars" / "0002-v.fence.md").write_text(
+        _active_scar(2, "Scar two").replace(
+            "status: active", 'violation: "x = 1"\nstatus: active'),
+        encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    data = _payload("sweep", capsys)
+    assert data["hits"], "fixture should produce a hit"
+    missing = ITEM_KEYS[("sweep", "hits")] - set(data["hits"][0])
+    assert not missing, f"sweep.hits[] dropped promised keys: {sorted(missing)}"

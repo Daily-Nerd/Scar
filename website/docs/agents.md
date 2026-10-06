@@ -177,6 +177,7 @@ One tight line per scar, severity-ordered, byte-capped, plain text with omission
 ```bash
 scar check src/ --exit-code                   # gate on firing scars
 scar check --diff changes.patch --exit-code   # gate on violation: tripwires against a diff
+scar sweep --exit-code                        # same tripwires over the whole tree, read-only; hits fail the build
 scar lint                                     # format, dead tripwires, overdue reviews, rot
 ```
 

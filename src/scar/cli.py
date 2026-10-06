@@ -22,6 +22,8 @@ from rich_argparse import RichHelpFormatter
 from .firing_log import read_firing_log_records
 from .lint import _is_redos_prone, lint_text
 from .match import (
+    _armed_candidates,
+    _violation_lines,
     find_violations_for_diff,
     has_content_signal,
     rank_and_census_for_edit,
@@ -992,6 +994,64 @@ def _cmd_check(args) -> int:
                   tty=lambda: _check_rich(label, hits, violations), plain=plain)
 
     if getattr(args, "exit_code", False) and (hits or violations):
+        return 1
+    return 0
+
+
+def _sweep_rich(hits, summary: str) -> None:
+    from rich.markup import escape
+
+    console = output.console
+    for h in hits:
+        console.print(f"{escape(h['path'])}:{h['line']}: [red]scar #{h['id']}[/] "
+                      f"({h['type']}): {escape(h['title'])}")
+        console.print(f"  {escape(h['excerpt'].strip())}", style="dim")
+    console.print(summary)
+
+
+def _cmd_sweep(args) -> int:
+    """Run every active/challenged scar's violation regex over the tracked tree
+    as it stands (#326). Read-only: writes no firing-log row, because a sweep is
+    not an edit. Reports and exits 0; --exit-code turns a hit into exit 1."""
+    store = _require_store()
+    if store is None:
+        return 1
+    ctx = _repo_context(store)
+    if ctx is None:
+        print("sweep needs a git repository (git ls-files failed)")
+        return 1
+    firing = store.firing()
+    swept = skipped = 0
+    armed_ids: set[int] = set()
+    found: list[dict] = []
+    for rel in ctx.tracked_paths:
+        content = ctx.file_contents.get(rel)
+        if content is None:
+            skipped += 1
+            continue
+        swept += 1
+        for scar, rel_source in _armed_candidates(firing, store.root, rel):
+            armed_ids.add(scar.id)
+            for line_no, excerpt in _violation_lines(scar.violation, content):
+                found.append({"id": scar.id, "type": scar.type,
+                              "severity": scar.severity, "title": scar.title,
+                              "source": str(rel_source), "path": rel,
+                              "line": line_no, "excerpt": excerpt})
+    found.sort(key=lambda h: (h["id"] is None, h["id"] or 0, h["path"], h["line"]))
+    data = {"files": swept, "skipped": skipped, "scars": len(armed_ids),
+            "hits": found}
+    summary = (f"swept {swept} files, skipped {skipped}, "
+               f"{len(armed_ids)} scars armed, {len(found)} hits")
+
+    def plain():
+        for h in found:
+            print(f"{h['path']}:{h['line']}: scar #{h['id']} ({h['type']}): {h['title']}")
+            print("  " + h["excerpt"].strip())
+        print(summary)
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _sweep_rich(found, summary), plain=plain)
+    if getattr(args, "exit_code", False) and found:
         return 1
     return 0
 
@@ -3023,6 +3083,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exit-code", action="store_true",
                    help="exit 1 if any scar fires on the checked path(s)/diff, or any "
                         "violation tripped (CI gate); default is always 0 (back-compat)")
+
+    p = _add(sub, "sweep", _cmd_sweep,
+             help="run every armed violation over the tracked tree (read-only, writes no firing rows)")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p.add_argument("--exit-code", action="store_true",
+                   help="exit 1 if the sweep finds any hit (CI gate); default is always 0")
 
     p = _add(sub, "why", _cmd_why, help="history of pain for a path (any status)")
     p.add_argument("path")

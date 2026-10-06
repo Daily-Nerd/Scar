@@ -45,6 +45,7 @@ scar promote redis-sessions.md   # candidate -> active
 
 ```bash
 scar check src/auth/       # which scars are anchored here? (--exit-code for CI)
+scar sweep                 # run every violation: regex over the whole tree (read-only)
 scar why src/auth/         # full history of pain for a path
 scar status                # repo health: active / orphaned / challenged / expiring
 scar harvest               # mine git history for candidate scars

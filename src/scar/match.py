@@ -416,6 +416,36 @@ def _violation_excerpt(pattern: str, text: str) -> str | None:
     return capped[line_start:line_end][:120]
 
 
+def _violation_lines(pattern: str, text: str) -> list[tuple[int, str]]:
+    """Every (1-based line number, trimmed line) where `pattern` matches.
+    Each line is reported once however many times it matches. Invalid regex ->
+    [] (lint's job; mirrors _violation_excerpt).
+
+    Scans the WHOLE text, unlike _violation_excerpt: the 64 KiB bound belongs to
+    the edit hot path, and the sweep reads files offline that are already capped
+    at MAX_CONTENT_BYTES (same reasoning as _pattern_anchor_live). The ReDoS
+    defense stays lint._is_redos_prone() at the gate (landmine #11)."""
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return []
+    out: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    line_no, pos = 1, 0  # line_no is the line that holds offset `pos`
+    for m in rx.finditer(text):
+        line_no += text.count("\n", pos, m.start())
+        pos = m.start()
+        if line_no in seen:
+            continue
+        seen.add(line_no)
+        line_start = text.rfind("\n", 0, pos) + 1
+        line_end = text.find("\n", pos)
+        if line_end == -1:
+            line_end = len(text)
+        out.append((line_no, text[line_start:line_end][:120]))
+    return out
+
+
 def _armed_candidates(firing: list, root: Path, rel_path: str):
     """(scar, rel_source) for every firing scar that COULD produce a violation
     on rel_path: armed with a violation regex, not the scar's own file, and
