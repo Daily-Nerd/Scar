@@ -245,3 +245,33 @@ def test_sweep_counts_an_empty_file_as_swept_not_skipped(repo, capsys):
     _track(repo)
     code, data = _sweep_json(capsys)
     assert data["skipped"] == 0
+
+
+# --- the TTY renderer --------------------------------------------------------
+
+def _force_tty(monkeypatch):
+    import scar.output as out
+    monkeypatch.setattr(out, "is_tty", lambda: True)
+
+
+def test_sweep_tty_renders_hits_and_summary(repo, capsys, monkeypatch):
+    (repo / ".scars" / "0042-nosleep.fence.md").write_text(_scar(42, "src/", SLEEP))
+    _write(repo, "src/a.py", "x = 1\ntime.sleep(1) [x]\n")
+    _track(repo)
+    _force_tty(monkeypatch)
+    capsys.readouterr()
+    assert main(["sweep"]) == 0
+    out = capsys.readouterr().out
+    assert "src/a.py:2:" in out
+    assert "scar #42" in out
+    assert "No raw sleep" in out
+    assert "time.sleep(1) [x]" in out  # brackets survive rich markup
+    assert "swept 4 files, skipped 0, 1 scars armed, 1 hits" in out
+
+
+def test_sweep_tty_with_no_hits_prints_only_the_summary(repo, capsys, monkeypatch):
+    _force_tty(monkeypatch)
+    capsys.readouterr()
+    assert main(["sweep"]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1 and lines[0].startswith("swept ")
