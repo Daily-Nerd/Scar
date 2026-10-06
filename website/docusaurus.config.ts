@@ -48,6 +48,8 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // Social preview card for og:image and twitter:image (#330).
+    image: 'img/social-card.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
