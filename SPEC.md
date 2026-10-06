@@ -377,8 +377,8 @@ CI, and never emits JSON.
 A scar rendered as a one-liner was demoted for one of two reasons, and they are
 opposite evidence. A **path-only** demotion means the anchor proved the file
 was in scope and nothing in the edit matched: a near miss. A **cooldown**
-demotion means the edit content matched (a pattern hit, a symbol resolved, a
-command matched) and the full body was withheld only because it had been shown
+demotion means the edit content matched (a pattern hit, a symbol the edit
+names, a command matched) and the full body was withheld only because it had been shown
 in the last four hours: a hit we chose not to repeat.
 
 `demoted_ids` lists both in one field. `demotion_reasons` records which is
@@ -406,9 +406,18 @@ never recoverable from the log.
 
 `matched` records what `_match_target` returned before `_select_top` truncated
 it: `{"total": n, "content": c, "path_only": p}` with `content + path_only ==
-total`. `content` matched the edit itself (a pattern hit, a symbol resolved, a
-command matched). `path_only` matched nothing but the file's location. The
-split is the same one the fatigue budget uses to tier, counted before it cuts.
+total`. `content` matched the edit itself (a pattern hit, a symbol the edit
+names, a command matched). `path_only` matched nothing but the file's location.
+The split is the same one the fatigue budget uses to tier, counted before it
+cuts.
+
+A symbol anchor yields one of two `matched_by` kinds. `symbol` means the file
+on disk defines the symbol and the edited text names it as a whole word (the
+innermost name, so `src/a.py::Store.save` looks for `save`); it is a content
+signal. `symbol_file` means the file defines the symbol but the edited text
+never names it; it counts as `path_only`, like a path anchor. The hook sees the
+new text without line numbers, so a name mention is the strongest proof
+available that the edit touched the symbol.
 
 The key is written by every shipped writer (edit, command, Codex, Cascade). It
 is **omitted** by a writer that did not count, never zeroed: zeros would claim

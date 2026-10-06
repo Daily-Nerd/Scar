@@ -79,10 +79,11 @@ class ScarMatch:
 
 
 # Signal types that prove the ACT is related to the scar (not merely the
-# file): a pattern hit inside the new content, a symbol resolution, or a
-# command anchor matching the command about to run. Path-prefix and
-# pattern-on-path matches only prove file proximity — they render as
-# one-line hints, not full bodies (precision engine).
+# file): a pattern hit inside the new content, a symbol the file defines AND
+# the edited text names, or a command anchor matching the command about to
+# run. Path-prefix, pattern-on-path, and symbol_file (the file defines the
+# symbol, the edit does not mention it) only prove file proximity: they
+# render as one-line hints, not full bodies (precision engine).
 CONTENT_SIGNALS = frozenset({"content_pattern", "symbol", "command"})
 
 
@@ -143,17 +144,30 @@ def _read_source_cached(abs_path: str, mtime: int) -> str | None:
 
 
 def _symbol_anchor_hits(anchors: tuple[str, ...] | list[str], rel_path: str,
-                        root: Path) -> bool:
-    """True iff any symbol anchor resolves in the file at root/rel_path.
-    Reads the file at most once per (path, mtime) via lru_cache and parses it
-    once via symbols.resolve_any. Degrades to False when the extra is absent."""
+                        root: Path, new_content: str) -> str | None:
+    """How a symbol anchor relates to an edit of root/rel_path: "symbol" when
+    the file defines it AND the edited text names it as a whole word,
+    "symbol_file" when the file defines it but the edit never mentions it,
+    None otherwise. The hook sees only the new text, no line numbers, so a
+    name mention is the strongest act-proof available; a definition in the
+    file alone proves proximity, nothing more. Reads the file at most once
+    per (path, mtime) via lru_cache and parses it once. Degrades to None when
+    the extra is absent."""
     from . import symbols
     if not symbols.symbols_available():
-        return False
+        return None
     source = _read_source(str((root / rel_path).resolve()))
     if source is None:
-        return False
-    return symbols.resolve_any(anchors, rel_path, source)
+        return None
+    resolved = symbols.resolved_anchors(anchors, rel_path, source)
+    if not resolved:
+        return None
+    for anchor in resolved:
+        name = symbols.anchor_name(anchor)
+        if new_content and re.search(r"\b" + re.escape(name) + r"\b",
+                                     new_content[:MAX_ANCHOR_SCAN]):
+            return "symbol"
+    return "symbol_file"
 
 
 def _anchor_signal(scar: Scar, rel_path: str, new_content: str,
@@ -165,9 +179,11 @@ def _anchor_signal(scar: Scar, rel_path: str, new_content: str,
             score = max(score, 2.0)
             matched.append("path")
     if root is not None and scar.symbol_anchors:
-        if _symbol_anchor_hits(scar.symbol_anchors, rel_path, root):
-            score = max(score, 2.25)
-            matched.append("symbol")
+        kind = _symbol_anchor_hits(scar.symbol_anchors, rel_path, root,
+                                   new_content)
+        if kind is not None:
+            score = max(score, 2.25 if kind == "symbol" else 2.0)
+            matched.append(kind)
     for pat in scar.pattern_anchors:
         if _pattern_anchor_matches(pat, rel_path):
             score = max(score, 1.5)

@@ -245,10 +245,76 @@ def test_symbol_anchor_fires_and_outranks_bare_path(tmp_path):
         "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
         "anchors:\n  - path: src\n  - symbol: SessionStore\nstatus: active\n---\nbody\n")
     store = ScarStore.discover(tmp_path)
-    matches = rank_matches_for_edit(store, tmp_path / "src" / "store.py", "")
+    matches = rank_matches_for_edit(store, tmp_path / "src" / "store.py",
+                                    "class SessionStore:\n")
     assert matches
     assert "symbol" in matches[0].matched_by
     assert matches[0].anchor_strength == 2.25
+
+
+def _symbol_scar(scars: Path, name: str, anchor: str) -> None:
+    (scars / name).write_text(
+        "---\ntype: deadend\ntitle: t\nseverity: medium\nconfidence: 1.0\n"
+        f"anchors:\n  - symbol: {anchor}\nstatus: active\n---\nbody\n")
+
+
+def _symbol_repo(tmp_path: Path) -> Path:
+    (tmp_path / "src").mkdir()
+    f = tmp_path / "src" / "store.py"
+    f.write_text("class SessionStore:\n    def save(self):\n        return 1\n\n"
+                 "def unrelated():\n    return 0\n")
+    (tmp_path / ".scars").mkdir()
+    return f
+
+
+@symbols_extra
+def test_symbol_anchor_edit_elsewhere_in_file_is_proximity_only(tmp_path):
+    # The file defines the symbol but the edited text never mentions it: that
+    # proves file proximity, not that the edit touched the symbol.
+    f = _symbol_repo(tmp_path)
+    _symbol_scar(tmp_path / ".scars", "s.md", "SessionStore")
+    store = ScarStore.discover(tmp_path)
+    matches = rank_matches_for_edit(store, f, "def unrelated():\n    return 2\n")
+    assert matches
+    assert "symbol_file" in matches[0].matched_by
+    assert "symbol" not in matches[0].matched_by
+    assert matches[0].anchor_strength == 2.0
+    assert not has_content_signal(matches[0])
+
+
+@symbols_extra
+def test_symbol_anchor_edit_mentioning_symbol_is_content_signal(tmp_path):
+    f = _symbol_repo(tmp_path)
+    _symbol_scar(tmp_path / ".scars", "s.md", "src/store.py::SessionStore.save")
+    store = ScarStore.discover(tmp_path)
+    matches = rank_matches_for_edit(store, f, "    def save(self):\n        return 2\n")
+    assert matches
+    assert "symbol" in matches[0].matched_by
+    assert "symbol_file" not in matches[0].matched_by
+    assert has_content_signal(matches[0])
+
+
+@symbols_extra
+def test_symbol_mention_is_whole_word(tmp_path):
+    # "SessionStoreFactory" is not a mention of SessionStore.
+    f = _symbol_repo(tmp_path)
+    _symbol_scar(tmp_path / ".scars", "s.md", "SessionStore")
+    store = ScarStore.discover(tmp_path)
+    matches = rank_matches_for_edit(store, f, "x = SessionStoreFactory()\n")
+    assert matches[0].matched_by == ("symbol_file",)
+
+
+@symbols_extra
+def test_census_splits_symbol_from_symbol_file(tmp_path):
+    from scar.match import rank_and_census_for_edit
+    f = _symbol_repo(tmp_path)
+    _symbol_scar(tmp_path / ".scars", "a.md", "SessionStore")
+    _symbol_scar(tmp_path / ".scars", "b.md", "unrelated")
+    store = ScarStore.discover(tmp_path)
+    _, census = rank_and_census_for_edit(store, f, "class SessionStore:\n")
+    assert census.total == 2
+    assert census.content == 1
+    assert census.path_only == 1
 
 
 @symbols_extra
@@ -305,6 +371,10 @@ def test_content_pattern_is_content_signal():
 
 def test_symbol_is_content_signal():
     assert has_content_signal(SimpleNamespace(matched_by=("symbol",)))
+
+
+def test_symbol_file_is_not_content_signal():
+    assert not has_content_signal(SimpleNamespace(matched_by=("symbol_file",)))
 
 
 def test_path_only_is_not_content_signal():

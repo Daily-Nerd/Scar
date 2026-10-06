@@ -206,8 +206,19 @@ def resolve_symbol(anchor: str, rel_path: str, source: str) -> tuple[int, int] |
 
 def resolve_any(anchors, rel_path: str, source: str) -> bool:
     """True iff ANY anchor resolves, parsing `source` exactly once."""
+    return bool(resolved_anchors(anchors, rel_path, source))
+
+
+def resolved_anchors(anchors, rel_path: str, source: str) -> list[str]:
+    """The anchors that resolve in `source`, parsing it exactly once."""
     tree = _parse(rel_path, source)
     if tree is None:
-        return False
+        return []
     root = tree.root_node
-    return any(_resolve_in_tree(root, a, rel_path) is not None for a in anchors)
+    return [a for a in anchors if _resolve_in_tree(root, a, rel_path) is not None]
+
+
+def anchor_name(anchor: str) -> str:
+    """The bare symbol name an anchor points at: `path::A.b` and `A.b` both
+    give `b`, the innermost definition. Stdlib-only; safe without the extra."""
+    return anchor.split("::", 1)[-1].rsplit(".", 1)[-1]
