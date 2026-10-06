@@ -471,6 +471,18 @@ denominators changed.
 hook recorded **anything**, so command rows and kind-unknown rows answer it
 just as well as edit rows do.
 
+`matched_by` on a firing row says which anchor kinds matched each scar that
+fired, keyed by the scar id as a string, kinds in rank order:
+`{"24": ["path", "symbol"], "1": ["content_pattern"]}`. `scar_ids` says that a
+scar fired and `matched` is a census for the whole edit; neither says what a
+given scar matched on. The kinds are opaque strings copied from the matcher, so
+a new anchor kind appears here without a format change.
+
+Every scar that fired has a non-empty list. The key is **omitted**, never
+emptied, when a writer has no match objects in hand, and a MISSING `matched_by`
+means the row predates the field, never "no kinds". Readers must not treat its
+absence as a value.
+
 ### 9.4 Enforcement
 
 `tests/test_json_contract.py` asserts every guaranteed key above against live

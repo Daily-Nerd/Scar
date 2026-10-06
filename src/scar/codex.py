@@ -18,6 +18,7 @@ from .hooks import (
     _context_bytes,
     _demoted_for_render,
     _demotion_reasons,
+    _matched_by_of,
     _emit,
     _log_firing,
     _log_violation_firing,
@@ -200,8 +201,10 @@ def pretool() -> int:
         # ids a row carries.
         reasons = _demotion_reasons(demoted)
         by_path: dict[str, list] = {}
+        matches_by_path: dict[str, list] = {}
         for match in matches:
             by_path.setdefault(match.path, []).append(match.scar)
+            matches_by_path.setdefault(match.path, []).append(match)
         edit_id = _edit_id(payload)
         # #279: omitted when this host supplies no transcript path, which is
         # the honest state rather than a zero.
@@ -216,6 +219,7 @@ def pretool() -> int:
                         # #286: THIS file's census, keyed the same way the
                         # rows are, so a row never carries another file's count.
                         matched=census.get(rel_path),
+                        matched_by=_matched_by_of(matches_by_path[rel_path]),
                         runtime=RUNTIME, edit_id=edit_id, context_bytes=ctx,
                         anchor_kind="edit")
         if not matches and _zero_hit_logging():
