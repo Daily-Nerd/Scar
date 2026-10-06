@@ -39,6 +39,7 @@ Line numbers are dead on arrival; file paths die on renames. SCAR uses four anch
 
 1. **Path anchors** — file or directory prefixes. A directory with a trailing slash or a file path both work; wildcards are not expanded. Cheap, survive content change, die on rename (mitigated by git rename tracking during re-anchor).
 2. **Symbol anchors** — function/class names resolved via tree-sitter. Survive moves within and across files. Primary class for fences. Measured survival across refactors: 94.6% / 92.5% on the shipped API.
+   A symbol anchor keeps its scar out of orphan detection while the definition resolves: `path::name` in that file, a bare name in any tracked file. Without the `[symbols]` extra it cannot be checked, so it counts as live and `scar lint` says so once.
 3. **Pattern anchors** — regexes over *new* code (diff-scoped, not whole-repo). The only class that catches a dead end being re-attempted in a brand-new file.
 4. **Command anchors** — regexes over a *shell command about to execute* (`- command: "uv sync(?!.* --all-extras)"`). The only class with a firing surface for run-a-command mistakes, where there is no edit to anchor to. Never matched against paths or file content, so they cannot self-match; freshness comes from `review_after`, not content liveness.
 

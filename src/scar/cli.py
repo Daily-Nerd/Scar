@@ -41,6 +41,7 @@ from .orphan import (
     detect_partial_rot,
     detect_revivals,
     detect_symbol_drift,
+    unchecked_symbol_scars,
 )
 from .reanchor import (
     dead_symbol_anchors,
@@ -123,6 +124,12 @@ def _dead_anchor_summary(finding) -> str:
             _dead_path_text(finding, p) for p in finding.dead_path_anchors))
     if finding.dead_pattern_anchors:
         dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
+    # Symbol anchors that resolve nowhere (#337). getattr: only OrphanFinding
+    # carries the field, partial rot does not check symbols.
+    dead_symbols = getattr(finding, "dead_symbol_anchors", None)
+    if dead_symbols:
+        dead.append("symbols: " + ", ".join(
+            f"{s} no longer resolves" for s in dead_symbols))
     # Dead top-level alternation branches (#213). getattr: OrphanFinding has no
     # such field — an all-dead scar's branches are moot, and the summary is
     # shared with the orphan surface.
@@ -147,7 +154,8 @@ def _violation_migration_hint(finding) -> str:
 def _orphan_reason(finding) -> str:
     """Human description of why a finding is an orphan — distinguishes a scar
     with NO anchors (protects nothing) from one whose every anchor went dead."""
-    if not finding.dead_path_anchors and not finding.dead_pattern_anchors:
+    if (not finding.dead_path_anchors and not finding.dead_pattern_anchors
+            and not getattr(finding, "dead_symbol_anchors", None)):
         return "no anchors — scar protects nothing"
     return ("all anchors dead (" + _dead_anchor_summary(finding) + ")"
             + _violation_migration_hint(finding))
@@ -158,6 +166,15 @@ def _partial_rot_reason(finding) -> str:
     the scar keeps firing on its survivors (#35)."""
     return ("partial rot — dead anchor(s) (" + _dead_anchor_summary(finding) + ")"
             + _violation_migration_hint(finding))
+
+
+def _symbols_unchecked_text(ids) -> str:
+    """One-per-run note that orphan detection kept symbol-anchored scars alive
+    without checking them (#337). The per-file lint warning already says to
+    install the extra; this says what orphan detection did about it."""
+    listed = ", ".join(f"#{i}" for i in ids)
+    return (f"orphan detection could not check the symbol anchors of scar(s) "
+            f"{listed} without the [symbols] extra, so it counted them as live")
 
 
 def _symbol_drift_reason(finding) -> str:
@@ -318,6 +335,9 @@ def _lint_rich(data: dict) -> None:
                       f"{d['symbol']} ~{round(d['similarity'] * 100)}% similar since {d['sha'][:7]}")
     for h in data["reverse_hints"]:
         console.print(f"[cyan]HINT:[/] scar #{h['id']} marked orphaned but anchors live again")
+    if data["symbols_unchecked"]:
+        console.print("[cyan]HINT symbols-unchecked:[/] "
+                      + _symbols_unchecked_text(data["symbols_unchecked"]))
     for r in data["firing_review"]:
         console.print(f"[yellow]WARNING firing-review:[/] scar #{r['scar_id']} — "
                       f"{r['reason']}")
@@ -577,7 +597,11 @@ def _cmd_lint(args) -> int:
     ctx = _repo_context(store)
     if ctx is None:
         orphans, partial, reverse_hints, drift, revivals = [], [], [], [], []
+        symbols_unchecked = []
     else:
+        # Without the [symbols] extra, orphan detection keeps symbol-anchored
+        # scars alive unchecked (#337); say so once for the run.
+        symbols_unchecked = unchecked_symbol_scars(store)
         orphans = detect_orphans(store, ctx, repo=store.root)
         partial = detect_partial_rot(store, ctx, repo=store.root)
         revivals = detect_revivals(store, ctx)
@@ -707,6 +731,7 @@ def _cmd_lint(args) -> int:
                           "sha": d.sha, "similarity": d.similarity} for d in drift],
         "revivals": [{"scar_id": r.scar_id, "predicate": r.predicate} for r in revivals],
         "reverse_hints": [{"id": s.id} for s in reverse_hints],
+        "symbols_unchecked": symbols_unchecked,
         "firing_review": [{"scar_id": r.scar_id, "count": r.count,
                            "threshold": r.threshold, "since": r.since,
                            "undated": r.undated, "reason": r.reason()}
@@ -744,6 +769,8 @@ def _cmd_lint(args) -> int:
         for s in reverse_hints:
             print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
                   "again — consider re-activating (scar challenge/archive note)")
+        if symbols_unchecked:
+            print(f"HINT symbols-unchecked: {_symbols_unchecked_text(symbols_unchecked)}")
         # firing-count review (#274): the count is the signal, so print it
         # even though the scar is otherwise healthy.
         for r in reviews:

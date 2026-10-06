@@ -75,10 +75,11 @@ Four anchor classes, used in combination:
 
 1. **Path anchors** — file or directory prefixes. A directory with a trailing slash or a file path both work; wildcards are not expanded. Cheap, survive content change, die on rename (mitigated by git rename tracking during re-anchor).
 2. **Symbol anchors** — function/class/method names resolved via tree-sitter. Survive moves within and across files in the same repo. Primary anchor class for fences.
+   For orphan detection (#337) a symbol anchor is live while its definition resolves: `path::name` in that file, a bare name in any tracked file the `[symbols]` extra can parse. Without the extra it cannot be checked, so it holds the scar alive the way a command anchor does, and `scar lint` prints one `symbols-unchecked` hint per run.
 3. **Pattern anchors** — regex/AST patterns over *new* code (diff-scoped, not whole-repo). The only anchor class that can catch a dead end being re-attempted in a brand-new file. Powers `deadend` enforcement.
 4. **Command anchors** (#175) — regexes over a *shell command about to execute* (`PreToolUse:Bash` and `scar inject --command`). The only anchor class with a firing surface for run-a-command mistakes — knowledge like "bare `uv sync` strips extras" has no edit to anchor to. Never matched against paths or content (structurally immune to self-match/partial-rot) and exempt from content liveness; `review_after` is the freshness mechanism.
 
-Plus a **content fingerprint** (normalized-token hash of the protected region) used not for matching but for *drift detection*: fingerprint drift is an advisory warning surfaced by `scar orphan` and `scar lint`. The `orphaned` transition itself is driven by the location anchors — a scar orphans when all of its path/pattern anchors go dead — and surfaces in `scar status` and CI as "this knowledge has come loose — re-anchor or archive." Orphaned ≠ deleted, ever.
+Plus a **content fingerprint** (normalized-token hash of the protected region) used not for matching but for *drift detection*: fingerprint drift is an advisory warning surfaced by `scar orphan` and `scar lint`. The `orphaned` transition itself is driven by the location anchors (a scar orphans when all of its path/pattern/symbol anchors go dead) and surfaces in `scar status` and CI as "this knowledge has come loose: re-anchor or archive." Orphaned ≠ deleted, ever.
 
 ## 3. CLI surface (v0)
 
@@ -224,7 +225,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 
 | Command | Guaranteed top-level | Array item keys |
 |---|---|---|
-| `lint` | `files` int, `findings` array, `failed` int, `orphans`, `partial_rot`, `symbol_drift`, `revivals`, `reverse_hints`, `unreachable_evidence` arrays, `shallow_clone` bool | `findings[]`: `file`, `level`, `message` |
+| `lint` | `files` int, `findings` array, `failed` int, `orphans`, `partial_rot`, `symbol_drift`, `revivals`, `reverse_hints`, `unreachable_evidence` arrays, `symbols_unchecked` array of int, `shallow_clone` bool | `findings[]`: `file`, `level`, `message` |
 | `status` | `scars_dir` str, `active`, `challenged`, `candidates`, `review_due`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` arrays, `counts` object | `active[]`: `id`, `type`, `severity`, `title`. `candidates[]` are strings. `counts`: `active`, `candidates`, `orphan_detected`, `orphaned`, `partial_rot`, `broken` |
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `sweep` | `files` int (tracked files swept), `skipped` int (tracked files with no readable content: oversized or binary), `scars` int (scars armed on at least one swept file), `hits` array | `hits[]`: `id` int, `type`, `severity`, `title`, `source` (scar file, repo-relative), `path`, `line` int (1-based), `excerpt` |
