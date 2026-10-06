@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 25
 type: landmine
 title: A plugin hook manifest is read by every host that installs the plugin, and hosts expand different root variables
 severity: high
 confidence: 0.9
 created: 2026-09-03
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/
   - path: src/scar/installer.py
@@ -16,7 +18,7 @@ evidence:
 expires:
   condition: "the plugin format gains per-host scoping for hook files"
   review_after: 2026-12-01
-status: candidate
+status: active
 ---
 
 Claude Code merges plugin.json hooks with hooks/hooks.json and defines only

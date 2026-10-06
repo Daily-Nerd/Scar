@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 26
 type: landmine
 title: A whole-file or whole-directory path anchor makes the review-due threshold report anchor breadth, not code hazard
 severity: medium
 confidence: 0.8
 created: 2026-09-04
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: SCAR-FORMAT.md
   - pattern: "review_after_firings"
 evidence:
   - issue: 312
-  - note: "triage of all five over-threshold scars in this repo on 2026-09-04: four were over-anchored, one was a real code fix"
+  - note: triage of all five over-threshold scars in this repo on 2026-09-04: four were over-anchored, one was a real code fix
 expires:
   condition: "lint reports what share of a scar's firings touched the hazard, so the review-due warning can distinguish breadth from recurrence"
   review_after: 2027-03-04
-status: candidate
+status: active
 ---
 
 `scar lint` warns past `review_after_firings` that either the guarded code
