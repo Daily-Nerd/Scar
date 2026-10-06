@@ -1018,6 +1018,24 @@ def test_lint_without_extra_hints_once_and_reports_no_orphan(
     assert "#1, #2" in out
 
 
+def _force_tty(monkeypatch):
+    # Same helper as tests/test_sweep.py: under capsys stdout is never a tty.
+    import scar.output as out
+    monkeypatch.setattr(out, "is_tty", lambda: True)
+
+
+def test_lint_rich_render_hints_symbols_unchecked(tmp_path, monkeypatch, capsys):
+    from scar.cli import main
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    _lint_repo(tmp_path, monkeypatch, scar_ids=(7,), source=_UNPARSED_SRC)
+    _force_tty(monkeypatch)
+    capsys.readouterr()
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "HINT symbols-unchecked:" in out
+    assert "#7" in out
+
+
 def test_lint_json_lists_unchecked_symbol_scars(tmp_path, monkeypatch, capsys):
     import json
     from scar.cli import main
