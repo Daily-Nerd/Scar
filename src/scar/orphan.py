@@ -3,6 +3,8 @@
 A scar is orphan-detected when ALL its anchors fail:
 - every path_anchor resolves to no existing tracked file/dir
 - every pattern_anchor matches nothing (tracked paths + tracked file contents)
+- every symbol_anchor resolves nowhere (needs the [symbols] extra; without it
+  a symbol anchor holds the scar alive, unchecked) (#337)
 
 Partial survival (one live anchor of any kind) = NOT orphaned.
 Only active + challenged scars are scanned (store.firing()).
@@ -48,6 +50,11 @@ class RepoContext:
     """
     tracked_paths: list[str]
     file_contents: dict[str, str] = field(default_factory=dict)
+    # symbol anchor -> resolves anywhere (#337). One lint run asks the same
+    # anchor several times (orphans, partial rot, reverse hints), and a bare
+    # name costs a parse of every supported file, so answer it once per run.
+    symbol_live: dict[str, bool] = field(default_factory=dict, repr=False,
+                                         compare=False)
 
 
 @dataclass
@@ -57,6 +64,7 @@ class OrphanFinding:
     dead_path_anchors: list[str]      # path anchors that resolved to nothing
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
     renamed: dict[str, str] = field(default_factory=dict)  # dead path anchor -> git rename target (#109)
+    dead_symbol_anchors: list[str] = field(default_factory=list)  # symbol anchors that resolve nowhere (#337)
 
 
 @dataclass
@@ -176,6 +184,28 @@ def _pattern_anchor_live(pattern: str, ctx: RepoContext,
     return False
 
 
+def _symbol_anchor_live(anchor: str, ctx: RepoContext) -> bool:
+    """True if the symbol's definition resolves in the tracked tree (#337).
+
+    `path::name` resolves in that one file only; a bare name resolves in any
+    tracked file the [symbols] extra can parse, which is how matching follows
+    a moved symbol. Callers check symbols_available() first: without the
+    extra this would read every anchor as dead.
+    """
+    if anchor in ctx.symbol_live:
+        return ctx.symbol_live[anchor]
+    if "::" in anchor:
+        path = anchor.split("::", 1)[0]
+        candidates = [path] if path in ctx.file_contents else []
+    else:
+        candidates = [p for p in ctx.file_contents
+                      if p.endswith(tuple(symbols._LANGS))]
+    live = any(symbols.resolve_any([anchor], p, ctx.file_contents[p])
+               for p in candidates)
+    ctx.symbol_live[anchor] = live
+    return live
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -197,8 +227,16 @@ def anchors_all_dead(scar: Scar, ctx: RepoContext,
     if scar.command_anchors:
         return False
 
+    # Symbol anchors without the [symbols] extra (#337): there is no parser to
+    # check them, so they hold the scar alive the way command anchors do.
+    # Reporting an orphan because a parser is missing is the wrong answer with
+    # a different cause; lint says once per run that they went unchecked.
+    if scar.symbol_anchors and not symbols.symbols_available():
+        return False
+
     # A scar with NO anchors at all is treated as dead (nothing to hold it alive).
-    if not scar.path_anchors and not scar.pattern_anchors:
+    if (not scar.path_anchors and not scar.pattern_anchors
+            and not scar.symbol_anchors):
         return True
 
     for anchor in scar.path_anchors:
@@ -209,7 +247,20 @@ def anchors_all_dead(scar: Scar, ctx: RepoContext,
         if _pattern_anchor_live(pattern, ctx, exclude_path=self_path):
             return False   # at least one live anchor → not all dead
 
+    for anchor in scar.symbol_anchors:
+        if _symbol_anchor_live(anchor, ctx):
+            return False   # at least one live anchor → not all dead
+
     return True
+
+
+def unchecked_symbol_scars(store: ScarStore) -> list[int | None]:
+    """Ids of firing scars whose symbol anchors orphan detection could not
+    check because the [symbols] extra is absent (#337). Empty when it is
+    installed. Lint reports these once per run, not once per scar."""
+    if symbols.symbols_available():
+        return []
+    return [scar.id for _source, scar in store.firing() if scar.symbol_anchors]
 
 
 def _self_rel(store: ScarStore, source: Path) -> str | None:
@@ -351,11 +402,14 @@ def detect_orphans(store: ScarStore, ctx: RepoContext,
             if not anchors_all_dead(scar, ctx, self_path=self_path):
                 continue
             dead_paths, dead_patterns = _dead_anchors(scar, ctx, self_path)
+            # All dead and the extra is present (anchors_all_dead returns
+            # early without it), so every symbol anchor here resolved nowhere.
             findings.append(OrphanFinding(
                 scar_id=scar.id,
                 dead_path_anchors=dead_paths,
                 dead_pattern_anchors=dead_patterns,
                 renamed=resolver.resolve(dead_paths, tracked),
+                dead_symbol_anchors=list(scar.symbol_anchors),
             ))
         except Exception:
             # store.firing() already skips ParseError; this guards anything unexpected

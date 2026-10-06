@@ -24,12 +24,15 @@ symbols_extra = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 def _scar(*, id: int, status: str = "active",
-          path_anchors: list[str] = (), pattern_anchors: list[str] = ()) -> str:
+          path_anchors: list[str] = (), pattern_anchors: list[str] = (),
+          symbol_anchors: list[str] = ()) -> str:
     anchor_lines = ""
     for p in path_anchors:
         anchor_lines += f"  - path: {p}\n"
     for pat in pattern_anchors:
         anchor_lines += f'  - pattern: "{pat}"\n'
+    for sym in symbol_anchors:
+        anchor_lines += f"  - symbol: {sym}\n"
     return (
         f"---\n"
         f"id: {id}\n"
@@ -849,3 +852,196 @@ def test_pattern_live_past_scan_bound_is_not_dead(tmp_path):
 
     assert detect_orphans(store, ctx) == []
     assert detect_partial_rot(store, ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Symbol anchors in orphan detection (#337): a symbol anchor keeps a scar
+# alive while its definition resolves, and an unresolvable one is reported.
+# ---------------------------------------------------------------------------
+
+_MOD_SRC = "def detect():\n    return 1\n"
+
+
+@symbols_extra
+def test_symbol_only_scar_that_resolves_is_not_orphan(tmp_path):
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(["src/mod.py"], {"src/mod.py": _MOD_SRC})
+    assert detect_orphans(store, ctx) == []
+    # Reverse direction: a persisted-orphaned scar whose symbol resolves again.
+    from scar.model import parse_scar_text
+    scar = parse_scar_text(_scar(id=1, status="orphaned",
+                                 symbol_anchors=["src/mod.py::detect"]))
+    assert anchors_all_dead(scar, ctx) is False
+
+
+@symbols_extra
+def test_deleted_symbol_is_orphan_and_reason_names_it(tmp_path):
+    from scar.cli import _orphan_reason
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(["src/mod.py"], {"src/mod.py": "def other():\n    pass\n"})
+    findings = detect_orphans(store, ctx)
+    assert [f.scar_id for f in findings] == [1]
+    assert findings[0].dead_symbol_anchors == ["src/mod.py::detect"]
+    reason = _orphan_reason(findings[0])
+    assert "src/mod.py::detect no longer resolves" in reason
+    assert "protects nothing" not in reason
+
+
+@symbols_extra
+def test_qualified_symbol_does_not_resolve_in_another_file(tmp_path):
+    """`path::name` names one file: the same name defined elsewhere does not
+    keep it alive (matching resolves the qualified form in that file only)."""
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(["src/other.py"], {"src/other.py": _MOD_SRC})
+    assert [f.scar_id for f in detect_orphans(store, ctx)] == [1]
+
+
+@symbols_extra
+def test_bare_symbol_moved_to_another_tracked_file_is_not_orphan(tmp_path):
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["detect"]),
+    })
+    ctx = _make_repo_context(
+        ["src/mod.py", "src/moved.py"],
+        {"src/mod.py": "x = 1\n", "src/moved.py": _MOD_SRC})
+    assert detect_orphans(store, ctx) == []
+
+
+@symbols_extra
+def test_bare_symbol_defined_nowhere_is_orphan(tmp_path):
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["detect"]),
+    })
+    # The name appears in prose, never as a definition in a parseable file.
+    ctx = _make_repo_context(
+        ["src/mod.py", "README.md"],
+        {"src/mod.py": "x = detect\n", "README.md": "def detect():\n    pass\n"})
+    findings = detect_orphans(store, ctx)
+    assert [f.scar_id for f in findings] == [1]
+    assert findings[0].dead_symbol_anchors == ["detect"]
+
+
+@symbols_extra
+def test_dead_path_anchor_with_live_symbol_is_not_orphan(tmp_path):
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, path_anchors=["src/gone.py"],
+                                      symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(["src/mod.py"], {"src/mod.py": _MOD_SRC})
+    assert detect_orphans(store, ctx) == []
+
+
+def test_symbol_anchor_holds_scar_alive_without_the_extra(tmp_path, monkeypatch):
+    """No parser means the anchor cannot be checked, not that it is dead."""
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context([], {})
+    assert detect_orphans(store, ctx) == []
+
+
+# --- through `scar lint` (the reproduction in #337) ---
+
+_ISSUE_SCAR = """---
+id: {id}
+type: landmine
+title: detect is load bearing {id}
+severity: medium
+confidence: 0.8
+created: 2026-10-06
+authors: [test]
+anchors:
+  - symbol: src/mod.py::detect
+evidence:
+  - note: t
+status: active
+---
+
+Body.
+"""
+
+
+def _lint_repo(tmp_path: Path, monkeypatch, scar_ids=(1,),
+               source: str = _MOD_SRC) -> Path:
+    _real_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text(source)
+    init_scars(tmp_path)
+    for i in scar_ids:
+        (tmp_path / ".scars" / f"000{i}-x.landmine.md").write_text(
+            _ISSUE_SCAR.format(id=i))
+    _real_commit(tmp_path, "init")
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+@symbols_extra
+def test_lint_symbol_only_scar_reports_no_orphan(tmp_path, monkeypatch, capsys):
+    from scar.cli import main
+    repo = _lint_repo(tmp_path, monkeypatch)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "orphan-detected" not in out
+    assert "0 orphan(s)" in out
+
+    (repo / "src" / "mod.py").write_text("def other():\n    pass\n")
+    _real_commit(repo, "drop detect")
+    main(["lint"])
+    out = capsys.readouterr().out
+    assert out.count("WARNING orphan-detected: scar #1") == 1
+    assert "symbols: src/mod.py::detect no longer resolves" in out
+    assert "1 orphan(s)" in out
+
+
+# symbols._parse is lru_cached on (path, source). A source no other test
+# parses keeps a tree cached by an earlier test from answering here while
+# symbols_available is patched off.
+_UNPARSED_SRC = "def detect():\n    return 'never parsed with the extra'\n"
+
+
+def test_lint_without_extra_hints_once_and_reports_no_orphan(
+        tmp_path, monkeypatch, capsys):
+    from scar.cli import main
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    _lint_repo(tmp_path, monkeypatch, scar_ids=(1, 2), source=_UNPARSED_SRC)
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "orphan-detected" not in out
+    assert out.count("HINT symbols-unchecked:") == 1
+    assert "#1, #2" in out
+
+
+def _force_tty(monkeypatch):
+    # Same helper as tests/test_sweep.py: under capsys stdout is never a tty.
+    import scar.output as out
+    monkeypatch.setattr(out, "is_tty", lambda: True)
+
+
+def test_lint_rich_render_hints_symbols_unchecked(tmp_path, monkeypatch, capsys):
+    from scar.cli import main
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    _lint_repo(tmp_path, monkeypatch, scar_ids=(7,), source=_UNPARSED_SRC)
+    _force_tty(monkeypatch)
+    capsys.readouterr()
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "HINT symbols-unchecked:" in out
+    assert "#7" in out
+
+
+def test_lint_json_lists_unchecked_symbol_scars(tmp_path, monkeypatch, capsys):
+    import json
+    from scar.cli import main
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    _lint_repo(tmp_path, monkeypatch, scar_ids=(1,), source=_UNPARSED_SRC)
+    main(["lint", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["orphans"] == []
+    assert data["symbols_unchecked"] == [1]
