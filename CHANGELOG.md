@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.25.0](https://github.com/Daily-Nerd/Scar/compare/v0.24.0...v0.25.0) (2026-10-06)
+
+
+### Features
+
+* **firing-log:** record which anchor kinds matched each scar ([#335](https://github.com/Daily-Nerd/Scar/issues/335)) ([#339](https://github.com/Daily-Nerd/Scar/issues/339)) ([aa6b719](https://github.com/Daily-Nerd/Scar/commit/aa6b719089d504fce045052598e8d93ef1832fd7))
+* **lint:** warn on a violation that cannot arm, dead candidate anchors, and broad patterns ([#325](https://github.com/Daily-Nerd/Scar/issues/325)) ([#328](https://github.com/Daily-Nerd/Scar/issues/328)) ([b3b3224](https://github.com/Daily-Nerd/Scar/commit/b3b3224c31a6b29f9d253290dd0e7bf99e1e7e56))
+* **render:** header names the pre-cap total when the cap cut scars ([#322](https://github.com/Daily-Nerd/Scar/issues/322)) ([fc3754b](https://github.com/Daily-Nerd/Scar/commit/fc3754beef137d1d51bf0079d8172765a0277c73))
+* **sweep:** run every armed violation over the whole tree and report live hits ([#326](https://github.com/Daily-Nerd/Scar/issues/326)) ([#329](https://github.com/Daily-Nerd/Scar/issues/329)) ([ecbd159](https://github.com/Daily-Nerd/Scar/commit/ecbd1597db6536d801a05c80a69fa1bd3e945ccc))
+
+
+### Bug Fixes
+
+* **lint:** report duplicate scar ids, and stop the matcher dropping one ([#327](https://github.com/Daily-Nerd/Scar/issues/327)) ([210f4c7](https://github.com/Daily-Nerd/Scar/commit/210f4c77197fa603d8659f9717ef8350277fc6f8))
+* **match:** symbol anchor is a content signal only when the edit mentions the symbol ([#338](https://github.com/Daily-Nerd/Scar/issues/338)) ([0a1aac6](https://github.com/Daily-Nerd/Scar/commit/0a1aac63c8118fb3701c56fd6a9c03de08fe3581))
+* **orphan:** count symbol anchors in orphan detection and report one that no longer resolves ([#337](https://github.com/Daily-Nerd/Scar/issues/337)) ([#342](https://github.com/Daily-Nerd/Scar/issues/342)) ([321f9de](https://github.com/Daily-Nerd/Scar/commit/321f9de04f18630d6354ee6cd204b0dba67f0bda))
+
+
+### Documentation
+
+* **anchors:** say path anchors are prefixes, and teach the skill when to use symbol anchors ([#340](https://github.com/Daily-Nerd/Scar/issues/340)) ([7babb9f](https://github.com/Daily-Nerd/Scar/commit/7babb9face9116f9dfa5884a14cefdeb6b9bee90))
+
 ## [0.24.0](https://github.com/Daily-Nerd/Scar/compare/v0.23.0...v0.24.0) (2026-09-08)
 
 
