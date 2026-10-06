@@ -96,6 +96,9 @@ self-match).
 
 - `path:` = repo-relative prefix (file or directory). `pattern:` =
   case-insensitive regex over path + new content.
+- `symbol:` = `path::name` or a bare name. Use it for code likely to move or be
+  renamed: it follows the definition, not the path. Needs the `[symbols]` extra
+  (`uv tool install "scar-cli[symbols]"`), Python, TypeScript and JavaScript.
 - Severity: `low | medium | high | critical`.
 - Injection is capped at ~3 scars / ~700 chars each — write tight: 5–15 lines,
   evidence cited inline.
