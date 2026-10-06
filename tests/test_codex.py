@@ -165,6 +165,8 @@ def test_codex_pretool_injects_once_across_multiple_files(
         # row the aggregator cannot tell it from a shell-command firing and
         # counts both against the observed-edit denominator.
         "anchor_kind": "edit",
+        # Which anchor kinds matched each fired scar, keyed by str(id).
+        "matched_by": {"1": ["path", "content_pattern"]},
     }]
 
 

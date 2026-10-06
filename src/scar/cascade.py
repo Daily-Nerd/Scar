@@ -38,6 +38,7 @@ from .hooks import (
     _extract_edit_content,
     _log_firing,
     _log_violation_firing,
+    _matched_by_of,
     _read_payload,
     _state_dir,
 )
@@ -190,7 +191,8 @@ def _respond(store: ScarStore, trajectory: str, target: str,
     # refuse the action. Surface-only matches never reach the log at all
     # (see the comment above), so every windsurf row is block-capable.
     _log_firing(store, target, scars, runtime=RUNTIME, block_capable=True,
-                matched=census, anchor_kind=anchor_kind)
+                matched=census, anchor_kind=anchor_kind,
+                matched_by=_matched_by_of(to_block))
     return BLOCK_EXIT
 
 

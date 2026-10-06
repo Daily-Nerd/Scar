@@ -200,6 +200,14 @@ def _zero_hit_logging() -> bool:
     return os.environ.get("SCAR_LOG_ZERO_HITS", "").strip() not in ("", "0")
 
 
+def _matched_by_of(matches: list) -> dict[str, list[str]]:
+    """Per-scar anchor kinds for `_log_firing(matched_by=...)`, from the ranked
+    ScarMatch objects the caller already holds. Scars with no recorded kind
+    are skipped so the logged keys can never claim a match that is not there."""
+    return {str(m.scar.id): list(m.matched_by) for m in matches
+            if m.matched_by}
+
+
 def _log_firing(store: ScarStore, target: str, hits: list,
                 demoted_ids: list | None = None,
                 runtime: str = "claude-code",
@@ -208,7 +216,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
                 block_capable: bool = False,
                 context_bytes: int | None = None,
                 matched: MatchCensus | None = None,
-                anchor_kind: str | None = None) -> None:
+                anchor_kind: str | None = None,
+                matched_by: dict[str, list[str]] | None = None) -> None:
     """Append one line to the firing log when precheck actually injects scars.
     Best-effort only: this is a hot path (#91) and must NEVER raise or delay
     the caller, so any failure (permissions, disk full, bad SCAR_STATE_DIR,
@@ -293,6 +302,19 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         # as one (the #266 convention).
         if anchor_kind is not None:
             record["anchor_kind"] = anchor_kind
+        # Which anchor kinds matched each fired scar, keyed by str(scar id) in
+        # rank order, e.g. {"24": ["path", "symbol"]}. `count` and `scar_ids`
+        # say THAT a scar fired; this says on what, which is the only way to
+        # tell a path-proximity firing from a content one per scar rather than
+        # per edit (`matched` above is edit-wide). The kinds are opaque
+        # strings straight from ScarMatch.matched_by, never enumerated here.
+        #
+        # OMITTED, never emptied: a MISSING key means the row predates the
+        # field (the #266 convention), and `{}` would claim the scars that
+        # fired matched on nothing. A scar that fired always has a non-empty
+        # list, so a writer with no match objects in hand omits the key.
+        if matched_by:
+            record["matched_by"] = {str(k): list(v) for k, v in matched_by.items()}
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except Exception:
@@ -429,6 +451,7 @@ def precheck() -> int:
                         demoted_ids=[s.id for s, _ in demoted],
                         demotion_reasons=_demotion_reasons(demoted),
                         matched=census,
+                        matched_by=_matched_by_of(matches),
                         edit_id=edit_id if isinstance(edit_id, str) else None,
                         context_bytes=_context_bytes(payload),
                         # Including the zero-hit row (#217): that row IS the
@@ -475,6 +498,7 @@ def _precheck_command_payload(payload: dict,
                     demoted_ids=[s.id for s, _ in demoted], runtime=runtime,
                     demotion_reasons=_demotion_reasons(demoted),
                     matched=census,
+                    matched_by=_matched_by_of(matches),
                     edit_id=edit_id if isinstance(edit_id, str) else None,
                     anchor_kind="command")
     except Exception:
