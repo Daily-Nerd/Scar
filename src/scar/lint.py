@@ -135,8 +135,17 @@ def _is_redos_prone(pattern: str) -> bool:
 # [symbols] extra is installed, ARE enforced by the matcher — see the
 # availability-aware warning below, which is separate from this
 # unsupported-anchor warning.
-_UNSUPPORTED_ANCHOR = re.compile(
-    r"^\s*-\s*(touch|breaks):", re.MULTILINE)
+# #344: widened from touch/breaks to any kind the parser does not read, but only
+# inside the anchors: block, so `- note:` under evidence: is never flagged.
+_ANCHORS_BLOCK = re.compile(r"^anchors:[^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)",
+                            re.MULTILINE)
+_ANCHOR_KIND_LINE = re.compile(r"^\s*-\s*([a-z_]+):", re.MULTILINE)
+_SUPPORTED_ANCHOR_KINDS = ("path", "pattern", "symbol", "command")
+
+# #344: `anchors: [...]` on the key line. The parser reads one `- kind: value`
+# line per anchor, so a flow-style list loads with zero anchors. A trailing
+# comment is not a value.
+_FLOW_ANCHORS = re.compile(r"^anchors:[ \t]*[^\s#]", re.MULTILINE)
 
 # Markdown link syntax or a bare URL in a title is machine leakage from a
 # harvester, never something a human reviewer wrote as prose (#159).
@@ -201,16 +210,23 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             "warning", f"promoted_by_source: git-config: {scar.promoted_by} "
             "was promoted under a git identity, with no reviewer typed and "
             "no interactive terminal recorded; confirm a human reviewed it"))
-    if (not scar.path_anchors and not scar.pattern_anchors
+    front = text.split("\n---", 1)[0]
+    if _FLOW_ANCHORS.search(front):
+        findings.append(Finding(
+            "error", "anchors: is a flow-style list; the parser reads one "
+            '"- kind: value" line per anchor, so nothing is anchored; '
+            "rewrite it as a block list"))
+    elif (not scar.path_anchors and not scar.pattern_anchors
             and not scar.symbol_anchors and not scar.command_anchors):
         findings.append(Finding("error", "no anchors — scar protects nothing"))
-    # Scan the raw frontmatter for anchor keys the model cannot represent.
-    front = text.split("\n---", 1)[0]
-    for kind in dict.fromkeys(m.group(1) for m in _UNSUPPORTED_ANCHOR.finditer(front)):
+    # Scan the anchors block for kinds the parser does not read.
+    block = _ANCHORS_BLOCK.search(front)
+    kinds = (m.group(1) for m in _ANCHOR_KIND_LINE.finditer(block.group(1))) if block else ()
+    for kind in dict.fromkeys(k for k in kinds if k not in _SUPPORTED_ANCHOR_KINDS):
         findings.append(Finding(
-            "warning", f"unsupported anchor type '{kind}:' is ignored — the "
-            "parser only extracts path/pattern anchors, so this gives no "
-            "protection; use a path or pattern anchor instead"))
+            "warning", f"unsupported anchor type '{kind}:' is ignored, so "
+            "this gives no protection; the supported kinds are path, "
+            "pattern, symbol and command"))
     if scar.symbol_anchors and not symbols.symbols_available():
         findings.append(Finding(
             "warning", "symbol anchors need the [symbols] extra to resolve — "
