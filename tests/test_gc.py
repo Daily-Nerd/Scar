@@ -229,6 +229,35 @@ def test_fp_log_report_ignores_in_repo_file_as_the_current_log(tmp_path):
     assert old.read_text(encoding="utf-8").count("\n") == 3  # never moved
 
 
+def test_fp_log_report_unreadable_log_is_present_with_zero_lines(tmp_path):
+    """A log that is not valid UTF-8 still reports as present (with its byte
+    size); the line count falls back to 0 instead of raising."""
+    init_scars(tmp_path)
+    store = ScarStore(root=tmp_path, scars_dir=tmp_path / ".scars")
+    path = tmp_path / "state" / "fp-log-x.txt"
+    path.parent.mkdir()
+    path.write_bytes(b"\xff\xfe not utf-8\n")
+
+    report = gc.fp_log_report(store, path)
+
+    assert report["present"] is True
+    assert report["lines"] == 0
+    assert report["size"] == path.stat().st_size
+
+
+def test_fp_log_report_legacy_unreadable_reports_zero_lines(tmp_path):
+    """The legacy in-repo file is still reported when it cannot be decoded,
+    with lines 0, so a human can find and move it."""
+    init_scars(tmp_path)
+    store = ScarStore(root=tmp_path, scars_dir=tmp_path / ".scars")
+    old = store.scars_dir / "candidates" / "fp-log.txt"
+    old.write_bytes(b"\xff\xfe not utf-8\n")
+
+    report = gc.fp_log_report(store, tmp_path / "state" / "fp-log-x.txt")
+
+    assert report["legacy"] == {"path": str(old), "lines": 0}
+
+
 # --- structural guarantee: .scars/ is never touched -------------------------
 
 def _hash_dir(path: Path) -> dict[str, str]:

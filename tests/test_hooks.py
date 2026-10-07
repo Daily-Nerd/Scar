@@ -336,6 +336,20 @@ def test_fp_log_path_lives_in_state_dir_keyed_by_repo(tmp_path, monkeypatch):
     assert not state.exists()
 
 
+def test_repo_key_falls_back_to_raw_path_when_resolve_fails(tmp_path, monkeypatch):
+    """repo_key never raises: a path that cannot be resolved hashes as given."""
+    import hashlib
+
+    from scar.hooks import repo_key
+
+    def boom(self, *a, **k):
+        raise OSError("cannot resolve")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+    repo = tmp_path / "r"
+    assert repo_key(repo) == hashlib.sha1(str(repo).encode("utf-8")).hexdigest()
+
+
 def test_stop_drafter_points_fp_branch_at_state_dir_log(repo, monkeypatch, capsys, tmp_path):
     """#341: the prompt names the absolute state-dir path, never the old
     in-repo candidates/fp-log.txt."""
