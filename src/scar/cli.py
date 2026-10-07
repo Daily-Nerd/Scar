@@ -124,9 +124,8 @@ def _dead_anchor_summary(finding) -> str:
             _dead_path_text(finding, p) for p in finding.dead_path_anchors))
     if finding.dead_pattern_anchors:
         dead.append("patterns: " + ", ".join(f"/{p}/" for p in finding.dead_pattern_anchors))
-    # Symbol anchors that resolve nowhere (#337). getattr: only OrphanFinding
-    # carries the field, partial rot does not check symbols.
-    dead_symbols = getattr(finding, "dead_symbol_anchors", None)
+    # Symbol anchors that resolve nowhere (#337, #343 for partial rot).
+    dead_symbols = finding.dead_symbol_anchors
     if dead_symbols:
         dead.append("symbols: " + ", ".join(
             f"{s} no longer resolves" for s in dead_symbols))
@@ -155,7 +154,7 @@ def _orphan_reason(finding) -> str:
     """Human description of why a finding is an orphan — distinguishes a scar
     with NO anchors (protects nothing) from one whose every anchor went dead."""
     if (not finding.dead_path_anchors and not finding.dead_pattern_anchors
-            and not getattr(finding, "dead_symbol_anchors", None)):
+            and not finding.dead_symbol_anchors):
         return "no anchors — scar protects nothing"
     return ("all anchors dead (" + _dead_anchor_summary(finding) + ")"
             + _violation_migration_hint(finding))
@@ -726,7 +725,9 @@ def _cmd_lint(args) -> int:
         "findings": [{"file": rel, "level": fi.level, "message": fi.message}
                      for rel, fs in findings_by_file for fi in fs],
         "orphans": [{"scar_id": of.scar_id, "reason": _orphan_reason(of)} for of in orphans],
-        "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr)} for pr in partial],
+        "partial_rot": [{"scar_id": pr.scar_id, "reason": _partial_rot_reason(pr),
+                         "dead_symbol_anchors": list(pr.dead_symbol_anchors)}
+                        for pr in partial],
         "symbol_drift": [{"scar_id": d.scar_id, "symbol": d.symbol,
                           "sha": d.sha, "similarity": d.similarity} for d in drift],
         "revivals": [{"scar_id": r.scar_id, "predicate": r.predicate} for r in revivals],

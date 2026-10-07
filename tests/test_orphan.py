@@ -14,7 +14,7 @@ import pytest
 
 from scar import symbols
 from scar.store import ScarStore, init_scars
-from scar.orphan import anchors_all_dead, detect_orphans
+from scar.orphan import anchors_all_dead, detect_orphans, detect_partial_rot
 
 symbols_extra = pytest.mark.skipif(
     not symbols.symbols_available(), reason="tree-sitter extra not installed")
@@ -1045,3 +1045,117 @@ def test_lint_json_lists_unchecked_symbol_scars(tmp_path, monkeypatch, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["orphans"] == []
     assert data["symbols_unchecked"] == [1]
+
+
+# ---------------------------------------------------------------------------
+# Partial rot with symbol anchors (#343): a dead symbol anchor is reported
+# even while another anchor of the same scar is still live.
+# ---------------------------------------------------------------------------
+
+_PARTIAL_SCAR = """---
+id: {id}
+type: landmine
+title: detect is load bearing {id}
+severity: medium
+confidence: 0.8
+created: 2026-10-06
+authors: [test]
+anchors:
+  - path: src/live.py
+  - symbol: src/mod.py::detect
+evidence:
+  - note: t
+status: active
+---
+
+Body.
+"""
+
+
+def _partial_lint_repo(tmp_path: Path, monkeypatch, mod_src: str) -> Path:
+    _real_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "live.py").write_text("x = 1\n")
+    (tmp_path / "src" / "mod.py").write_text(mod_src)
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-x.landmine.md").write_text(
+        _PARTIAL_SCAR.format(id=1))
+    _real_commit(tmp_path, "init")
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+@symbols_extra
+def test_dead_symbol_with_live_path_is_partial_rot(tmp_path):
+    from scar.cli import _partial_rot_reason
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, path_anchors=["src/live.py"],
+                                      symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(
+        ["src/live.py", "src/mod.py"],
+        {"src/live.py": "x = 1\n", "src/mod.py": "def other():\n    pass\n"})
+    assert detect_orphans(store, ctx) == []
+    findings = detect_partial_rot(store, ctx)
+    assert [f.scar_id for f in findings] == [1]
+    assert findings[0].dead_symbol_anchors == ["src/mod.py::detect"]
+    assert findings[0].dead_path_anchors == []
+    assert "symbols: src/mod.py::detect no longer resolves" in \
+        _partial_rot_reason(findings[0])
+
+
+@symbols_extra
+def test_live_symbol_with_live_path_is_not_partial_rot(tmp_path):
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, path_anchors=["src/live.py"],
+                                      symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(
+        ["src/live.py", "src/mod.py"],
+        {"src/live.py": "x = 1\n", "src/mod.py": _MOD_SRC})
+    assert detect_partial_rot(store, ctx) == []
+
+
+def test_symbol_with_live_path_is_not_partial_rot_without_the_extra(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    store = _make_store(tmp_path, {
+        "0001-sym.landmine.md": _scar(id=1, path_anchors=["src/live.py"],
+                                      symbol_anchors=["src/mod.py::detect"]),
+    })
+    ctx = _make_repo_context(["src/live.py"], {"src/live.py": "x = 1\n"})
+    assert detect_partial_rot(store, ctx) == []
+
+
+def test_lint_without_extra_no_partial_rot_and_hints_once(
+        tmp_path, monkeypatch, capsys):
+    from scar.cli import main
+    monkeypatch.setattr(symbols, "symbols_available", lambda: False)
+    _partial_lint_repo(tmp_path, monkeypatch,
+                       "def detect():\n    return 'partial rot never parsed'\n")
+    assert main(["lint"]) == 0
+    out = capsys.readouterr().out
+    assert "HINT partial-rot" not in out
+    assert out.count("HINT symbols-unchecked:") == 1
+
+
+@symbols_extra
+def test_lint_reports_dead_symbol_as_partial_rot_plain_and_json(
+        tmp_path, monkeypatch, capsys):
+    import json
+    from scar.cli import main
+    repo = _partial_lint_repo(tmp_path, monkeypatch, _MOD_SRC)
+    main(["lint"])
+    assert "HINT partial-rot" not in capsys.readouterr().out
+
+    (repo / "src" / "mod.py").write_text("def other():\n    pass\n")
+    _real_commit(repo, "drop detect")
+    main(["lint"])
+    out = capsys.readouterr().out
+    assert out.count("HINT partial-rot: scar #1") == 1
+    assert "symbols: src/mod.py::detect no longer resolves" in out
+
+    main(["lint", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["partial_rot"]) == 1
+    assert data["partial_rot"][0]["dead_symbol_anchors"] == ["src/mod.py::detect"]
