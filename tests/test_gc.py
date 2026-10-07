@@ -1,7 +1,7 @@
 """gc core — machine-state cleanup + read-only repo reporting (#115).
 
 Posture under test: machine state (state_dir: markers, firing log) -> gc
-ACTS. Repo state (.scars/: candidates, fp-log.txt) -> gc REPORTS, never
+ACTS. Repo state (.scars/: candidates, legacy fp-log.txt) -> gc REPORTS, never
 writes. The structural guarantee test at the bottom hashes every .scars/
 file gc can see, runs every gc entry point, and asserts nothing changed.
 """
@@ -191,21 +191,42 @@ def test_candidate_ages_empty_when_none(tmp_path):
 def test_fp_log_report_absent(tmp_path):
     init_scars(tmp_path)
     store = ScarStore(root=tmp_path, scars_dir=tmp_path / ".scars")
-    report = gc.fp_log_report(store)
-    assert report == {"present": False, "size": 0, "lines": 0}
+    path = tmp_path / "state" / "fp-log-x.txt"
+    report = gc.fp_log_report(store, path)
+    assert report == {"present": False, "size": 0, "lines": 0,
+                      "path": str(path), "legacy": None}
 
 
 def test_fp_log_report_present_size_and_lines(tmp_path):
     init_scars(tmp_path)
     store = ScarStore(root=tmp_path, scars_dir=tmp_path / ".scars")
-    fp_log = store.scars_dir / "candidates" / "fp-log.txt"
-    fp_log.write_text("2026-06-10 false trigger\n2026-06-11 also false\n", encoding="utf-8")
+    fp_log = _touch(tmp_path / "state" / "fp-log-x.txt",
+                    content="2026-06-10 false trigger\n2026-06-11 also false\n")
 
-    report = gc.fp_log_report(store)
+    report = gc.fp_log_report(store, fp_log)
 
     assert report["present"] is True
     assert report["lines"] == 2
     assert report["size"] == fp_log.stat().st_size
+    assert report["path"] == str(fp_log)
+    assert report["legacy"] is None
+
+
+def test_fp_log_report_ignores_in_repo_file_as_the_current_log(tmp_path):
+    """#341: the old in-repo file is NOT the log any more. It surfaces only
+    under `legacy`, never as the present/lines of the current log."""
+    init_scars(tmp_path)
+    store = ScarStore(root=tmp_path, scars_dir=tmp_path / ".scars")
+    old = store.scars_dir / "candidates" / "fp-log.txt"
+    old.write_text("2026-06-10 a\n2026-06-11 b\n2026-06-12 c\n", encoding="utf-8")
+    path = tmp_path / "state" / "fp-log-x.txt"
+
+    report = gc.fp_log_report(store, path)
+
+    assert report["present"] is False
+    assert report["lines"] == 0
+    assert report["legacy"] == {"path": str(old), "lines": 3}
+    assert old.read_text(encoding="utf-8").count("\n") == 3  # never moved
 
 
 # --- structural guarantee: .scars/ is never touched -------------------------
@@ -236,7 +257,7 @@ def test_gc_never_mutates_scars_dir(tmp_path):
     gc.prune_markers(state, 7)
     gc.truncate_firing_log(log, 5)
     gc.candidate_ages(store)
-    gc.fp_log_report(store)
+    gc.fp_log_report(store, state / "fp-log-x.txt")
 
     after = _hash_dir(store.scars_dir)
     assert before == after

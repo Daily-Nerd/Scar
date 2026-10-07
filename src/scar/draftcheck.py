@@ -32,14 +32,13 @@ GitError distinction between "no signal" and "git itself is broken").
 
 from __future__ import annotations
 
-import hashlib
 import re
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .hooks import REVERT_RE
+from .hooks import REVERT_RE, fp_log_path, repo_key
 from .store import ScarStore
 
 ONE_DAY_SECONDS = 86400
@@ -96,8 +95,9 @@ def marker_key(repo: Path) -> str:
     """Stable per-repo id for marker filenames. The firing log (hooks.py
     #106) keys by a ``repo`` field inside each JSON line, not by filename —
     there's no such record here (draft-check has no log to key), so the
-    marker file itself is keyed by hashing the resolved repo path."""
-    return hashlib.sha1(str(repo.resolve()).encode("utf-8")).hexdigest()
+    marker file itself is keyed by hashing the resolved repo path. The hash
+    lives in ``hooks.repo_key`` so the per-repo fp-log (#341) shares it."""
+    return repo_key(repo)
 
 
 def lastcheck_marker(state_dir: Path, repo: Path) -> Path:
@@ -235,7 +235,8 @@ def analyze(state_dir: Path, repo: Path) -> DraftCheckResult | None:
 def contract_text(store: ScarStore, result: DraftCheckResult) -> str:
     """Mirrors ``hooks.stop_drafter``'s contract text (hooks.py ~194-225):
     same two-branch instruction (write a candidate, or log a false
-    positive), same <=15 line cap, same template/candidates paths. Adapted:
+    positive), same <=15 line cap, same template/candidates paths, same
+    state-dir fp-log path (``hooks.fp_log_path``, #341). Adapted:
     no transcript signals (git evidence instead) and the fp-log branch tells
     the agent to tag its line ``draft-check`` so drafter-precision data keeps
     the two trigger sources (transcript vs git) separable."""
@@ -251,7 +252,7 @@ def contract_text(store: ScarStore, result: DraftCheckResult) -> str:
         "mandatory, status: candidate); it stays a candidate until a human "
         "reviews it. (2) If nothing was actually abandoned (false trigger), "
         f"append one line — date + one-phrase reason — to "
-        f"{candidates}/fp-log.txt, tagged `draft-check` (e.g. '2026-07-01 "
+        f"{fp_log_path(store)}, tagged `draft-check` (e.g. '2026-07-01 "
         "draft-check: <reason>') so drafter-precision data stays separated "
         "by trigger source. Do exactly one of the two; do not ask the user."
     )

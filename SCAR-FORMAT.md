@@ -13,9 +13,13 @@ remove or re-type the fields below.
 ├── template.md                    # copy-me — not a scar (status: template)
 ├── NNNN-<slug>.<type>.md          # active/archived scars, NNNN zero-padded
 └── candidates/
-    ├── <slug>.md                  # proposed scars awaiting human review
-    └── fp-log.txt                 # self-reported false triggers (free text)
+    └── <slug>.md                  # proposed scars awaiting human review
 ```
+
+Self-reported false triggers (free text, one dated line each) are not repo
+content. The reference tool keeps them per machine in its state directory,
+`<state dir>/fp-log-<sha1 of the resolved repo path>.txt`; `scar gc` prints
+the exact path.
 
 Files named `README.md`/`template.md` (case-insensitive) or prefixed `_` are
 never parsed as scars. The directory is `.scars` — plural, exactly.

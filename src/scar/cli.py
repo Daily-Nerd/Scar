@@ -475,12 +475,32 @@ def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> Non
     else:
         console.print("[dim]0 candidates pending review[/]")
 
-    fp_log = data["fp_log"]
+    from rich.markup import escape
+
+    for line in _fp_log_lines(data["fp_log"]):
+        # soft_wrap: the path and the mv hint must stay copy-pasteable.
+        console.print(f"[dim]{escape(line)}[/]", soft_wrap=True)
+
+
+def _fp_log_lines(fp_log: dict) -> list[str]:
+    """The fp-log lines `scar gc` prints, shared by plain and rich output:
+    count plus path (#341), then a move hint while a pre-#341 in-repo file
+    is still around. gc never moves it; the human runs the command."""
+    import shlex
+
     if fp_log["present"]:
-        console.print(f"[dim]fp-log.txt: {fp_log['lines']} line(s), {fp_log['size']} byte(s) "
-                      "— drafter-precision instrument data, not auto-cleaned[/]")
+        lines = [f"fp-log: {fp_log['lines']} line(s), {fp_log['size']} byte(s) "
+                 f"in {fp_log['path']}: drafter-precision instrument data, "
+                 "not auto-cleaned"]
     else:
-        console.print("[dim]fp-log.txt: not present[/]")
+        lines = [f"fp-log: not present ({fp_log['path']})"]
+    # TODO(#341): drop the legacy hint one release after 0.25.x.
+    legacy = fp_log.get("legacy")
+    if legacy:
+        lines.append(f"legacy fp-log.txt ({legacy['lines']} line(s)) is still in the "
+                     f"repo; move it: mv {shlex.quote(legacy['path'])} "
+                     f"{shlex.quote(fp_log['path'])}")
+    return lines
 
 
 def _orphan_rich(findings, partial) -> None:
@@ -2325,9 +2345,11 @@ def _cmd_gc(args) -> int:
     """Clean machine state (~/.claude/scar-state/ or SCAR_STATE_DIR), report
     repo hygiene. Posture (#115): machine state is regenerable, so gc ACTS on
     it (deletes stale drafted-* markers, truncates firing-log.jsonl); .scars/
-    is human-gated, so gc only ever REPORTS on it — candidate ages, fp-log.txt
-    presence — never writes there (same ethos as promote/reanchor)."""
-    from .hooks import _state_dir, firing_log_path
+    is human-gated, so gc only ever REPORTS on it: candidate ages and a
+    leftover pre-#341 fp-log.txt; never writes there (same ethos as
+    promote/reanchor). The fp-log itself is state-dir data since #341 and is
+    reported, never pruned."""
+    from .hooks import _state_dir, firing_log_path, fp_log_path
     from . import gc as gc_mod
 
     store = _require_store()
@@ -2340,7 +2362,7 @@ def _cmd_gc(args) -> int:
     dropped_firings = gc_mod.truncate_firing_log(
         firing_log_path(), args.max_firings, dry_run=dry_run)
     candidates = gc_mod.candidate_ages(store)
-    fp_log = gc_mod.fp_log_report(store)
+    fp_log = gc_mod.fp_log_report(store, fp_log_path(store))
 
     data = {
         "removed_markers": len(removed_markers),
@@ -2362,11 +2384,8 @@ def _cmd_gc(args) -> int:
             print(f"    {c['name']} — {c['age_days']}d old")
         if candidates:
             print("    review with `scar promote <path>` or delete rejected files")
-        if fp_log["present"]:
-            print(f"  fp-log.txt: {fp_log['lines']} line(s), {fp_log['size']} byte(s) "
-                  "— drafter-precision instrument data, not auto-cleaned")
-        else:
-            print("  fp-log.txt: not present")
+        for line in _fp_log_lines(fp_log):
+            print(f"  {line}")
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _gc_rich(data, days=args.days,

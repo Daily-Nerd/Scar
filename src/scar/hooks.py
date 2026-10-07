@@ -4,12 +4,13 @@ One library code path replaces three standalone scripts (which drifted within
 two days of birth — gate 0.4 findings). Contract per handler: silent no-op on
 any problem; a hook must NEVER fail or delay the user's action.
 
-State (drafter markers, firing log) lives in ~/.claude/scar-state/, overridable
+State (drafter markers, firing log, per-repo fp-log) lives in ~/.claude/scar-state/, overridable
 via SCAR_STATE_DIR for tests.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -107,6 +108,30 @@ def _context_bytes(payload: dict) -> int | None:
         return os.stat(path).st_size
     except Exception:
         return None
+
+
+def repo_key(repo: Path) -> str:
+    """Stable per-repo id for state-dir filenames: sha1 of the resolved repo
+    path. draft-check keys its markers with this too (draftcheck.marker_key
+    delegates here), so one repo has one key across every per-repo state
+    file. The firing log needs no key: it is one shared file with a `repo`
+    field per row. Never raises: an unresolvable path hashes as given."""
+    try:
+        text = str(Path(repo).resolve())
+    except Exception:
+        text = str(repo)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def fp_log_path(store: ScarStore) -> Path:
+    """The false-positive log for this repo (#341): one file per repo in the
+    state dir, ``<state dir>/fp-log-<repo_key>.txt``. A flat name rather than
+    a subdirectory because both writers already ensure the state dir exists
+    before prompting, so an agent's plain append always lands; a subdirectory
+    would need creating first. THE one place this path is built: the drafter
+    prompt, the draft-check prompt and ``scar gc`` all call this. Pure
+    computation, creates nothing."""
+    return _state_dir() / f"fp-log-{repo_key(store.root)}.txt"
 
 
 def firing_log_path() -> Path:
@@ -638,7 +663,7 @@ def stop_drafter() -> int:
         "mandatory, status: candidate); it stays a candidate until a human "
         "reviews it. (2) If nothing was actually abandoned (false trigger), "
         f"append one line — date + one-phrase reason — to "
-        f"{candidates}/fp-log.txt. Then finish normally. Do exactly one of "
+        f"{fp_log_path(store)}. Then finish normally. Do exactly one of "
         "the two; do not ask the user.")}))
     return 0
 
