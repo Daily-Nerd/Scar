@@ -2755,12 +2755,17 @@ def test_gc_json_shape_empty_state(repo, capsys, monkeypatch):
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     assert main(["gc", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
     assert data == {
         "removed_markers": 0,
         "dropped_firings": 0,
         "dry_run": False,
         "candidates": [],
-        "fp_log": {"present": False, "size": 0, "lines": 0},
+        "fp_log": {"present": False, "size": 0, "lines": 0,
+                   "path": str(fp_log_path(ScarStore.discover(repo))),
+                   "legacy": None},
     }
 
 
@@ -2822,18 +2827,43 @@ def test_gc_truncates_firing_log_respects_max_firings_flag(repo, capsys, monkeyp
     assert len(lines) == 10
 
 
+def _state_fp_log(repo):
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
+    path = fp_log_path(ScarStore.discover(repo))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def test_gc_json_reports_candidate_ages_and_fp_log(repo, capsys, monkeypatch):
     init_scars(repo)
     monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
     cand = repo / ".scars" / "candidates"
     (cand / "a.md").write_text(CANDIDATE)
-    fp_log = cand / "fp-log.txt"
+    fp_log = _state_fp_log(repo)
     fp_log.write_text("2026-06-10 false trigger\n")
 
     assert main(["gc", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["candidates"] == [{"name": "a.md", "age_days": 0.0}]
-    assert data["fp_log"] == {"present": True, "size": fp_log.stat().st_size, "lines": 1}
+    assert data["fp_log"] == {"present": True, "size": fp_log.stat().st_size, "lines": 1,
+                              "path": str(fp_log), "legacy": None}
+    assert fp_log.exists()  # gc reports on the fp-log, never prunes it
+
+
+def test_gc_json_reports_legacy_in_repo_fp_log(repo, capsys, monkeypatch):
+    """#341 fallback window: the old in-repo file is reported, not moved."""
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    old = repo / ".scars" / "candidates" / "fp-log.txt"
+    old.write_text("2026-06-10 false trigger\n2026-06-11 again\n")
+
+    assert main(["gc", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["fp_log"]["present"] is False
+    assert data["fp_log"]["legacy"] == {"path": str(old), "lines": 2}
+    assert old.exists()
 
 
 def test_gc_plain_output_reports_removals_nudge_and_fp_log_note(repo, capsys, monkeypatch):
@@ -2843,7 +2873,8 @@ def test_gc_plain_output_reports_removals_nudge_and_fp_log_note(repo, capsys, mo
     _touch_marker(state, "drafted-old", age_days=10)
     cand = repo / ".scars" / "candidates"
     (cand / "a.md").write_text(CANDIDATE)
-    (cand / "fp-log.txt").write_text("2026-06-10 false trigger\n")
+    fp_log = _state_fp_log(repo)
+    fp_log.write_text("2026-06-10 false trigger\n")
 
     assert main(["gc"]) == 0
     out = capsys.readouterr().out
@@ -2852,6 +2883,52 @@ def test_gc_plain_output_reports_removals_nudge_and_fp_log_note(repo, capsys, mo
     assert "scar promote" in out
     assert "drafter-precision" in out
     assert "not auto-cleaned" in out
+    assert "fp-log: 1 line(s)" in out
+    assert str(fp_log) in out
+    assert "mv " not in out  # no legacy file, no move hint
+
+
+def test_gc_plain_output_prints_path_when_fp_log_absent(repo, capsys, monkeypatch):
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
+    assert main(["gc"]) == 0
+    out = capsys.readouterr().out
+    assert "not present" in out
+    assert str(fp_log_path(ScarStore.discover(repo))) in out
+
+
+def test_gc_plain_output_prints_legacy_move_hint(repo, capsys, monkeypatch):
+    import shlex
+
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    old = repo / ".scars" / "candidates" / "fp-log.txt"
+    old.write_text("2026-06-10 false trigger\n")
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+    new = fp_log_path(ScarStore.discover(repo))
+
+    assert main(["gc"]) == 0
+    out = capsys.readouterr().out
+    hint = [ln for ln in out.splitlines() if "mv " in ln]
+    assert len(hint) == 1
+    assert f"mv {shlex.quote(str(old))} {shlex.quote(str(new))}" in hint[0]
+    assert old.exists()  # reported, never moved
+
+
+def test_gc_rich_output_carries_fp_log_path_and_legacy_hint(repo, capsys, monkeypatch):
+    init_scars(repo)
+    monkeypatch.setenv("SCAR_STATE_DIR", str(repo / "state"))
+    _force_tty(monkeypatch)
+    (repo / ".scars" / "candidates" / "fp-log.txt").write_text("2026-06-10 x\n")
+
+    assert main(["gc"]) == 0
+    out = capsys.readouterr().out
+    assert "fp-log" in out and "not present" in out
+    assert "mv " in out
 
 
 def test_gc_dry_run_plain_output_marks_would_not_did(repo, capsys, monkeypatch):

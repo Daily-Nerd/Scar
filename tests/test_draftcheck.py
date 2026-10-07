@@ -318,6 +318,22 @@ def test_contract_text_mirrors_stop_drafter_shape(repo, state, capsys):
     out = capsys.readouterr().out
     assert "candidates" in out and "<=15 lines" in out
     assert "template.md" in out
-    assert "fp-log.txt" in out
+    assert "fp-log-" in out
     assert "draft-check" in out  # source tag for the fp-log branch
     assert "status: candidate" in out
+
+
+def test_contract_text_points_fp_branch_at_state_dir_log(repo, state, capsys):
+    """#341: the fp-log line goes to the absolute state-dir path, not the
+    old in-repo candidates/fp-log.txt."""
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
+    _commit(repo, "a.py", "1", message="revert the change")
+    assert main(["draft-check"]) == 0
+    out = capsys.readouterr().out
+    expected = fp_log_path(ScarStore.discover(repo))
+    assert expected.is_absolute()
+    assert expected.parent == state
+    assert str(expected) in out
+    assert "candidates/fp-log.txt" not in out

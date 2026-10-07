@@ -88,7 +88,7 @@ ITEM_KEYS: dict[tuple[str, str], set[str]] = {
 NESTED_OBJECTS: dict[tuple[str, str], set[str]] = {
     ("status", "counts"): {"active", "candidates", "orphan_detected",
                            "orphaned", "partial_rot", "broken"},
-    ("gc", "fp_log"): {"present", "size", "lines"},
+    ("gc", "fp_log"): {"present", "size", "lines", "path", "legacy"},
 }
 
 

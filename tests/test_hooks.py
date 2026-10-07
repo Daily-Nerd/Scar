@@ -314,6 +314,61 @@ def test_stop_drafter_blocks_once_on_abandonment(repo, monkeypatch, capsys, tmp_
     assert out_json(capsys) is None
 
 
+def test_fp_log_path_lives_in_state_dir_keyed_by_repo(tmp_path, monkeypatch):
+    """#341: the false-positive log is per-machine state, so it lives in the
+    state dir, one file per repo, keyed the way draft-check keys its markers
+    (sha1 of the resolved repo path). Resolving the path creates nothing."""
+    import hashlib
+
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("SCAR_STATE_DIR", str(state))
+    a = ScarStore(root=tmp_path / "a", scars_dir=tmp_path / "a" / ".scars")
+    b = ScarStore(root=tmp_path / "b", scars_dir=tmp_path / "b" / ".scars")
+
+    path = fp_log_path(a)
+    key = hashlib.sha1(str((tmp_path / "a").resolve()).encode("utf-8")).hexdigest()
+    assert path == state / f"fp-log-{key}.txt"
+    assert path.is_absolute()
+    assert fp_log_path(b) != path
+    assert not state.exists()
+
+
+def test_repo_key_falls_back_to_raw_path_when_resolve_fails(tmp_path, monkeypatch):
+    """repo_key never raises: a path that cannot be resolved hashes as given."""
+    import hashlib
+
+    from scar.hooks import repo_key
+
+    def boom(self, *a, **k):
+        raise OSError("cannot resolve")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+    repo = tmp_path / "r"
+    assert repo_key(repo) == hashlib.sha1(str(repo).encode("utf-8")).hexdigest()
+
+
+def test_stop_drafter_points_fp_branch_at_state_dir_log(repo, monkeypatch, capsys, tmp_path):
+    """#341: the prompt names the absolute state-dir path, never the old
+    in-repo candidates/fp-log.txt."""
+    from scar.hooks import fp_log_path
+    from scar.store import ScarStore
+
+    t = transcript(tmp_path, [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "That failed, reverting to the original."}]}},
+    ])
+    feed(monkeypatch, {"session_id": "s341", "transcript_path": str(t), "cwd": str(repo)})
+    assert main(["hook", "stop-drafter"]) == 0
+    reason = out_json(capsys)["reason"]
+    expected = fp_log_path(ScarStore.discover(repo))
+    assert expected.is_absolute()
+    assert str(expected) in reason
+    assert "candidates/fp-log.txt" not in reason
+
+
 def test_stop_drafter_respects_stop_hook_active(repo, monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("SCAR_STATE_DIR", str(tmp_path / "state"))
     feed(monkeypatch, {"stop_hook_active": True, "session_id": "s2",

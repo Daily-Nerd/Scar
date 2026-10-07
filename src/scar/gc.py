@@ -9,8 +9,9 @@ opens files with ``read_text`` / ``stat`` only; the structural guarantee test
 (``test_gc_never_mutates_scars_dir`` in ``tests/test_gc.py``) hashes the
 directory before and after every entry point runs and asserts nothing moved.
 
-Callers resolve the state dir / firing-log path via ``hooks._state_dir()`` /
-``hooks.firing_log_path()`` (the ``SCAR_STATE_DIR`` override lives there,
+Callers resolve the state dir / firing-log / fp-log paths via
+``hooks._state_dir()`` / ``hooks.firing_log_path()`` /
+``hooks.fp_log_path()`` (the ``SCAR_STATE_DIR`` override lives there,
 once, module docstring's contract) and pass plain ``Path``s in here — this
 module has no opinion on where state lives, only on what to do with it.
 """
@@ -110,17 +111,43 @@ def candidate_ages(store: ScarStore) -> list[dict]:
     return entries
 
 
-def fp_log_report(store: ScarStore) -> dict:
-    """Presence/size/line-count of ``candidates/fp-log.txt`` — the
-    drafter-precision false-positive escape hatch (hooks.py ``stop_drafter``).
+def _count_lines(path: Path) -> int:
+    return len(path.read_text(encoding="utf-8").splitlines())
+
+
+def fp_log_report(store: ScarStore, path: Path) -> dict:
+    """Presence/size/line-count of the false-positive log at ``path`` (the
+    caller passes ``hooks.fp_log_path(store)``, #341): the drafter-precision
+    escape hatch the drafter and draft-check prompts point agents at.
     Instrument data for the drafter-precision watch item: reported, never
-    auto-cleaned, never written to here."""
-    path = store.scars_dir / "candidates" / "fp-log.txt"
+    auto-cleaned, never written to here.
+
+    ``legacy`` is the pre-#341 in-repo file, reported so a human can move it
+    (gc never moves anything out of ``.scars/``); ``None`` when absent."""
+    report = {"present": False, "size": 0, "lines": 0, "path": str(path),
+              "legacy": _legacy_fp_log(store)}
     if not path.is_file():
-        return {"present": False, "size": 0, "lines": 0}
+        return report
+    report["present"] = True
     try:
-        size = path.stat().st_size
-        lines = len(path.read_text(encoding="utf-8").splitlines())
-    except OSError:
-        return {"present": True, "size": 0, "lines": 0}
-    return {"present": True, "size": size, "lines": lines}
+        report["size"] = path.stat().st_size
+        report["lines"] = _count_lines(path)
+    except (OSError, ValueError):
+        pass
+    return report
+
+
+# TODO(#341): drop the legacy read one release after 0.25.x. Until then the
+# old in-repo location is reported (with a move hint) but never read as the log.
+LEGACY_FP_LOG = Path("candidates") / "fp-log.txt"
+
+
+def _legacy_fp_log(store: ScarStore) -> dict | None:
+    old = store.scars_dir / LEGACY_FP_LOG
+    if not old.is_file():
+        return None
+    try:
+        lines = _count_lines(old)
+    except (OSError, ValueError):
+        lines = 0
+    return {"path": str(old), "lines": lines}
