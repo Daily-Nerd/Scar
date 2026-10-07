@@ -102,6 +102,7 @@ class PartialRotFinding:
     dead_pattern_anchors: list[str]   # pattern anchors that matched nothing
     renamed: dict[str, str] = field(default_factory=dict)  # dead path anchor -> git rename target (#109)
     dead_pattern_branches: list[str] = field(default_factory=list)  # dead top-level alternation branches (#213)
+    dead_symbol_anchors: list[str] = field(default_factory=list)  # symbol anchors that resolve nowhere (#343)
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +353,15 @@ def _dead_anchors(scar: Scar, ctx: RepoContext,
     return dead_paths, dead_patterns
 
 
+def _dead_symbol_anchors(scar: Scar, ctx: RepoContext) -> list[str]:
+    """Symbol anchors that resolve nowhere (#343). Empty without the [symbols]
+    extra: there is no parser to check them, same rule as anchors_all_dead
+    (#337), and lint says once per run that they went unchecked."""
+    if not symbols.symbols_available():
+        return []
+    return [a for a in scar.symbol_anchors if not _symbol_anchor_live(a, ctx)]
+
+
 def detect_revivals(store: ScarStore, ctx: RepoContext) -> list[RevivalFinding]:
     """Archived scars whose `revives_if:` predicate matches the tree again (#205).
 
@@ -441,7 +451,9 @@ def detect_partial_rot(store: ScarStore, ctx: RepoContext,
                 continue
             dead_paths, dead_patterns = _dead_anchors(scar, ctx, self_path)
             dead_branches = _dead_pattern_branches(scar, ctx, self_path)
-            if not dead_paths and not dead_patterns and not dead_branches:
+            dead_symbols = _dead_symbol_anchors(scar, ctx)
+            if (not dead_paths and not dead_patterns and not dead_branches
+                    and not dead_symbols):
                 continue   # fully live → nothing rotted
             findings.append(PartialRotFinding(
                 scar_id=scar.id,
@@ -449,6 +461,7 @@ def detect_partial_rot(store: ScarStore, ctx: RepoContext,
                 dead_pattern_anchors=dead_patterns,
                 renamed=resolver.resolve(dead_paths, tracked),
                 dead_pattern_branches=dead_branches,
+                dead_symbol_anchors=dead_symbols,
             ))
         except Exception:
             continue
