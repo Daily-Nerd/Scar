@@ -214,7 +214,7 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
     if _FLOW_ANCHORS.search(front):
         findings.append(Finding(
             "error", "anchors: is a flow-style list; the parser reads one "
-            '"- kind: value" line per anchor, so nothing is anchored. '
+            '"- kind: value" line per anchor, so nothing is anchored; '
             "rewrite it as a block list"))
     elif (not scar.path_anchors and not scar.pattern_anchors
             and not scar.symbol_anchors and not scar.command_anchors):
