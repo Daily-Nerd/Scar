@@ -398,3 +398,62 @@ def test_git_config_warning_does_not_claim_nobody_typed_a_name():
     assert messages, "the unattended case must still warn"
     assert "nobody typed a reviewer name" not in messages[0]
     assert "no interactive terminal recorded" in messages[0]
+
+
+# --- flow-style anchors and unsupported kinds (#344) ---
+
+_ANCHORS_BLOCK = "anchors:\n  - path: payments/retry.py\n"
+
+
+def _flow(anchors_line: str) -> str:
+    return GOOD.replace(_ANCHORS_BLOCK, anchors_line + "\n")
+
+
+def test_flow_style_anchors_name_the_cause_not_generic_no_anchors():
+    findings = lint_text(_flow("anchors: [{symbol: src/mod.py::detect}]"))
+    errors = [f.message for f in findings if f.level == "error"]
+    assert any("flow-style" in m for m in errors)
+    assert not any("no anchors" in m for m in errors)
+
+
+def test_flow_style_bare_kind_value_is_the_same_error():
+    findings = lint_text(_flow("anchors: [path: src/mod.py]"))
+    errors = [f.message for f in findings if f.level == "error"]
+    assert any("flow-style" in m for m in errors)
+    assert not any("no anchors" in m for m in errors)
+
+
+def test_block_anchors_trigger_neither_error():
+    findings = lint_text(GOOD)
+    assert not any("flow-style" in f.message or "no anchors" in f.message
+                   for f in findings)
+
+
+def test_anchors_key_with_trailing_comment_is_not_flow_style():
+    findings = lint_text(_flow("anchors: # none yet"))
+    errors = [f.message for f in findings if f.level == "error"]
+    assert not any("flow-style" in m for m in errors)
+    assert any("no anchors" in m for m in errors)
+
+
+def test_typo_anchor_kind_warns_and_names_the_four_kinds():
+    text = GOOD.replace("  - path: payments/retry.py\n",
+                        "  - path: payments/retry.py\n  - symbols: a.py::f\n")
+    msgs = [f.message for f in lint_text(text) if f.level == "warning"]
+    hit = [m for m in msgs if "symbols" in m]
+    assert hit
+    for kind in ("path", "pattern", "symbol", "command"):
+        assert kind in hit[0]
+
+
+def test_unsupported_kind_outside_anchors_block_is_not_flagged():
+    text = GOOD.replace("  - commit: abc1234\n",
+                        "  - commit: abc1234\n  - note: see the thread\n")
+    assert not any("unsupported anchor" in f.message for f in lint_text(text))
+
+
+def test_touch_still_warns_as_unsupported_kind():
+    text = GOOD.replace("  - path: payments/retry.py\n",
+                        "  - path: payments/retry.py\n  - touch: a.py\n")
+    assert any(f.level == "warning" and "touch" in f.message
+               for f in lint_text(text))

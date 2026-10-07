@@ -75,6 +75,9 @@ A file without `---`-fenced YAML frontmatter is **not a scar at all** — it nev
 fires. Minimum valid block: `type`, `title`, `severity`, `confidence`,
 `created`, `authors`, at least one `anchors` entry, and `status: candidate`.
 
+Write `anchors` as a block list, one `- kind: value` line per anchor. A flow-style
+list (`anchors: [...]`) is not read, so the scar loads with no anchors.
+
 ## Anti-Over-Escape (the #1 silent failure)
 
 Prefer a `path:` anchor — it cannot self-match and needs no escaping. If you
