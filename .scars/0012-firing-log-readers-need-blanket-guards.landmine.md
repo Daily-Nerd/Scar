@@ -1,37 +1,42 @@
 ---
 id: 12
 type: landmine
-title: firing-log.jsonl handlers are a bug cluster — guard every line blanket, distrust slice math
+title: firing-log.jsonl has one reader: read through read_firing_log_records, never hand-roll, distrust slice math
 severity: high
 confidence: 0.85
 created: 2026-07-02
 authors: ["claude-code", "kibukx"]
 anchors:
+  - path: src/scar/firing_log.py
   - path: src/scar/gc.py
-  - pattern: "firing[-_]?log"
+  - pattern: "firing_log_path\("
 violation: "except \((KeyError|TypeError|ValueError|AttributeError|IndexError)[^)]*\)"
 evidence:
   - pr: 122
   - issue: 124
+  - issue: 312
 expires:
-  condition: "firing log gains a schema-validated reader shared by hooks/stats/gc"
-  review_after: 2026-10-01
+  condition: "the shared reader validates field types (ts is a string, scar_ids is a list), not only row shape, so callers stop re-guarding fields"
+  review_after: 2027-03-01
 status: active
 ---
 
-Three firing-log bugs shipped or were caught in two days (PR #122, issue #124).
-The log is append-only JSONL written best-effort from a hook that must never
-fail — so ANY line shape can and will appear: `null`, `[]`, numbers, non-string
-`ts`, non-list `scar_ids`.
+The firing log is append-only JSONL written best-effort from a hook that must
+never fail, so ANY line shape can and will appear: `null`, `[]`, numbers,
+truncated JSON, non-string `ts`, non-list `scar_ids`. Three bugs shipped from
+that fact in two days (PR #122, issue #124):
 
-1. Narrow per-line except tuples let `ts: null` (TypeError) then bare `null`
+1. Narrow per-line except tuples let `ts: null` (TypeError) and bare `null`
    lines (AttributeError at `rec.get`) escape a reader into precheck's outer
-   fail-open — injection silently and PERMANENTLY killed (log never grows past
-   the bad line). Fixed twice in PR #122; final form is a blanket
-   `except Exception: continue` per line.
-2. `lines[-max_firings:]` with 0 is `[-0:]` == keep everything, while the
-   report arithmetic claims everything was dropped (issue #124).
+   fail-open, killing injection silently and PERMANENTLY.
+2. `lines[-max_firings:]` with 0 is `[-0:]`, the whole list, while the report
+   arithmetic claimed everything was dropped (issue #124).
 
-Rule: any new reader of this log wraps the ENTIRE per-line body in
-`except Exception: continue`, and any truncation special-cases 0. Verify
-report numbers against the file, not against arithmetic.
+Since #312 both rules live in ONE place: `read_firing_log_records` in
+`src/scar/firing_log.py` (blanket `except Exception` per line, `tail == 0`
+special-cased, negative tail refused). Rule now: every new reader calls it.
+Do not parse the log by hand anywhere else. When editing the reader itself,
+keep the blanket guard. It checks row SHAPE only (dicts kept), so callers
+must still treat every field as untrusted. `gc.py` counts and truncates raw
+lines on purpose (a malformed line still counts); keep its slice math
+special-casing 0, and verify report numbers against the file, not arithmetic.
