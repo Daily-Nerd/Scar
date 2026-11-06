@@ -36,7 +36,8 @@ ROOT = Path(__file__).resolve().parent.parent
 GUARANTEED: dict[str, set[str]] = {
     "lint": {"files", "findings", "failed", "orphans", "partial_rot",
              "symbol_drift", "revivals", "reverse_hints",
-             "unreachable_evidence", "shallow_clone", "symbols_unchecked"},
+             "unreachable_evidence", "shallow_clone", "symbols_unchecked",
+             "review_due"},
     "status": {"scars_dir", "active", "challenged", "candidates", "review_due",
                "orphan_detected", "orphaned", "partial_rot", "broken", "counts"},
     "check": {"paths", "scars"},

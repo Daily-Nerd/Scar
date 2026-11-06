@@ -546,6 +546,17 @@ def _firing_reviews(store):
         return []
 
 
+def _review_due(store) -> list[Scar]:
+    """Firing scars whose review_after date has passed. The one definition
+    shared by `status` and `lint` so the two JSON surfaces cannot disagree."""
+    today = time.strftime("%Y-%m-%d")
+    return [s for _f, s in store.firing() if s.review_after and s.review_after < today]
+
+
+def _review_due_json(due: list[Scar]) -> list[dict]:
+    return [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due]
+
+
 def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
@@ -733,6 +744,7 @@ def _cmd_lint(args) -> int:
     # revised. Advisory like every other lifecycle signal here — only the
     # opt-in --fail-firing-review turns it into an exit code.
     reviews = _firing_reviews(store)
+    review_due = _review_due(store)
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
@@ -762,6 +774,7 @@ def _cmd_lint(args) -> int:
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
                                  for ue in unreachable],
         "failed": failed,
+        "review_due": _review_due_json(review_due),
     }
 
     def plain():
@@ -829,8 +842,7 @@ def _cmd_status(args) -> int:
         return 1
     active, broken, cands = store.active(), store.broken(), store.candidates()
     challenged = [(f, s) for f, s in store.parsed() if s.status == "challenged"]
-    today = time.strftime("%Y-%m-%d")
-    due = [s for _, s in store.firing() if s.review_after and s.review_after < today]
+    due = _review_due(store)
 
     # Orphans: detected (firing scars whose anchors all died — not yet persisted)
     # and persisted (already flipped to status: orphaned, invisible until now).
@@ -849,7 +861,7 @@ def _cmd_status(args) -> int:
                    for _f, s in active],
         "challenged": [{"type": s.type, "id": s.id, "title": s.title} for _f, s in challenged],
         "candidates": [c.name for c in cands],
-        "review_due": [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due],
+        "review_due": _review_due_json(due),
         # Count-based review trigger (#274), kept SEPARATE from review_due:
         # one is a date passing, the other is accumulated firings, and a
         # consumer that merges them cannot tell which obligation it is looking
