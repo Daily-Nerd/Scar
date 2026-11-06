@@ -6,11 +6,51 @@ embedded so `scar init` works from a bare install with no data files.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .lint import lint_text
-from .model import ParseError, Scar, parse_scar_text
+from .model import TYPES, ParseError, Scar, parse_scar_text
+
+SLUG_MAX = 60
+_TYPE_EXT_CHAIN = re.compile(r"(?:\.(?:%s))+$" % "|".join(TYPES))
+
+
+def sanitize_signal_text(s: str) -> str:
+    """Mined git text (revert subjects, squash-merge subjects) can carry
+    markdown links, emphasis markers, and bare URLs; leaked into a candidate
+    they make the title unreadable and a URL eats the whole slug budget (#159)."""
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [text](url) -> text
+    s = re.sub(r"https?://\S+", "", s)
+    s = re.sub(r"[*_`]+", "", s)
+    return " ".join(s.split())
+
+
+def slugify(text: str, fallback: str = "scar") -> str:
+    """The one slug normaliser (#352): every writer of a scar filename (promote,
+    the MCP draft tool, harvest --write) goes through here so the rules cannot
+    drift apart. Sanitise (#159), lowercase, collapse non-alnum to '-', cap at
+    SLUG_MAX without leaving a sliced-mid-token fragment."""
+    s = re.sub(r"[^a-z0-9]+", "-", sanitize_signal_text(text).lower()).strip("-")
+    if len(s) > SLUG_MAX:
+        cut = s[:SLUG_MAX]
+        if s[SLUG_MAX] != "-" and "-" in cut:
+            cut = cut.rsplit("-", 1)[0]
+        s = cut.rstrip("-")
+    return s or fallback
+
+
+def active_slug(stem: str, scar_type: str) -> str:
+    """Candidate stem -> slug for the active `NNNN-<slug>.<type>.md` name.
+    A trailing `.{type}` chain (any type) is the extension leaking into the
+    stem; a trailing `-{type}` is redundant only for the scar's own type."""
+    stem = _TYPE_EXT_CHAIN.sub("", stem)
+    slug = slugify(stem, fallback="scar")
+    suffix = "-" + scar_type
+    if slug.endswith(suffix):
+        slug = slug[: -len(suffix)] or slug
+    return slug
 
 SKIP_NAMES = {"readme.md", "template.md"}
 
@@ -268,8 +308,11 @@ class ScarStore:
         # like promoted_by itself: whatever the candidate carried here was
         # never a real vouch either.
         scar.promoted_by_source = reviewer_source if reviewer else None
-        slug = candidate.stem
+        slug = active_slug(candidate.stem, scar.type)
         new_path = self.scars_dir / f"{scar.id:04d}-{slug}.{scar.type}.md"
+        if new_path.exists():  # #352: never clobber an existing active scar
+            raise ValueError(
+                f"refusing to promote, active file already exists: {new_path.name}")
         new_path.write_text(scar.to_text(), encoding="utf-8")
         candidate.unlink()
         return new_path

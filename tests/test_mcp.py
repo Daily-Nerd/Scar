@@ -160,3 +160,17 @@ def test_serve_subprocess_completes_real_handshake(tmp_path):
     assert tools["id"] == 2
     assert [t["name"] for t in tools["result"]["tools"]] == [
         "scar_query", "scar_why", "scar_draft"]
+
+
+def test_scar_draft_slug_passthrough_uses_shared_normaliser(tmp_path):
+    from scar.store import slugify
+    init_scars(tmp_path)
+    raw = "Odd *Slug* [x](http://y.io) " + "word " * 30
+    result = _handle("tools/call", {
+        "name": "scar_draft",
+        "arguments": {"repo": str(tmp_path), "type": "deadend", "title": "t",
+                      "slug": raw, "anchors": [{"pattern": "redis"}],
+                      "body": "b"},
+    })
+    data = json.loads(_text(result))
+    assert data["candidate"].endswith(slugify(raw, fallback="scar-candidate") + ".md")

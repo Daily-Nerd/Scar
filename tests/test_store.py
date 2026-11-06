@@ -303,3 +303,72 @@ def test_append_evidence_note_survives_parse_round_trip(repo):
 def test_append_evidence_note_unknown_id_raises(repo):
     with pytest.raises(ValueError):
         ScarStore.discover(repo).append_evidence_note(99, _NOTE)
+
+
+# --- #352: one canonical active filename -----------------------------------
+
+def _cand(repo, name, type_="landmine"):
+    p = repo / ".scars" / "candidates" / name
+    p.write_text(CANDIDATE.replace("type: deadend", f"type: {type_}"),
+                 encoding="utf-8")
+    return p
+
+
+def test_promote_strips_type_extension_leak(repo):
+    out = ScarStore.discover(repo).promote(_cand(repo, "x.landmine.md"), reviewer="k")
+    assert out.name == "0001-x.landmine.md"
+
+
+def test_promote_strips_extension_chain_for_any_type(repo):
+    out = ScarStore.discover(repo).promote(_cand(repo, "x.fence.deadend.md"), reviewer="k")
+    assert out.name == "0001-x.landmine.md"
+
+
+def test_promote_strips_own_type_dash_suffix(repo):
+    out = ScarStore.discover(repo).promote(_cand(repo, "foo-bar-landmine.md"), reviewer="k")
+    assert out.name == "0001-foo-bar.landmine.md"
+
+
+def test_promote_keeps_other_type_dash_suffix(repo):
+    out = ScarStore.discover(repo).promote(_cand(repo, "x-fence.md"), reviewer="k")
+    assert out.name == "0001-x-fence.landmine.md"
+
+
+def test_promote_plain_name_unchanged(repo):
+    out = ScarStore.discover(repo).promote(_cand(repo, "plain.md"), reviewer="k")
+    assert out.name == "0001-plain.landmine.md"
+
+
+def test_promoted_name_has_exactly_one_type_suffix(repo):
+    import re
+    for n in ["a.landmine.md", "b-landmine.md", "c.fence.md",
+              "d-landmine.landmine.md"]:
+        out = ScarStore.discover(repo).promote(_cand(repo, n), reviewer="k")
+        assert len(re.findall(r"\.(deadend|fence|landmine)", out.name)) == 1
+
+
+def test_promote_sanitises_and_caps_slug(repo):
+    long = "Weird *Name* " + "word-" * 30
+    out = ScarStore.discover(repo).promote(_cand(repo, long + ".md"), reviewer="k")
+    slug = out.name[len("0001-"):-len(".landmine.md")]
+    assert len(slug) <= 60
+    assert slug == slug.lower() and " " not in slug and "*" not in slug
+
+
+def test_promote_refuses_to_overwrite_existing_active_file(repo, monkeypatch):
+    store = ScarStore.discover(repo)
+    existing = repo / ".scars" / "0001-x.landmine.md"
+    existing.write_text("precious", encoding="utf-8")
+    monkeypatch.setattr(ScarStore, "next_id", lambda self: 1)
+    cand = _cand(repo, "x.landmine.md")
+    with pytest.raises(ValueError, match="exists"):
+        store.promote(cand, reviewer="k")
+    assert existing.read_text(encoding="utf-8") == "precious"
+    assert cand.exists()
+
+
+def test_shared_slugify_is_the_harvest_and_mcp_normaliser():
+    from scar.store import slugify
+    assert slugify("Redis *failed* [here](http://x.io)", fallback="f") == "redis-failed-here"
+    assert slugify("", fallback="signal") == "signal"
+    assert len(slugify("word " * 40, fallback="f")) <= 60

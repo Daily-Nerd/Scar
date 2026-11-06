@@ -51,7 +51,7 @@ from .reanchor import (
 )
 from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
-from .store import ScarStore, init_scars
+from .store import ScarStore, init_scars, sanitize_signal_text, slugify
 from .violation_evidence import is_violation_summary
 from . import output
 
@@ -2671,26 +2671,8 @@ _WRITE_SCAR_TYPES = {"reverts": "deadend", "deleted_components": "deadend",
                      "flapping": "fence", "comments": "fence"}
 
 
-def _sanitize_signal_text(s: str) -> str:
-    """Mined git text (revert subjects, squash-merge subjects) can carry
-    markdown links, emphasis markers, and bare URLs; leaked into a candidate
-    they make the title unreadable and a URL eats the whole slug budget (#159)."""
-    import re as _re
-    s = _re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [text](url) -> text
-    s = _re.sub(r"https?://\S+", "", s)
-    s = _re.sub(r"[*_`]+", "", s)
-    return " ".join(s.split())
-
-
 def _write_slug(title: str) -> str:
-    import re as _re
-    s = _re.sub(r"[^a-z0-9]+", "-", _sanitize_signal_text(title).lower()).strip("-")
-    if len(s) > 60:
-        cut = s[:60]
-        if s[60] != "-" and "-" in cut:  # sliced mid-token: drop the fragment
-            cut = cut.rsplit("-", 1)[0]
-        s = cut.rstrip("-")
-    return s or "signal"
+    return slugify(title, fallback="signal")
 
 
 def _write_anchors(repo: Path, section: str, c: dict, tracked: set[str]) -> list[str]:
@@ -2717,7 +2699,7 @@ def _write_title(section: str, c: dict) -> str:
         raw = f"Flapping value {c['key']} in {c['file']}"
     else:
         raw = "Keep-out comment in " + c["location"].split(":", 1)[0]
-    return _sanitize_signal_text(raw)
+    return sanitize_signal_text(raw)
 
 
 def _write_evidence(section: str, c: dict) -> str:
