@@ -111,6 +111,11 @@ CI without pre-commit:
 `@main` always tracks the latest commit; releases are tagged `vX.Y.Z` via
 release-please, so pin a tag for reproducible CI.
 
+`scar lint --review-queue` prints a markdown checklist of scars that need a human
+(orphans, partial rot, symbol drift, unreachable evidence, passed `review_after`),
+empty when there are none. The docs have a scheduled-workflow recipe that keeps
+one rolling issue in sync with it: see [CI](https://daily-nerd.github.io/Scar/docs/agents#review-queue).
+
 ## Quality discipline
 
 - **Candidates vs active:** agents and `scar harvest` only ever write to `.scars/candidates/`. A human promotes (`scar promote`) — nothing enters active enforcement without review.

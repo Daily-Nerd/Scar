@@ -36,3 +36,15 @@ def test_agents_doc_documents_native_codex_hooks_and_trust():
     assert "Bash" in text and "apply_patch" in text
     assert "/hooks" in text
     assert "silently" in text
+
+
+def test_agents_doc_documents_review_queue_recipe():
+    """#354: the rolling review issue is a documented recipe over
+    `scar lint --review-queue`, not a subcommand."""
+    text = (ROOT / "website" / "docs" / "agents.md").read_text(encoding="utf-8")
+    assert "### Review queue" in text
+    assert "scar lint --review-queue" in text
+    assert "scar-review-queue" in text
+    assert "issues: write" in text
+    assert "fetch-depth: 0" in text
+    assert "\u2014" not in text.split("### Review queue")[1].split("## Machine-readable")[0]
