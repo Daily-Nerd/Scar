@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.1](https://github.com/Daily-Nerd/Scar/compare/v0.25.0...v0.25.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **lint:** name a flow-style anchors list as the cause, and list the four anchor kinds in the unsupported-kind warning ([#344](https://github.com/Daily-Nerd/Scar/issues/344)) ([#346](https://github.com/Daily-Nerd/Scar/issues/346)) ([03c632c](https://github.com/Daily-Nerd/Scar/commit/03c632cf1e92415d2c3e052deaf34194e4d311de))
+* **orphan:** report a dead symbol anchor as partial rot when another anchor is still live ([#345](https://github.com/Daily-Nerd/Scar/issues/345)) ([4d26d61](https://github.com/Daily-Nerd/Scar/commit/4d26d6120e7b46b3c273a23c6b827a22d2833cab)), closes [#343](https://github.com/Daily-Nerd/Scar/issues/343)
+
 ## [0.25.0](https://github.com/Daily-Nerd/Scar/compare/v0.24.0...v0.25.0) (2026-10-06)
 
 
