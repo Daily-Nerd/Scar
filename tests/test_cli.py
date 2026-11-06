@@ -951,6 +951,45 @@ def test_lint_surfaces_partial_rot_naming_dead_anchor(tmp_path, monkeypatch, cap
     assert "orphan-detected: scar #7" not in out  # never reported as an orphan
 
 
+def test_lint_fail_partial_rot_exits_one_with_flag(tmp_path, monkeypatch, capsys):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint", "--fail-partial-rot"]) == 1
+    assert "partial-rot" in capsys.readouterr().out
+    assert main(["lint"]) == 0  # opt-in only
+
+
+def test_lint_fail_partial_rot_independent_of_fail_orphans(tmp_path, monkeypatch):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    # --fail-orphans alone does not gate partial rot
+    assert main(["lint", "--fail-orphans"]) == 0
+
+
+def test_lint_fail_partial_rot_ignores_orphan_only_repo(repo):
+    init_scars(repo)
+    (repo / ".scars" / "0001-gone.deadend.md").write_text(ORPHAN_SCAR)
+    assert main(["lint", "--fail-partial-rot"]) == 0
+
+
+def test_lint_fail_partial_rot_all_live_exits_zero(tmp_path, monkeypatch):
+    _git_repo_with_partial_rot(tmp_path)
+    (tmp_path / "src" / "gone").mkdir()
+    (tmp_path / "src" / "gone" / "mod.py").write_text("y = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    assert main(["lint", "--fail-partial-rot"]) == 0
+
+
+def test_lint_json_unchanged_by_fail_partial_rot(tmp_path, monkeypatch, capsys):
+    _git_repo_with_partial_rot(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["lint", "--json"])
+    base = capsys.readouterr().out
+    main(["lint", "--json", "--fail-partial-rot"])
+    assert capsys.readouterr().out == base
+
+
 def test_status_reports_partial_rot_count(tmp_path, monkeypatch, capsys):
     _git_repo_with_partial_rot(tmp_path)
     monkeypatch.chdir(tmp_path)

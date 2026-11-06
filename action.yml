@@ -7,6 +7,10 @@ inputs:
     description: "Exit non-zero when any scar is orphan-detected (passes --fail-orphans)."
     required: false
     default: 'true'
+  fail-partial-rot:
+    description: "Exit non-zero when any scar has a dead anchor among live ones (passes --fail-partial-rot). Passes when git is unavailable."
+    required: false
+    default: 'false'
   version:
     description: "scar-cli version to install (PyPI version specifier, e.g. '0.11.0'). Empty = latest."
     required: false
@@ -39,6 +43,9 @@ runs:
         set -- lint
         if [ "${{ inputs.fail-orphans }}" = "true" ]; then
           set -- "$@" --fail-orphans
+        fi
+        if [ "${{ inputs.fail-partial-rot }}" = "true" ]; then
+          set -- "$@" --fail-partial-rot
         fi
         if [ -n "${{ inputs.args }}" ]; then
           set -- "$@" ${{ inputs.args }}

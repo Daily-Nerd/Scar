@@ -34,6 +34,7 @@ def test_action_declares_expected_inputs_with_defaults():
 
     expected_defaults = {
         "fail-orphans": "'true'",
+        "fail-partial-rot": "'false'",
         "version": "''",
         "args": "''",
     }
@@ -62,6 +63,12 @@ def test_action_uses_fail_orphans_input_conditionally():
     text = _text()
     assert "inputs.fail-orphans" in text
     assert "--fail-orphans" in text
+
+
+def test_action_uses_fail_partial_rot_input_conditionally():
+    text = _text()
+    assert "inputs.fail-partial-rot" in text
+    assert "--fail-partial-rot" in text
 
 
 def test_action_forwards_extra_args_input():
