@@ -7,7 +7,6 @@ MCP hosts can launch it with `scar mcp`.
 from __future__ import annotations
 
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -16,7 +15,7 @@ from typing import Any
 from .lint import lint_text
 from .match import rank_matches_for_diff, rank_matches_for_paths
 from .model import Scar
-from .store import ScarStore
+from .store import ScarStore, slugify
 
 
 def _version() -> str:
@@ -95,8 +94,7 @@ def _scar_from_args(args: dict[str, Any]) -> Scar:
 
 
 def _slug(title: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return slug[:60] or "scar-candidate"
+    return slugify(title, fallback="scar-candidate")
 
 
 def _draft(args: dict[str, Any]) -> dict[str, Any]:
