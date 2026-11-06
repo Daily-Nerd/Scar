@@ -103,6 +103,7 @@ CI without pre-commit:
 - uses: Daily-Nerd/Scar@main   # or pin a tag, e.g. @v0.11.0 (release-please)
   with:
     fail-orphans: 'true'   # default; set 'false' to only fail on parse errors
+    fail-partial-rot: 'false'   # opt in; also fail when a scar has a dead anchor among live ones
     version: ''             # empty = latest scar-cli from PyPI; or pin e.g. '0.11.0'
     args: ''                # extra args appended to `scar lint`
 ```

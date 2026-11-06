@@ -771,7 +771,8 @@ def _cmd_lint(args) -> int:
         for of in orphans:
             print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
         # partial rot (#35): firing scars with a dead anchor among live ones.
-        # Advisory only — never a blocking gate, even under --fail-orphans.
+        # Advisory by default; --fail-partial-rot opts into a blocking gate.
+        # --fail-orphans does not imply it (the two gates are independent).
         for pr in partial:
             print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
                   "— re-anchor to restore full coverage")
@@ -814,6 +815,8 @@ def _cmd_lint(args) -> int:
     if failed:
         return 1
     if orphans and getattr(args, "fail_orphans", False):
+        return 1
+    if partial and getattr(args, "fail_partial_rot", False):
         return 1
     if reviews and getattr(args, "fail_firing_review", False):
         return 1
@@ -3125,6 +3128,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "lint", _cmd_lint, help="validate every scar and candidate")
     p.add_argument("--fail-orphans", action="store_true",
                    help="exit non-zero when any scar is orphan-detected")
+    p.add_argument("--fail-partial-rot", action="store_true",
+                   help="exit non-zero when any scar has a dead anchor among live "
+                        "ones (passes when git is unavailable, like --fail-orphans)")
     p.add_argument("--fail-firing-review", action="store_true",
                    help="exit non-zero when any scar has crossed its "
                         "review_after_firings threshold")
