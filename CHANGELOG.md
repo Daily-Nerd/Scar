@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.26.0](https://github.com/Daily-Nerd/Scar/compare/v0.25.1...v0.26.0) (2026-11-06)
+
+
+### Features
+
+* **firing-log:** capture bounded violation evidence at match time ([#349](https://github.com/Daily-Nerd/Scar/issues/349)) ([9789b37](https://github.com/Daily-Nerd/Scar/commit/9789b370d78e3590abed69bee249db42e0baa2b0))
+* **lint:** opt-in --fail-partial-rot gate ([#355](https://github.com/Daily-Nerd/Scar/issues/355)) ([aa0346b](https://github.com/Daily-Nerd/Scar/commit/aa0346b3ed18f9968df27619d53b9bf766f5d344)), closes [#353](https://github.com/Daily-Nerd/Scar/issues/353)
+
+
+### Bug Fixes
+
+* **promote:** derive the active filename from one shared slug normaliser ([#356](https://github.com/Daily-Nerd/Scar/issues/356)) ([04e8def](https://github.com/Daily-Nerd/Scar/commit/04e8defd70b59f135e6cf0a0d3c90ba99efa9805)), closes [#352](https://github.com/Daily-Nerd/Scar/issues/352)
+
 ## [0.25.1](https://github.com/Daily-Nerd/Scar/compare/v0.25.0...v0.25.1) (2026-10-07)
 
 
