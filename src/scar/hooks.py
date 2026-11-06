@@ -374,6 +374,8 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
             "repo": str(store.root),
             "target": target,
             "violation_ids": [v.scar.id for v in violations],
+            "violation_evidence": {str(violation.scar.id): violation.evidence
+                                   for violation in violations},
             "count": len(violations),
             "runtime": runtime,
             # The posttool half ran and reached a verdict on this edit.

@@ -353,16 +353,25 @@ def test_symbol_match_reflects_file_edits_within_process(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_hot_path_modules_never_invoke_git():
+    import ast
     import scar.hooks as hooks_mod
     import scar.match as match_mod
+    import scar.violation_evidence as evidence_mod
 
-    for mod in (match_mod, hooks_mod):
+    for mod in (match_mod, hooks_mod, evidence_mod):
         src = Path(mod.__file__).read_text(encoding="utf-8")
         assert "import subprocess" not in src, f"{mod.__name__} must never invoke git"
         assert "subprocess.run" not in src
         assert "subprocess.Popen" not in src
-        for banned in (".orphan", ".renames", ".evidence", ".reanchor"):
-            assert banned not in src, f"{mod.__name__} imports {banned} (git-touching module)"
+        for node in ast.walk(ast.parse(src)):
+            imports = []
+            if isinstance(node, ast.ImportFrom):
+                imports = [node.module or ""] + [alias.name for alias in node.names]
+            elif isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            for module in imports:
+                assert not {"orphan", "renames", "evidence", "reanchor"}.intersection(
+                    module.split(".")), f"{mod.__name__} imports {module} (git-touching module)"
 
 
 def test_content_pattern_is_content_signal():

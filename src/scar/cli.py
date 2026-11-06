@@ -52,6 +52,7 @@ from .reanchor import (
 from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
 from .store import ScarStore, init_scars
+from .violation_evidence import is_violation_summary
 from . import output
 
 
@@ -1678,6 +1679,7 @@ STAGE_KEYS = frozenset({"retrieval_misses", "demotions",
                         "edits_observed", "injection_rate",
                         "command_firings", "firings_kind_unknown",
                         "armed_firings", "armed_unknown",
+                        "violation_evidence_summarized", "violation_evidence_unknown",
                         "firings_block_capable", "firings_advisory",
                         "firings_block_unknown", "all_firings_advisory",
                         "firings_context_known", "firings_context_unknown"})
@@ -1799,6 +1801,12 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
     if cap_unknown:
         enforcement += (f", {cap_unknown} of unknown capability (logged "
                         "before it was recorded)")
+    evidence_summarized = block.get("violation_evidence_summarized", 0)
+    evidence_unknown = block.get("violation_evidence_unknown", 0)
+    if evidence_summarized or evidence_unknown:
+        enforcement += (f"; evidence: {evidence_summarized} summarized (no raw text), "
+                        f"{evidence_unknown} unknown (missing or invalid evidence); "
+                        "summaries alone cannot adjudicate violations")
     # #284: what the demotions are EVIDENCE of. A path-only demotion is a
     # near-miss on the file, a cooldown demotion is a content hit we chose not
     # to repeat; one blended number hides which precision story this repo
@@ -1862,6 +1870,8 @@ def _aggregate_firings(records: list[dict]) -> dict:
     from .hooks import DEMOTED_COOLDOWN, DEMOTED_PATH_ONLY  # one spelling, both sides
     counts: dict[int, int] = {}
     violations: dict[int, int] = {}
+    violation_evidence_summarized = 0
+    violation_evidence_unknown = 0
     # (scar_id, target) -> earliest firing ts, for the retrieval-miss check.
     fired_on: dict[tuple[int, str], str] = {}
     pending_violations: list[tuple[int, str, str]] = []
@@ -2043,12 +2053,18 @@ def _aggregate_firings(records: list[dict]) -> dict:
                 if isinstance(vid, int):
                     pending_violations.append((vid, target, ts_rec))
         if isinstance(vids, list):
+            evidence = rec.get("violation_evidence")
             # Guard: violation_ids might be garbage in corrupted records —
             # skip the whole record unless it's a list, and skip any
             # non-int element within it, rather than coercing or crashing.
             for vid in vids:
                 if isinstance(vid, int):
                     violations[vid] = violations.get(vid, 0) + 1
+                    summary = evidence.get(str(vid)) if isinstance(evidence, dict) else None
+                    if is_violation_summary(summary):
+                        violation_evidence_summarized += 1
+                    else:
+                        violation_evidence_unknown += 1
         # `last_fired` means LAST FIRED. Only records where a scar actually
         # fired may move it — not posttool violation records, not zero-hit
         # precheck passes. Otherwise a repo with zero firings still reports a
@@ -2129,6 +2145,8 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "firings_kind_unknown": firings_kind_unknown,
             "armed_firings": armed_firings,
             "armed_unknown": armed_unknown,
+            "violation_evidence_summarized": violation_evidence_summarized,
+            "violation_evidence_unknown": violation_evidence_unknown,
             # #277: the posttool half's own liveness. `posttool_silent` is
             # ONE-DIRECTIONAL like every other health field here — it can show
             # the half is dead, and observing a verdict never certifies it

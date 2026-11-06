@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .model import Scar
 from .store import ScarStore
+from .violation_evidence import summarize_match
 
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 DEFAULT_TOP_K = 3
@@ -409,13 +410,14 @@ class Violation:
     source: Path      # scar file relative to root
     path: str         # edited file that tripped it
     excerpt: str      # line containing the first match (trimmed ~120 chars)
+    evidence: dict
 
 
-def _violation_excerpt(pattern: str, text: str) -> str | None:
-    """First line of `text` matching `pattern`, trimmed to ~120 chars.
-    Searches the whole capped text for the pattern, then extracts the line
-    containing the match. Invalid regex -> None (lint's job; never crash the
-    read path — mirrors _pattern_anchor_matches)."""
+def _violation_details(pattern: str, text: str) -> tuple[str, dict] | None:
+    """Display excerpt and evidence from the same first match in capped text.
+
+    Invalid regex returns None, matching _pattern_anchor_matches.
+    """
     try:
         rx = re.compile(pattern, re.IGNORECASE)
     except re.error:
@@ -424,20 +426,15 @@ def _violation_excerpt(pattern: str, text: str) -> str | None:
     m = rx.search(capped)
     if m is None:
         return None
-    # Extract the line containing the match
-    line_start = capped.rfind("\n", 0, m.start()) + 1
-    line_end = capped.find("\n", m.start())
-    if line_end == -1:
-        line_end = len(capped)
-    return capped[line_start:line_end][:120]
+    return summarize_match(m)
 
 
 def _violation_lines(pattern: str, text: str) -> list[tuple[int, str]]:
     """Every (1-based line number, trimmed line) where `pattern` matches.
     Each line is reported once however many times it matches. Invalid regex ->
-    [] (lint's job; mirrors _violation_excerpt).
+    [] (lint's job; mirrors _violation_details).
 
-    Scans the WHOLE text, unlike _violation_excerpt: the 64 KiB bound belongs to
+    Scans the WHOLE text, unlike _violation_details: the 64 KiB bound belongs to
     the edit hot path, and the sweep reads files offline that are already capped
     at MAX_CONTENT_BYTES (same reasoning as _pattern_anchor_live). The ReDoS
     defense stays lint._is_redos_prone() at the gate (landmine #11)."""
@@ -495,11 +492,12 @@ def _violations_for_target(firing: list, root: Path, rel_path: str,
                            new_content: str) -> list["Violation"]:
     out: list[Violation] = []
     for scar, rel_source in _armed_candidates(firing, root, rel_path):
-        excerpt = _violation_excerpt(scar.violation, new_content)
-        if excerpt is None:
+        details = _violation_details(scar.violation, new_content)
+        if details is None:
             continue
+        excerpt, evidence = details
         out.append(Violation(scar=scar, source=rel_source,
-                             path=rel_path, excerpt=excerpt))
+                             path=rel_path, excerpt=excerpt, evidence=evidence))
     return out
 
 
