@@ -239,6 +239,13 @@ Top-level keys, and the keys of each object inside the listed arrays.
 `gc` mutates state. A consumer that only wants to observe MUST pass
 `--dry-run`; `dry_run` echoes back which mode ran.
 
+`stats` also guarantees integer `violation_evidence_summarized` and
+`violation_evidence_unknown` keys, including in each `--all-repos` group.
+They count individual violations, not rows: a row with two violated scars
+contributes two. Summarized means a valid write-time summary exists; unknown
+means missing, malformed, or an unsupported summary format. Neither means
+adjudicated. See §9.11 for the capture policy and its limits.
+
 `stats.armed_firings` counts firings on scars that carried a `violation:`
 tripwire at the moment they fired; `armed_unknown` counts firings on log rows
 written before that was recorded. A scar with no tripwire can never be recorded
@@ -496,3 +503,53 @@ ones that reach `main` wrong.
 `scar hook install` and `scar skill install` without `--runtime` detect hosts (claude, codex, windsurf, cursor, opencode) by config directory or binary on PATH, and resolve for each the channel that already serves it: `settings` (Scar's own entries in the host's hook file), `plugin` (the scar marketplace plugin installed and not disabled), or `none`. windsurf is repo-scoped: its hooks file is written into the working repo, so the binary on PATH counts only when that repo is inside a git repository. On a terminal, one question per present, wirable, unserved host, default no. Without a terminal, exactly one such host is installed; zero or several means the commands are printed and nothing is written. Zero detected hosts says so, rather than naming the plugin. `--all` wires every such host. `--runtime claude` on a Claude Code already served by the plugin refuses unless `--force`. `--all` and `--force` apply to `install` only, and `--force` applies to `--runtime claude` only. A missing or unreadable plugin registry never counts as `plugin`.
 
 Two rules differ for the skill kind. windsurf is not repo-scoped there: its global skills live under home (`~/.codeium/windsurf/skills`), so the binary on PATH counts on its own, with no git-repo guard. And `scar skill install --runtime <host>` refuses, exit 1, when detection does not find that host on the machine, rather than creating a skill directory nothing reads. Every destination resolves through the same home the detection pass used, and the Codex destination honours `$CODEX_HOME`, so a reported success always names a directory the detected host actually reads.
+
+### 9.11 Violation evidence is captured at match time
+
+Claude Code, Codex, and Windsurf use one verdict writer. New verdict rows
+carry `violation_evidence`, keyed by the string scar id, alongside the existing
+`violation_ids`. Each violated scar contributes one bounded `summary-v1`
+object describing its first regex match on that edited target:
+
+| Field | Meaning |
+|---|---|
+| `format` | `summary-v1`; consumers must not interpret an unknown format as this one |
+| `pattern_sha256` | SHA-256 of the exact violation regex used at capture time |
+| `match_sha256` | SHA-256 of the full matched substring, even when it falls outside the display excerpt |
+| `excerpt_sha256` | SHA-256 of the same at-most-120-character line prefix used for display |
+| `line`, `column` | 1-based character position of the match start in the adapter's scanned edit buffer |
+| `match_chars`, `excerpt_chars` | Character lengths, not byte lengths; zero-length regex matches are valid |
+| `excerpt_truncated` | Whether that line in the scanned buffer exceeded 120 characters |
+
+The evidence is derived from the same regex match as the verdict, not from a
+second search on a truncated excerpt or a later read of the target. The matcher
+scans at most the first 65,536 characters, as before. Positions describe that
+buffer, **not file line numbers**: adapters combine edits or patch additions,
+and may insert joining whitespace. Truncation describes only the captured
+buffer, not text beyond the scan cap. Digests use UTF-8 with `surrogatepass`
+for lone surrogate characters accepted from JSON payloads.
+
+**Privacy tradeoff:** no edited text or regex text is persisted in the summary.
+The display excerpt can contain credentials, and limiting it to 120 characters
+is not redaction. This implementation deliberately chooses structured summaries
+instead of claiming an incomplete secret filter makes arbitrary source safe.
+Hashes are not encryption or anonymization: low-entropy values can be guessed
+and compared. The machine-global log still contains repository and target paths;
+it remains sensitive local state and must not be published unreviewed.
+
+**Audit limit:** a reviewer with an independently retained edit and regex can
+compare their hashes and positions with the captured summary. A summary alone
+cannot recover the source or decide whether a match was a real violation, a
+quoted example, or another false positive. `violation_evidence_summarized`
+therefore never means "adjudicated" or "confirmed violation". Stats report the
+summarized and unknown counts separately, with this limitation in human output.
+
+Clean observed verdicts carry an empty evidence object. Legacy rows without
+evidence remain unknown for every recorded violation; missing or malformed
+per-scar entries are also unknown. Reads never backfill from present-day code,
+Git history, or current scar definitions. Old rows and existing violation counts
+remain unchanged. Codex multi-file edits retain a separate verdict and evidence
+map for each target. Files under `.scars/` remain eligible for matching other
+scars; there is no blanket directory exclusion. Logging remains best-effort:
+failure to append cannot block an edit, and a failed write does not claim that
+evidence was recorded.

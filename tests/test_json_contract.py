@@ -46,6 +46,7 @@ GUARANTEED: dict[str, set[str]] = {
               "never_fired", "demotions", "edits_observed", "injection_rate",
               "retrieval_misses", "instrument_disconnected",
               "last_fired_age_days", "armed_firings", "armed_unknown",
+              "violation_evidence_summarized", "violation_evidence_unknown",
               "advisories"},
     "gc": {"removed_markers", "dropped_firings", "dry_run", "candidates",
            "fp_log"},
