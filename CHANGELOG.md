@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/Daily-Nerd/Scar/compare/v0.26.0...v0.27.0) (2026-11-06)
+
+
+### Features
+
+* **lint:** rolling review queue from scar lint (--review-queue) ([#357](https://github.com/Daily-Nerd/Scar/issues/357)) ([8136513](https://github.com/Daily-Nerd/Scar/commit/8136513ef1c7cbba2ac2d7e1b4f0b68baf6544c0))
+
 ## [0.26.0](https://github.com/Daily-Nerd/Scar/compare/v0.25.1...v0.26.0) (2026-11-06)
 
 
