@@ -546,6 +546,74 @@ def _firing_reviews(store):
         return []
 
 
+def _review_due(store) -> list[Scar]:
+    """Firing scars whose review_after date has passed. The one definition
+    shared by `status` and `lint` so the two JSON surfaces cannot disagree."""
+    today = time.strftime("%Y-%m-%d")
+    return [s for _f, s in store.firing() if s.review_after and s.review_after < today]
+
+
+def _review_due_json(due: list[Scar]) -> list[dict]:
+    return [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due]
+
+
+def _review_queue_markdown(store, data: dict) -> str:
+    """Markdown checklist of scars a human should look at, built from the SAME
+    dict `lint --json` emits (#354). One row per scar, states merged. Only
+    CI-usable signals: the firing log is machine-local and empty on a fresh
+    checkout, so firing_review and never_fired are deliberately absent.
+
+    Only the id, title, a path and fixed state wording are printed. The
+    `reason` strings in `data` embed anchor text and violation hints, so they
+    are never used here, and the body and evidence are never read."""
+    by_id: dict[int, tuple[Path, Scar]] = {}
+    for f, s in store.parsed():
+        if s.id is not None:
+            by_id.setdefault(s.id, (f, s))
+
+    states: dict[int, list[str]] = {}
+    cmds: dict[int, list[str]] = {}
+
+    def add(scar_id: int, state: str, cmd: str) -> None:
+        if state not in states.setdefault(scar_id, []):
+            states[scar_id].append(state)
+        if cmd not in cmds.setdefault(scar_id, []):
+            cmds[scar_id].append(cmd)
+
+    for o in data["orphans"]:
+        add(o["scar_id"], "orphan (all anchors dead)", "`scar reanchor`")
+    for pr in data["partial_rot"]:
+        add(pr["scar_id"], "partial rot (dead anchor among live ones)", "`scar reanchor`")
+    for d in data["symbol_drift"]:
+        add(d["scar_id"], "symbol drift", "`scar why <path>`")
+    for ue in data["unreachable_evidence"]:
+        add(ue["scar_id"], "evidence commit unreachable", "`scar why <path>`")
+    for r in data["revivals"]:
+        add(r["scar_id"], "archived but revives_if matches again", "`scar why <path>`")
+    for rd in data["review_due"]:
+        add(rd["id"], f"review_after {rd['review_after']} passed",
+            f"`scar archive {rd['id']} --reason \"...\"` or bump review_after")
+
+    if not states:
+        return ""
+    lines = []
+    for scar_id in sorted(states):
+        found = by_id.get(scar_id)
+        if found:
+            f, s = found
+            where = s.path_anchors[0] if s.path_anchors else f.name
+            title = s.title
+        else:
+            where, title = "unknown file", "(scar not found)"
+        cmd = "; ".join(cmds[scar_id]).replace("<path>", where)
+        lines.append(f"- [ ] #{scar_id} {title} ({where}): "
+                     f"{'; '.join(states[scar_id])}. Suggested: {cmd}")
+    lines.append("")
+    lines.append("Firing-log signals (firing review, never fired) are not included: "
+                 "the firing log is machine-local and empty in CI.")
+    return "\n".join(lines) + "\n"
+
+
 def _cmd_lint(args) -> int:
     store = _require_store()
     if store is None:
@@ -733,6 +801,7 @@ def _cmd_lint(args) -> int:
     # revised. Advisory like every other lifecycle signal here — only the
     # opt-in --fail-firing-review turns it into an exit code.
     reviews = _firing_reviews(store)
+    review_due = _review_due(store)
 
     # evidence reachability (#43, scar #5): commit-SHA receipts that no longer
     # resolve from HEAD. None = shallow clone, reachability indeterminate → skip.
@@ -762,6 +831,7 @@ def _cmd_lint(args) -> int:
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
                                  for ue in unreachable],
         "failed": failed,
+        "review_due": _review_due_json(review_due),
     }
 
     def plain():
@@ -809,8 +879,13 @@ def _cmd_lint(args) -> int:
               f"{len(unreachable)} unreachable-evidence, "
               f"{len(reviews)} firing-review")
 
-    output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _lint_rich(data), plain=plain)
+    if getattr(args, "review_queue", False):
+        # Machine path: plain markdown, never rich, and empty stdout when the
+        # queue is empty so a workflow can close its issue on `-s queue.md`.
+        sys.stdout.write(_review_queue_markdown(store, data))
+    else:
+        output.render(data=data, json_flag=getattr(args, "json", False),
+                      tty=lambda: _lint_rich(data), plain=plain)
 
     if failed:
         return 1
@@ -829,8 +904,7 @@ def _cmd_status(args) -> int:
         return 1
     active, broken, cands = store.active(), store.broken(), store.candidates()
     challenged = [(f, s) for f, s in store.parsed() if s.status == "challenged"]
-    today = time.strftime("%Y-%m-%d")
-    due = [s for _, s in store.firing() if s.review_after and s.review_after < today]
+    due = _review_due(store)
 
     # Orphans: detected (firing scars whose anchors all died — not yet persisted)
     # and persisted (already flipped to status: orphaned, invisible until now).
@@ -849,7 +923,7 @@ def _cmd_status(args) -> int:
                    for _f, s in active],
         "challenged": [{"type": s.type, "id": s.id, "title": s.title} for _f, s in challenged],
         "candidates": [c.name for c in cands],
-        "review_due": [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due],
+        "review_due": _review_due_json(due),
         # Count-based review trigger (#274), kept SEPARATE from review_due:
         # one is a date passing, the other is accumulated firings, and a
         # consumer that merges them cannot tell which obligation it is looking
@@ -3116,7 +3190,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fail-firing-review", action="store_true",
                    help="exit non-zero when any scar has crossed its "
                         "review_after_firings threshold")
-    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    fmt = p.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    fmt.add_argument("--review-queue", action="store_true",
+                     help="print a markdown checklist of scars needing a human "
+                          "(CI-usable signals only); empty output when none")
     p = _add(sub, "status", _cmd_status, help="counts, titles, broken-file warnings")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
