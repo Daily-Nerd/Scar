@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/Daily-Nerd/Scar/compare/v0.27.0...v0.27.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **lint:** list scars with lint errors in the review queue and sync before failing ([#360](https://github.com/Daily-Nerd/Scar/issues/360)) ([cc23232](https://github.com/Daily-Nerd/Scar/commit/cc23232194e1e1b7daa319a5b73a35e4eba8c801))
+
 ## [0.27.0](https://github.com/Daily-Nerd/Scar/compare/v0.26.0...v0.27.0) (2026-11-06)
 
 
