@@ -231,7 +231,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `check` | `paths` array of str, `scars` array | `scars[]`: `id`, `type`, `severity`, `confidence`, `status`, `title`, `body` |
 | `sweep` | `files` int (tracked files swept), `skipped` int (tracked files with no readable content: oversized or binary), `scars` int (scars armed on at least one swept file), `hits` array | `hits[]`: `id` int, `type`, `severity`, `title`, `source` (scar file, repo-relative), `path`, `line` int (1-based), `excerpt` |
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
-| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `command_firings` int, `firings_kind_unknown` int, `advisories` array. `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated` |
+| `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `command_firings` int, `firings_kind_unknown` int, `advisories` array, `compliance` object (§9.12). `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated`. `compliance`: `F`, `V`, `rate`, `violations_unmatched`, `verdicts_expected`, `verdicts_observed`, `verdicts_resolved`, `verdict_completeness`, `top_scar` (`repo`, `id`, `share`, `F`, `V`, `rate`) |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines`, `path` (the state-dir log, #341), `legacy` (`null`, or `path` + `lines` of a leftover `.scars/candidates/fp-log.txt`) |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
@@ -554,3 +554,51 @@ map for each target. Files under `.scars/` remain eligible for matching other
 scars; there is no blanket directory exclusion. Logging remains best-effort:
 failure to append cannot block an edit, and a failed write does not claim that
 evidence was recorded.
+
+### 9.12 The compliance result is computed by `stats`
+
+`stats.compliance` is the published enforcement result, computed by the same
+code that computes every other `stats` field, over the same filtered records.
+The keys are additive; no existing key changed.
+
+| Key | Meaning |
+|---|---|
+| `F` | Armed firings: the sum of `armed_ids` over the filtered rows (same count as `armed_firings`) |
+| `V` | Violations that followed an armed firing (definition below) |
+| `rate` | `V / F`, rounded to 3 places; **`null` when `F` is 0, never 0** |
+| `violations_unmatched` | Violations excluded from `V` because no earlier armed firing of that scar on that target is in the filtered records. Retrieval misses, reported apart, never dropped |
+| `verdicts_expected` | Same as `stats.verdicts_expected` |
+| `verdicts_observed` | Same as `stats.verdicts_observed` |
+| `verdicts_resolved` | Expected verdicts that were observed (joined on `edit_id`) |
+| `verdict_completeness` | `verdicts_resolved / verdicts_expected`; `null` when nothing was expected. Resolved, not observed, so a verdict that joins to nothing cannot push it past 1 |
+| `top_scar` | The scar with the largest `F`: `repo`, `id`, `share` (its share of `F`), and `F`, `V`, `rate` **with that scar excluded**. All six fields are `null` when `F` is 0, and `rate` is `null` when the excluded `F` is 0 |
+
+**Definition of V.** A violation row counts toward `V` when the violated scar
+has an armed firing (`armed_ids` on the firing row itself, never today's
+`.scars/`) on the same `target` at or before the violation's `ts`. This is
+"fired, then violated". A violation with no such firing is a retrieval miss
+(`retrieval_misses`), and counting it in `V` would let a retrieval failure
+inflate an enforcement rate. Rows that predate `armed_ids` place no armed
+firing, so a window made only of such rows has `F` 0 and a `null` rate.
+
+**Top scar ties** go to the lowest `id`, then the lexicographically lowest
+`repo`. A scar is identified by `(repo, id)`, because ids are per-repo.
+
+**No threshold is a parameter.** `stats` always reports the top scar's share and
+the excluded figures. What counts as dominant, and what completeness is enough,
+belongs to a pre-registration written before the data is read.
+
+**Scope.** `--repo PATH` (repeatable) restricts the records to a set of
+repositories before any metric runs, exactly like `--since`/`--until`. Paths
+resolve the way the hook stamps a record (the enclosing `.scars/` root, else the
+resolved path). A path with no records is not an error: the block reports zeros
+and nulls. `--repo` and `--all-repos` are mutually exclusive. The output is one
+block with `repo_set: true`, `repos` (the selected repo keys), `total_firings`,
+`last_fired`, `compliance` and `window` when given; the per-repo stage fields
+are not pooled because their ids are not comparable. `F`, `V` and the verdict
+counts are summed and the rate is computed once from the sums; per-repo rates
+are never averaged. `--all-repos` carries one `compliance` block per repo group.
+
+**`injection_rate` is coverage, not a retrieval rate.** It is the share of
+observed edits where any scar fired. It does not say whether the right scar was
+shown, and it must not be given a retrieval threshold.
