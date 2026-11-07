@@ -1496,6 +1496,14 @@ def test_write_slug_truncates_at_word_boundary():
     assert _write_slug("x" * 80) == "x" * 60  # no boundary — keep the raw cut
 
 
+def test_write_slug_keeps_underscores_and_transliterates():
+    """harvest --write goes through the shared filename slugifier (#365)."""
+    from scar.cli import _write_slug
+    assert _write_slug("my_file_name_landmine") == "my-file-name-landmine"
+    assert _write_slug("Ordem de importação") == "ordem-de-importacao"
+    assert _write_slug("日本語") == "signal"
+
+
 def test_harvest_precision_reads_fall_back_to_old_path_when_new_absent(harvest_repo, capsys):
     # An existing local label set at the pre-#106 location must not be
     # silently orphaned by the path move — reads fall back to it.
