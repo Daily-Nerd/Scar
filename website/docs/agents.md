@@ -189,10 +189,10 @@ Orphans, partial rot, symbol drift, unreachable evidence, revivals and passed `r
 
 ```bash
 scar lint --review-queue
-# - [ ] #7 One anchor alive, one rotted (src/live/): partial rot (dead anchor among live ones). Suggested: `scar reanchor`
+# - [ ] scar 7 `One anchor alive, one rotted` (`src/live/`): partial rot (dead anchor among live ones). Suggested: `scar reanchor`
 ```
 
-The output is plain text with no scar bodies, evidence or violation patterns: only id, title, path, state and a suggested command. When nothing needs review it prints nothing and exits 0. Scar files with lint errors are listed too, by path, with no lint message text. Exit codes are unchanged: lint still exits 1 when any file has an error, and `--fail-orphans` and friends still apply. The output is capped below GitHub's issue body limit, with a final line saying how many rows were omitted. The firing-log signals (firing review, never fired) are left out on purpose: that log lives on each developer's machine and is empty on a CI checkout.
+The output is plain text with no scar bodies, evidence or violation patterns: only id, title, path, state and a suggested command. Every value taken from a scar file (title, path, file name) is wrapped in a code span, so a crafted title cannot ping a user, link an issue or inject HTML when the queue is posted to GitHub; the row prefix is `scar 7`, not `#7`, so it never autolinks. When nothing needs review it prints nothing and exits 0. Scar files with lint errors are listed too, by path, with no lint message text. Exit codes are unchanged: lint still exits 1 when any file has an error, and `--fail-orphans` and friends still apply. The output is capped below GitHub's issue body limit, with a final line saying how many rows were omitted. The firing-log signals (firing review, never fired) are left out on purpose: that log lives on each developer's machine and is empty on a CI checkout.
 
 ```yaml
 # .github/workflows/scar-review-queue.yml
