@@ -1,15 +1,16 @@
 ---
-id: 0
+id: 27
 type: landmine
 title: sanitize_signal_text is display cleaning, not a filename rule; slugify must not call it
 severity: medium
 confidence: 0.8
 created: 2026-11-06
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
-  - symbol: src/scar/store.py::slugify
   - path: src/scar/store.py
-violation: "(?<!def )sanitize_signal_text\("
+  - symbol: src/scar/store.py::slugify
 evidence:
   - issue: 365
   - issue: 159
@@ -17,7 +18,8 @@ evidence:
 expires:
   condition: "slugify and sanitize_signal_text stop sharing any code, or harvested titles stop being cleaned"
   review_after: 2027-11-06
-status: candidate
+violation: "(?<!def )sanitize_signal_text\("
+status: active
 ---
 
 `sanitize_signal_text` (#159) cleans mined git text for a human to read, so it
