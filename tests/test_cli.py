@@ -1470,6 +1470,28 @@ def test_harvest_write_requires_scars_dir(tmp_path, capsys):
     assert "scar init" in capsys.readouterr().out
 
 
+def test_harvest_write_recreates_missing_candidates_dir(harvest_write_repo):
+    """#370: a missing candidates/ is not 'Scar not initialised'; .scars/ is."""
+    import shutil
+    shutil.rmtree(harvest_write_repo / ".scars" / "candidates")
+    assert main(["harvest", str(harvest_write_repo), "--write", "2"]) == 0
+    assert list((harvest_write_repo / ".scars" / "candidates").glob("*.md"))
+
+
+def test_harvest_write_works_after_last_candidate_promoted(harvest_write_repo):
+    """#370: with only .gitkeep left (last candidate promoted), harvest
+    --write still runs."""
+    cand = harvest_write_repo / ".scars" / "candidates"
+    assert (cand / ".gitkeep").is_file()
+    assert main(["harvest", str(harvest_write_repo), "--write", "2"]) == 0
+    assert list(cand.glob("*.md"))
+
+
+def test_init_writes_candidates_gitkeep(repo):
+    assert main(["init", "--no-seed"]) == 0
+    assert (repo / ".scars" / "candidates" / ".gitkeep").is_file()
+
+
 def test_write_title_and_slug_sanitize_markdown_and_urls():
     """Git text (revert subjects, squash-merge subjects) can carry markdown
     links, emphasis, and bare URLs; leaked into a candidate they make the title

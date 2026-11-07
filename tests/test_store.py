@@ -409,3 +409,22 @@ def test_promote_keeps_underscores_as_separators(repo):
     out = ScarStore.discover(repo).promote(
         _cand(repo, "my_file_name.landmine.md"), reviewer="k")
     assert out.name == "0001-my-file-name.landmine.md"
+
+
+# --- one owner for candidates/ (#370) ---
+
+def test_init_writes_empty_gitkeep_that_is_not_a_candidate(repo):
+    keep = repo / ".scars" / "candidates" / ".gitkeep"
+    assert keep.is_file() and keep.read_text() == ""
+    store = ScarStore.discover(repo)
+    assert store.candidates() == []
+    assert store.broken() == []
+
+
+def test_ensure_candidates_dir_recreates_missing_folder_idempotently(repo):
+    import shutil
+    shutil.rmtree(repo / ".scars" / "candidates")
+    store = ScarStore.discover(repo)
+    path = store.ensure_candidates_dir()
+    assert path == repo / ".scars" / "candidates" and path.is_dir()
+    assert store.ensure_candidates_dir() == path

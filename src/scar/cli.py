@@ -84,7 +84,7 @@ def _cmd_init(args) -> int:
     # decision, not damage, so re-running init never resurrects it.
     seeded = False
     if fresh and not getattr(args, "no_seed", False):
-        example = scars / "candidates" / EXAMPLE_SEED_NAME
+        example = ScarStore(root=Path.cwd(), scars_dir=scars).ensure_candidates_dir() / EXAMPLE_SEED_NAME
         example.write_text(EXAMPLE_SEED, encoding="utf-8")
         seeded = True
     has_history = _has_git_history(Path.cwd())
@@ -2847,10 +2847,13 @@ def _harvest_write(repo: Path, args) -> int:
         print(f"harvest --write: N must be 1..{_WRITE_CAP} — mined candidates "
               "run ~13% precision, more drafts than that buries the reviewer")
         return 1
-    cand_dir = repo / ".scars" / "candidates"
-    if not cand_dir.is_dir():
-        print(f"no .scars/candidates/ in {repo} — run `scar init` there first")
+    scars_dir = repo / ".scars"
+    if not scars_dir.is_dir():
+        print(f"no .scars/ in {repo}: run `scar init` there first")
         return 1
+    # candidates/ is not git-tracked when empty (#370); only a missing .scars/
+    # means Scar is not set up. The store is the one owner of the folder.
+    cand_dir = ScarStore(root=repo, scars_dir=scars_dir).ensure_candidates_dir()
 
     result = harvest(repo)
     tracked = set(_hgit(repo, "ls-files").splitlines())
