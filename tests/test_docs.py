@@ -47,4 +47,10 @@ def test_agents_doc_documents_review_queue_recipe():
     assert "scar-review-queue" in text
     assert "issues: write" in text
     assert "fetch-depth: 0" in text
+    # #359: the sync must not be skipped by lint's exit code, and failures of
+    # the gh calls must not be swallowed.
+    recipe = text.split("### Review queue")[1].split("## Machine-readable")[0]
+    assert "set +e" in recipe and "status=$?" in recipe
+    assert "2>/dev/null" not in recipe and "|| true" not in recipe
+    assert "lint errors" in recipe
     assert "\u2014" not in text.split("### Review queue")[1].split("## Machine-readable")[0]

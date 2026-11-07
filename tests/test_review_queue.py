@@ -171,3 +171,73 @@ def test_review_queue_has_no_em_dash(tmp_path, monkeypatch, capsys):
     _due_and_rot(tmp_path, monkeypatch)
     _, out = _queue(capsys)
     assert "\u2014" not in out
+
+
+def _broken(root, name="0009-broken.landmine.md", marker="BROKEN-BODY-TEXT"):
+    # No frontmatter terminator and no required fields: lint_text errors.
+    (root / ".scars" / name).write_text(f"---\nid: 9\ntitle: {marker}\n\n{marker}\n")
+
+
+def test_review_queue_lists_broken_file_and_still_exits_1(tmp_path, monkeypatch, capsys):
+    """#359: a file with lint errors must be in the queue."""
+    _due_and_rot(tmp_path, monkeypatch)
+    _broken(tmp_path)
+    rc, out = _queue(capsys)
+    assert rc == 1
+    assert "- [ ] `.scars/0009-broken.landmine.md`: file has lint errors." in out
+    assert "scar lint" in out
+
+
+def test_review_queue_only_broken_file_is_non_empty(tmp_path, monkeypatch, capsys):
+    _repo(tmp_path, monkeypatch)
+    _broken(tmp_path)
+    rc, out = _queue(capsys)
+    assert rc == 1
+    assert out.strip() != ""
+    assert len([r for r in out.splitlines() if r.startswith("- [ ]")]) == 1
+
+
+def test_review_queue_broken_row_never_leaks_body_or_message(tmp_path, monkeypatch, capsys):
+    _repo(tmp_path, monkeypatch)
+    _broken(tmp_path)
+    data_rc = main(["lint", "--json"])
+    msgs = [f["message"] for f in json.loads(capsys.readouterr().out)["findings"]]
+    assert data_rc == 1 and msgs
+    _, out = _queue(capsys)
+    assert "BROKEN-BODY-TEXT" not in out
+    for m in msgs:
+        assert m not in out
+
+
+def test_review_queue_broken_rows_are_sorted_by_path(tmp_path, monkeypatch, capsys):
+    _repo(tmp_path, monkeypatch)
+    _broken(tmp_path, "0012-b.landmine.md")
+    _broken(tmp_path, "0010-a.landmine.md")
+    _, out = _queue(capsys)
+    rows = [r for r in out.splitlines() if r.startswith("- [ ]")]
+    assert "0010-a" in rows[0] and "0012-b" in rows[1]
+
+
+def test_review_queue_truncates_to_issue_body_limit(tmp_path, monkeypatch, capsys):
+    """GitHub rejects issue bodies over 65536 characters (#359)."""
+    _repo(tmp_path, monkeypatch)
+    for i in range(1200):
+        _broken(tmp_path, f"{3000 + i}-{'x' * 40}.landmine.md")
+    rc, out = _queue(capsys)
+    assert rc == 1
+    assert len(out) <= 65536
+    assert "more row(s) omitted" in out
+    assert out.count("- [ ]") < 1200
+
+
+def test_review_queue_lists_duplicate_id_scars_that_parse(tmp_path, monkeypatch, capsys):
+    """Duplicate ids parse fine (and can fire) but are lint errors: both get rows."""
+    _repo(tmp_path, monkeypatch)
+    _write(tmp_path, "0001-a.landmine.md", id=1, title="A", anchors=["src/live/"])
+    _write(tmp_path, "0002-b.landmine.md", id=1, title="B", anchors=["src/live/"])
+    _commit(tmp_path)
+    rc, out = _queue(capsys)
+    assert rc == 1
+    assert "`.scars/0001-a.landmine.md`: file has lint errors." in out
+    assert "`.scars/0002-b.landmine.md`: file has lint errors." in out
+    assert "duplicate id" not in out

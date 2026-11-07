@@ -594,9 +594,16 @@ def _review_queue_markdown(store, data: dict) -> str:
         add(rd["id"], f"review_after {rd['review_after']} passed",
             f"`scar archive {rd['id']} --reason \"...\"` or bump review_after")
 
-    if not states:
+    if not states and not data["failed_files"]:
         return ""
     lines = []
+    # Files with lint errors (unparseable, or parseable but failing an error
+    # rule such as duplicate ids) come first and are keyed by relative path (a
+    # broken file may have no usable id or title). Only
+    # the path and fixed wording are printed, never lint messages or the body.
+    for rel in sorted(data["failed_files"]):
+        lines.append(f"- [ ] `{rel}`: file has lint errors. "
+                     "Suggested: run `scar lint` locally and fix them")
     for scar_id in sorted(states):
         found = by_id.get(scar_id)
         if found:
@@ -608,10 +615,23 @@ def _review_queue_markdown(store, data: dict) -> str:
         cmd = "; ".join(cmds[scar_id]).replace("<path>", where)
         lines.append(f"- [ ] #{scar_id} {title} ({where}): "
                      f"{'; '.join(states[scar_id])}. Suggested: {cmd}")
-    lines.append("")
-    lines.append("Firing-log signals (firing review, never fired) are not included: "
-                 "the firing log is machine-local and empty in CI.")
-    return "\n".join(lines) + "\n"
+    tail = ["", "Firing-log signals (firing review, never fired) are not included: "
+                "the firing log is machine-local and empty in CI."]
+    # GitHub rejects issue bodies over 65536 characters. Scar owns the cap so
+    # no consumer has to: drop trailing rows and say how many were omitted.
+    def omit_line(n: int) -> list[str]:
+        return [f"... {n} more row(s) omitted to fit GitHub's issue body limit. "
+                "Run `scar lint` locally for the full list."] if n else []
+
+    kept = len(lines)
+    while kept and len("\n".join(
+            lines[:kept] + omit_line(len(lines) - kept) + tail)) + 1 > _QUEUE_BODY_LIMIT:
+        kept -= 1
+    return "\n".join(lines[:kept] + omit_line(len(lines) - kept) + tail) + "\n"
+
+
+# Under GitHub's 65536-character issue body cap, with headroom.
+_QUEUE_BODY_LIMIT = 65000
 
 
 def _cmd_lint(args) -> int:
@@ -831,6 +851,7 @@ def _cmd_lint(args) -> int:
         "unreachable_evidence": [{"scar_id": ue.scar_id, "sha": ue.sha, "reason": ue.reason}
                                  for ue in unreachable],
         "failed": failed,
+        "failed_files": sorted(failed_files),
         "review_due": _review_due_json(review_due),
     }
 
