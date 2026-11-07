@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -557,13 +558,33 @@ def _review_due_json(due: list[Scar]) -> list[dict]:
     return [{"type": s.type, "id": s.id, "review_after": s.review_after} for s in due]
 
 
+def _md_code(text: str) -> str:
+    """Render `text` as one inert markdown code span.
+
+    The queue is posted as a GitHub issue body, and text read from a scar file
+    is untrusted there: `@user` pings, `#7` autolinks, links and HTML render.
+    Backslash and entity escapes do not stop mentions or issue links, so a code
+    span is the only inert form. Whitespace runs (newlines included) collapse
+    to one space so a value cannot break its row; the fence is one backtick
+    longer than the longest run inside; a backtick at either edge gets one
+    padding space (CommonMark strips one from each side)."""
+    t = " ".join(str(text).split()) or "(empty)"
+    longest = max((len(m) for m in re.findall(r"`+", t)), default=0)
+    fence = "`" * (longest + 1)
+    if t.startswith("`") or t.endswith("`"):
+        t = f" {t} "
+    return f"{fence}{t}{fence}"
+
+
 def _review_queue_markdown(store, data: dict) -> str:
     """Markdown checklist of scars a human should look at, built from the SAME
     dict `lint --json` emits (#354). One row per scar, states merged. Only
     CI-usable signals: the firing log is machine-local and empty on a fresh
     checkout, so firing_review and never_fired are deliberately absent.
 
-    Only the id, title, a path and fixed state wording are printed. The
+    Every value read from a scar file goes through `_md_code` (#362); the
+    wording scar writes itself stays plain and never autolinks (`scar 7`, not
+    `#7`). Only the id, title, a path and fixed state wording are printed. The
     `reason` strings in `data` embed anchor text and violation hints, so they
     are never used here, and the body and evidence are never read."""
     by_id: dict[int, tuple[Path, Scar]] = {}
@@ -572,27 +593,29 @@ def _review_queue_markdown(store, data: dict) -> str:
             by_id.setdefault(s.id, (f, s))
 
     states: dict[int, list[str]] = {}
-    cmds: dict[int, list[str]] = {}
+    # (command text, plain tail). The command is rendered as a code span at
+    # row-build time so an untrusted path is never spliced into a prebuilt span.
+    cmds: dict[int, list[tuple[str, str]]] = {}
 
-    def add(scar_id: int, state: str, cmd: str) -> None:
+    def add(scar_id: int, state: str, cmd: str, tail: str = "") -> None:
         if state not in states.setdefault(scar_id, []):
             states[scar_id].append(state)
-        if cmd not in cmds.setdefault(scar_id, []):
-            cmds[scar_id].append(cmd)
+        if (cmd, tail) not in cmds.setdefault(scar_id, []):
+            cmds[scar_id].append((cmd, tail))
 
     for o in data["orphans"]:
-        add(o["scar_id"], "orphan (all anchors dead)", "`scar reanchor`")
+        add(o["scar_id"], "orphan (all anchors dead)", "scar reanchor")
     for pr in data["partial_rot"]:
-        add(pr["scar_id"], "partial rot (dead anchor among live ones)", "`scar reanchor`")
+        add(pr["scar_id"], "partial rot (dead anchor among live ones)", "scar reanchor")
     for d in data["symbol_drift"]:
-        add(d["scar_id"], "symbol drift", "`scar why <path>`")
+        add(d["scar_id"], "symbol drift", "scar why <path>")
     for ue in data["unreachable_evidence"]:
-        add(ue["scar_id"], "evidence commit unreachable", "`scar why <path>`")
+        add(ue["scar_id"], "evidence commit unreachable", "scar why <path>")
     for r in data["revivals"]:
-        add(r["scar_id"], "archived but revives_if matches again", "`scar why <path>`")
+        add(r["scar_id"], "archived but revives_if matches again", "scar why <path>")
     for rd in data["review_due"]:
         add(rd["id"], f"review_after {rd['review_after']} passed",
-            f"`scar archive {rd['id']} --reason \"...\"` or bump review_after")
+            f"scar archive {rd['id']} --reason \"...\"", " or bump review_after")
 
     if not states and not data["failed_files"]:
         return ""
@@ -602,18 +625,20 @@ def _review_queue_markdown(store, data: dict) -> str:
     # broken file may have no usable id or title). Only
     # the path and fixed wording are printed, never lint messages or the body.
     for rel in sorted(data["failed_files"]):
-        lines.append(f"- [ ] `{rel}`: file has lint errors. "
+        lines.append(f"- [ ] {_md_code(rel)}: file has lint errors. "
                      "Suggested: run `scar lint` locally and fix them")
     for scar_id in sorted(states):
         found = by_id.get(scar_id)
         if found:
             f, s = found
             where = s.path_anchors[0] if s.path_anchors else f.name
-            title = s.title
+            title_md, where_md = _md_code(s.title), f"({_md_code(where)})"
         else:
-            where, title = "unknown file", "(scar not found)"
-        cmd = "; ".join(cmds[scar_id]).replace("<path>", where)
-        lines.append(f"- [ ] #{scar_id} {title} ({where}): "
+            where = ""
+            title_md, where_md = "(scar not found)", "(unknown file)"
+        cmd = "; ".join(
+            _md_code(c.replace("<path>", where)) + tail for c, tail in cmds[scar_id])
+        lines.append(f"- [ ] scar {scar_id} {title_md} {where_md}: "
                      f"{'; '.join(states[scar_id])}. Suggested: {cmd}")
     tail = ["", "Firing-log signals (firing review, never fired) are not included: "
                 "the firing log is machine-local and empty in CI."]
