@@ -192,7 +192,7 @@ scar lint --review-queue
 # - [ ] #7 One anchor alive, one rotted (src/live/): partial rot (dead anchor among live ones). Suggested: `scar reanchor`
 ```
 
-The output is plain text with no scar bodies, evidence or violation patterns: only id, title, path, state and a suggested command. When nothing needs review it prints nothing and exits 0. Exit codes follow the usual gates (`--fail-orphans` and friends), the flag only changes what is printed. The firing-log signals (firing review, never fired) are left out on purpose: that log lives on each developer's machine and is empty on a CI checkout.
+The output is plain text with no scar bodies, evidence or violation patterns: only id, title, path, state and a suggested command. When nothing needs review it prints nothing and exits 0. Scar files with lint errors are listed too, by path, with no lint message text. Exit codes are unchanged: lint still exits 1 when any file has an error, and `--fail-orphans` and friends still apply. The output is capped below GitHub's issue body limit, with a final line saying how many rows were omitted. The firing-log signals (firing review, never fired) are left out on purpose: that log lives on each developer's machine and is empty on a CI checkout.
 
 ```yaml
 # .github/workflows/scar-review-queue.yml
@@ -215,27 +215,38 @@ jobs:
           fetch-depth: 0   # evidence-reachability checks need full history
       - uses: astral-sh/setup-uv@v5
       - name: Build the queue
-        run: uvx --from scar-cli scar lint --review-queue > queue.md
+        # Keep lint's exit code, but let the next step run first: each run
+        # step is bash -e, so a bare failure would skip the issue sync.
+        run: |
+          set +e
+          uvx --from scar-cli scar lint --review-queue > queue.md
+          echo "status=$?" >> "$GITHUB_ENV"
+          exit 0
       - name: Sync the rolling issue
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           label=scar-review-queue
-          gh label create "$label" --color BFD4F2 --description "Rolling Scar review queue" 2>/dev/null || true
-          number=$(gh issue list --label "$label" --state all --limit 1 --json number --jq '.[0].number // empty')
+          gh label create "$label" --color BFD4F2 --description "Rolling Scar review queue" --force
+          issue=$(gh issue list --label "$label" --state all --limit 1 --json number,state)
+          number=$(jq -r '.[0].number // empty' <<<"$issue")
+          state=$(jq -r '.[0].state // empty' <<<"$issue")
           if [ -s queue.md ]; then
             if [ -z "$number" ]; then
               gh issue create --title "Scar review queue" --label "$label" --body-file queue.md
             else
               gh issue edit "$number" --body-file queue.md
-              gh issue reopen "$number" 2>/dev/null || true
+              if [ "$state" = "CLOSED" ]; then gh issue reopen "$number"; fi
             fi
-          elif [ -n "$number" ]; then
-            gh issue close "$number" --comment "Review queue is empty." 2>/dev/null || true
+          elif [ -n "$number" ] && [ "$state" = "OPEN" ]; then
+            gh issue close "$number" --comment "Review queue is empty."
           fi
+      - name: Fail the job if lint failed
+        if: env.status != '0'
+        run: exit 1
 ```
 
-The issue is rewritten from scar's output on every run, never duplicated, closed when the queue is empty and reopened when it is not. Its visibility follows the repository's: on a public repo the titles and file paths in the checklist are public too.
+The queue step records lint's exit code instead of failing, the issue is synced, and the last step fails the job when lint did, so CI stays red and the issue stays current. The issue is rewritten from scar's output on every run, never duplicated, closed when the queue is empty and reopened when it is not. Its visibility follows the repository's: on a public repo the titles and file paths in the checklist are public too.
 
 ## Machine-readable docs
 
