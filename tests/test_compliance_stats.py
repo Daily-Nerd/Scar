@@ -230,3 +230,30 @@ def test_plain_output_has_a_compliance_line_and_json_is_rich_free(env, tmp_path,
     out = _run(capsys)[1].out
     assert "\x1b[" not in out
     json.loads(out)
+
+
+def test_repo_set_plain_output_names_the_set_window_and_compliance(env, tmp_path, capsys):
+    a, b = env["repo-a"], env["repo-b"]
+    rows = _repo_rows(a) + _repo_rows(b, "2026-08-31")
+    rows.append({"repo": str(a), "target": "t", "scar_ids": [1]})  # no ts
+    _log(tmp_path, rows)
+    capsys.readouterr()
+    assert main(["stats", "--repo", str(a), "--repo", str(b),
+                 "--since", "2026-08-01"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == ("scar stats: window 2026-08-01 .. now "
+                        "(1 record(s) excluded: no usable timestamp)")
+    assert "recorded across 2 repo(s)" in lines[1]
+    assert f"  {a}" in lines and f"  {b}" in lines
+    assert any(ln.startswith("  compliance: 2 violation(s) / 8 armed firing(s)")
+               for ln in lines)
+    assert any("ids are not merged across repos" in ln for ln in lines)
+
+
+def test_repo_set_plain_output_without_a_window_has_no_window_line(env, tmp_path, capsys):
+    a = env["repo-a"]
+    _log(tmp_path, _repo_rows(a))
+    capsys.readouterr()
+    assert main(["stats", "--repo", str(a)]) == 0
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.startswith("scar stats: 4 firing(s) recorded across 1 repo(s)")
