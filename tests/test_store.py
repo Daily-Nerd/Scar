@@ -372,3 +372,40 @@ def test_shared_slugify_is_the_harvest_and_mcp_normaliser():
     assert slugify("Redis *failed* [here](http://x.io)", fallback="f") == "redis-failed-here"
     assert slugify("", fallback="signal") == "signal"
     assert len(slugify("word " * 40, fallback="f")) <= 60
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("my_file_name_landmine", "my-file-name-landmine"),
+    ("ünï-cödé", "uni-code"),
+    ("Ordem de importação", "ordem-de-importacao"),
+    ("retry *wrapper* in `foo_bar`", "retry-wrapper-in-foo-bar"),
+    ("See [my_doc](http://x.io/a_b) now", "see-my-doc-now"),
+    ("https://example.com/a_b/c plain_word", "plain-word"),
+])
+def test_slugify_keeps_separators_and_transliterates(raw, expected):
+    """A filename slug treats `_`, `*` and backticks as word separators and
+    maps accented letters to their ASCII base (#365)."""
+    from scar.store import slugify
+    assert slugify(raw, fallback="f") == expected
+
+
+def test_slugify_falls_back_when_nothing_decomposes_to_ascii():
+    from scar.store import slugify
+    assert slugify("日本語のタイトル", fallback="fb") == "fb"
+
+
+def test_sanitize_signal_text_is_unchanged_by_the_slug_fix():
+    """The display-text cleaner keeps deleting emphasis markers (its own job,
+    #159). `retry_count` -> `retrycount` is a known sibling of #365, left alone
+    on purpose: it is a title, not a filename."""
+    from scar.store import sanitize_signal_text
+    assert sanitize_signal_text("retry_count failed") == "retrycount failed"
+    assert sanitize_signal_text("Redis *failed* [here](http://x.io)") == "Redis failed here"
+    assert sanitize_signal_text("see https://x.io/a_b  `code`") == "see code"
+    assert sanitize_signal_text("ünï") == "ünï"
+
+
+def test_promote_keeps_underscores_as_separators(repo):
+    out = ScarStore.discover(repo).promote(
+        _cand(repo, "my_file_name.landmine.md"), reviewer="k")
+    assert out.name == "0001-my-file-name.landmine.md"

@@ -174,3 +174,15 @@ def test_scar_draft_slug_passthrough_uses_shared_normaliser(tmp_path):
     })
     data = json.loads(_text(result))
     assert data["candidate"].endswith(slugify(raw, fallback="scar-candidate") + ".md")
+
+
+def test_scar_draft_underscored_slug_keeps_word_separators(tmp_path):
+    init_scars(tmp_path)
+    result = _handle("tools/call", {
+        "name": "scar_draft",
+        "arguments": {"repo": str(tmp_path), "type": "landmine", "title": "t",
+                      "slug": "my_file_name_landmine",
+                      "anchors": [{"pattern": "redis"}], "body": "b"},
+    })
+    data = json.loads(_text(result))
+    assert data["candidate"].endswith("my-file-name-landmine.md")

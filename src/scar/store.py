@@ -7,6 +7,7 @@ embedded so `scar init` works from a bare install with no data files.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,22 +18,35 @@ SLUG_MAX = 60
 _TYPE_EXT_CHAIN = re.compile(r"(?:\.(?:%s))+$" % "|".join(TYPES))
 
 
+def _strip_link_targets(s: str) -> str:
+    """Drop markdown link targets and bare URLs. Shared by display-text cleaning
+    and slug building: in both, a URL must not eat the text or the 60-char slug
+    budget (#159)."""
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [text](url) -> text
+    return re.sub(r"https?://\S+", "", s)
+
+
 def sanitize_signal_text(s: str) -> str:
     """Mined git text (revert subjects, squash-merge subjects) can carry
     markdown links, emphasis markers, and bare URLs; leaked into a candidate
-    they make the title unreadable and a URL eats the whole slug budget (#159)."""
-    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [text](url) -> text
-    s = re.sub(r"https?://\S+", "", s)
-    s = re.sub(r"[*_`]+", "", s)
+    they make the title unreadable and a URL eats the whole slug budget (#159).
+    This is DISPLAY text: `_*` and backticks are emphasis markers and are
+    deleted. A filename must not reuse that rule, see `slugify` (#365)."""
+    s = re.sub(r"[*_`]+", "", _strip_link_targets(s))
     return " ".join(s.split())
 
 
 def slugify(text: str, fallback: str = "scar") -> str:
     """The one slug normaliser (#352): every writer of a scar filename (promote,
     the MCP draft tool, harvest --write) goes through here so the rules cannot
-    drift apart. Sanitise (#159), lowercase, collapse non-alnum to '-', cap at
-    SLUG_MAX without leaving a sliced-mid-token fragment."""
-    s = re.sub(r"[^a-z0-9]+", "-", sanitize_signal_text(text).lower()).strip("-")
+    drift apart. Drop link targets/URLs, transliterate accents to ASCII (NFKD,
+    combining marks dropped), lowercase, turn every other non-alnum run
+    (including `_`, `*`, backticks) into one '-', cap at SLUG_MAX without
+    leaving a sliced-mid-token fragment. Output stays ASCII on purpose:
+    non-ASCII names can be stored in different normal forms per filesystem."""
+    s = unicodedata.normalize("NFKD", _strip_link_targets(text))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
     if len(s) > SLUG_MAX:
         cut = s[:SLUG_MAX]
         if s[SLUG_MAX] != "-" and "-" in cut:
