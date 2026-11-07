@@ -169,7 +169,7 @@ def init_scars(repo_root: Path) -> Path:
     """Create .scars/ layout. Idempotent; never clobbers existing files."""
     scars = Path(repo_root) / ".scars"
     scars.mkdir(exist_ok=True)
-    (scars / "candidates").mkdir(exist_ok=True)
+    ScarStore(root=Path(repo_root), scars_dir=scars).ensure_candidates_dir()
     for name, content in (("README.md", README), ("template.md", TEMPLATE)):
         f = scars / name
         if not f.exists():
@@ -247,8 +247,23 @@ class ScarStore:
                 pass
         return out
 
+    @property
+    def candidates_dir(self) -> Path:
+        return self.scars_dir / "candidates"
+
+    def ensure_candidates_dir(self) -> Path:
+        """The one place candidates/ is created (#370). Idempotent. Also keeps
+        an empty .gitkeep so the folder survives the last promotion in git;
+        candidates() and lint only look at *.md, so it is never a candidate."""
+        cand = self.candidates_dir
+        cand.mkdir(exist_ok=True)
+        keep = cand / ".gitkeep"
+        if not keep.exists():
+            keep.write_text("", encoding="utf-8")
+        return cand
+
     def candidates(self) -> list[Path]:
-        cand = self.scars_dir / "candidates"
+        cand = self.candidates_dir
         return sorted(p for p in cand.glob("*.md")) if cand.is_dir() else []
 
     def next_id(self) -> int:

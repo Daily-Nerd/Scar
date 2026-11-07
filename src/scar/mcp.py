@@ -104,8 +104,7 @@ def _draft(args: dict[str, Any]) -> dict[str, Any]:
     errors = [f.message for f in findings if f.level == "error"]
     if errors:
         raise ValueError("refusing to draft invalid scar: " + "; ".join(errors))
-    candidates = store.scars_dir / "candidates"
-    candidates.mkdir(exist_ok=True)
+    candidates = store.ensure_candidates_dir()
     stem = _slug(str(args.get("slug") or scar.title))
     path = candidates / f"{stem}.md"
     i = 2

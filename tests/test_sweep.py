@@ -215,7 +215,7 @@ def test_sweep_plain_output_is_stable(repo, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "src/a.py:2: scar #42 (fence): No raw sleep"
     assert lines[1] == "  time.sleep(1)"
-    assert lines[-1] == "swept 4 files, skipped 0, 1 scars armed, 1 hits"
+    assert lines[-1] == "swept 5 files, skipped 0, 1 scars armed, 1 hits"
 
 
 def test_sweep_plain_output_with_no_hits_is_only_the_summary(repo, capsys):
@@ -266,7 +266,7 @@ def test_sweep_tty_renders_hits_and_summary(repo, capsys, monkeypatch):
     assert "scar #42" in out
     assert "No raw sleep" in out
     assert "time.sleep(1) [x]" in out  # brackets survive rich markup
-    assert "swept 4 files, skipped 0, 1 scars armed, 1 hits" in out
+    assert "swept 5 files, skipped 0, 1 scars armed, 1 hits" in out
 
 
 def test_sweep_tty_with_no_hits_prints_only_the_summary(repo, capsys, monkeypatch):

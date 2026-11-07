@@ -186,3 +186,18 @@ def test_scar_draft_underscored_slug_keeps_word_separators(tmp_path):
     })
     data = json.loads(_text(result))
     assert data["candidate"].endswith("my-file-name-landmine.md")
+
+
+def test_scar_draft_recreates_missing_candidates_dir(tmp_path):
+    import shutil
+    init_scars(tmp_path)
+    shutil.rmtree(tmp_path / ".scars" / "candidates")
+    result = _handle("tools/call", {
+        "name": "scar_draft",
+        "arguments": {"repo": str(tmp_path), "type": "deadend",
+                      "title": "Redis failed here",
+                      "anchors": [{"pattern": "redis"}],
+                      "body": "Redis was tried and abandoned."},
+    })
+    assert json.loads(_text(result))["status"] == "candidate"
+    assert (tmp_path / ".scars" / "candidates" / "redis-failed-here.md").is_file()
