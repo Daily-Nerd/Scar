@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.27.2](https://github.com/Daily-Nerd/Scar/compare/v0.27.1...v0.27.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **lint:** render scar text in the review queue as inert code spans ([#363](https://github.com/Daily-Nerd/Scar/issues/363)) ([8e6588d](https://github.com/Daily-Nerd/Scar/commit/8e6588da3bf667d4f17347ddbefe0349d59f6c82))
+* **store:** keep word separators and transliterate accents in slugify ([3d5579a](https://github.com/Daily-Nerd/Scar/commit/3d5579a3e2c0ebabc256b1b168e91c62046ddc8a))
+* **store:** keep word separators and transliterate accents in slugify ([134463e](https://github.com/Daily-Nerd/Scar/commit/134463e2252733704875a739baa3a13d81a9a279))
+
 ## [0.27.1](https://github.com/Daily-Nerd/Scar/compare/v0.27.0...v0.27.1) (2026-11-07)
 
 
