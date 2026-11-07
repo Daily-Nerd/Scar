@@ -54,3 +54,23 @@ def test_agents_doc_documents_review_queue_recipe():
     assert "2>/dev/null" not in recipe and "|| true" not in recipe
     assert "lint errors" in recipe
     assert "\u2014" not in text.split("### Review queue")[1].split("## Machine-readable")[0]
+
+
+def test_review_queue_workflow_matches_documented_recipe():
+    """#367: this repo runs the same review queue workflow it documents. The
+    recipe adopters copy and the workflow we run must not drift apart."""
+    import re
+
+    docs = ROOT / "website" / "docs" / "agents.md"
+    workflow = ROOT / ".github" / "workflows" / "scar-review-queue.yml"
+    blocks = re.findall(
+        r"```yaml\n(# \.github/workflows/scar-review-queue\.yml\n.*?)```",
+        docs.read_text(encoding="utf-8"),
+        flags=re.DOTALL,
+    )
+    assert len(blocks) == 1, "expected exactly one review queue yaml block in the docs"
+    assert workflow.is_file(), f"missing {workflow.relative_to(ROOT)}"
+    assert workflow.read_text(encoding="utf-8").rstrip("\n") == blocks[0].rstrip("\n"), (
+        "website/docs/agents.md recipe and .github/workflows/scar-review-queue.yml "
+        "differ: update whichever file is stale, both must change together"
+    )
