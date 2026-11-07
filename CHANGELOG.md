@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.3](https://github.com/Daily-Nerd/Scar/compare/v0.27.2...v0.27.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **store:** one owner creates candidates/ and init keeps it in git ([#371](https://github.com/Daily-Nerd/Scar/issues/371)) ([67ed3ae](https://github.com/Daily-Nerd/Scar/commit/67ed3aec8c0be8b0a4e8d1248cc95914ff560c95))
+
 ## [0.27.2](https://github.com/Daily-Nerd/Scar/compare/v0.27.1...v0.27.2) (2026-11-07)
 
 
