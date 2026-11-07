@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 28
 type: fence
 title: Violation evidence omits raw edits deliberately because excerpts can contain secrets
 severity: high
 confidence: 0.9
 created: 2026-11-05
 authors: ["codex"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: src/scar/violation_evidence.py
   - path: src/scar/hooks.py
@@ -13,7 +15,7 @@ evidence:
   - issue: 317
 expires:
   condition: "a reviewed capture design can retain original edits without exposing arbitrary secrets"
-status: candidate
+status: active
 ---
 
 The display excerpt is arbitrary edited content, not safe log text (#317).
