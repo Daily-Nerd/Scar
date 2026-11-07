@@ -82,6 +82,20 @@ Every metric we published or nearly published contained a measurement error we c
 4. **The self-match violations.** The first two violation records ever logged were the tool flagging its own documentation: a scar's body quotes the forbidden construct by design. Fixed same day (#148/#149), false records pruned, baseline zeroed 2026-07-03 — which is why the window starts there.
 5. **The disconnected instrument.** `scar hook install` wrote the `precheck` hook and then deleted it — two hook kinds share one event, and ownership was matched by event rather than by kind, so the second install stripped the first. Pre-edit injection had been off for a month on every install since command anchors, while `posttool` kept recording violations and `hook status` reported everything installed. Every violation in that period therefore had no prior firing *by construction*, and was counted as a retrieval miss: a "retrieval floor" of 14 of 16 that measured the broken install, not retrieval. Found before publication, the finding was withdrawn, and the fix (#236) shipped with the detector that would have caught it in a day (#237). **The window below predates the break and is unaffected** — it ran entirely inside the period when `precheck` still worked.
 
+## The compliance result is computed by the tool
+
+`scar stats --json` reports the headline itself, in a `compliance` block, so no publication has to re-derive it by hand:
+
+- `F`: armed firings, read from each row's own `armed_ids`, never from today's `.scars/`.
+- `V`: violations that followed an armed firing of the same scar on the same target. A violation with no earlier armed firing is a retrieval miss, so it is reported as `violations_unmatched` and kept out of `V`.
+- `rate`: `V / F`, and `null` (never 0) when `F` is 0.
+- `verdicts_expected`, `verdicts_observed`, `verdict_completeness`: how much of the window actually carries a verdict. A zero `V` over an incomplete window is not compliance.
+- `top_scar`: the largest single scar's share of `F`, plus `F`, `V` and `rate` with that scar excluded. The tool never decides what counts as dominant; a pre-registration states the cut.
+
+`--repo PATH` (repeatable) pools a chosen set of repositories. Records are filtered to the set before any metric runs, the same way `--since` and `--until` work, and the rate is computed once from the pooled counts. Per-repository rates are never averaged, and scars are identified by repository and id, because ids are per-repo.
+
+`injection_rate` is a separate number and it measures **coverage**: the share of observed edits where any scar fired. It is not a retrieval rate, it says nothing about whether the right scar was shown, and a retrieval threshold should not be attached to it.
+
 ## Caveats
 
 - Obedience is unobservable from inside the hook; only violations are observable.

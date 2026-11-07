@@ -48,7 +48,7 @@ GUARANTEED: dict[str, set[str]] = {
               "retrieval_misses", "instrument_disconnected",
               "last_fired_age_days", "armed_firings", "armed_unknown",
               "violation_evidence_summarized", "violation_evidence_unknown",
-              "advisories"},
+              "advisories", "compliance"},
     "gc": {"removed_markers", "dropped_firings", "dry_run", "candidates",
            "fp_log"},
     "orphan": {"orphan_detected", "partial_rot"},
@@ -91,6 +91,10 @@ NESTED_OBJECTS: dict[tuple[str, str], set[str]] = {
     ("status", "counts"): {"active", "candidates", "orphan_detected",
                            "orphaned", "partial_rot", "broken"},
     ("gc", "fp_log"): {"present", "size", "lines", "path", "legacy"},
+    ("stats", "compliance"): {"F", "V", "rate", "violations_unmatched",
+                              "verdicts_expected", "verdicts_observed",
+                              "verdicts_resolved", "verdict_completeness",
+                              "top_scar"},
 }
 
 

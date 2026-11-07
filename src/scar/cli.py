@@ -1970,6 +1970,7 @@ def _stage_lines(block: dict, per_scar: list[dict], total_firings: int) -> list[
     if anchor_line:
         lines.append(anchor_line)
     lines += [demotions, cofires]
+    lines += _compliance_lines(block)
     return lines
 
 
@@ -2029,6 +2030,11 @@ def _aggregate_firings(records: list[dict]) -> dict:
     # today's .scars/ — a scar armed last week was not armed last month.
     armed_firings = 0
     armed_unknown = 0
+    # #373: the same armed count, split per scar, and the first armed firing of
+    # each (scar, target). Both come from the ROW's own `armed_ids`, never from
+    # today's .scars/, so the compliance block inherits the #266 guarantee.
+    armed_by_scar: dict[int, int] = {}
+    armed_first: dict[tuple[int, str], str] = {}
     # #277: verdict accounting. `expected` are joinable armed firings (an
     # armed_ids list with at least one id, plus an edit_id to join on);
     # `observed` are posttool rows that actually reached a verdict. Anything
@@ -2102,6 +2108,13 @@ def _aggregate_firings(records: list[dict]) -> dict:
             eid = rec.get("edit_id")
             if isinstance(armed, list):
                 armed_firings += sum(1 for a in armed if isinstance(a, int))
+                for a in armed:
+                    if isinstance(a, int) and not isinstance(a, bool):
+                        armed_by_scar[a] = armed_by_scar.get(a, 0) + 1
+                        if isinstance(target, str) and isinstance(ts_rec, str):
+                            prev = armed_first.get((a, target))
+                            if prev is None or ts_rec < prev:
+                                armed_first[(a, target)] = ts_rec
                 # A verdict is owed only when something armed actually fired,
                 # AND only when the row was written by a version that could
                 # resolve it. The marker carries the second fact; armed_ids
@@ -2210,6 +2223,18 @@ def _aggregate_firings(records: list[dict]) -> dict:
         if first is None or first > vts:
             retrieval_misses += 1
 
+    # #373: V is "fired THEN violated". A violation counts only when the same
+    # scar had an ARMED firing on the same target at or before it. One without
+    # is a retrieval miss (the scar was never shown), already reported as
+    # retrieval_misses, and folding it into V would let a retrieval failure
+    # inflate an enforcement rate. It is counted apart, never dropped.
+    violations_joined: dict[int, int] = {}
+    for vid, target, vts in pending_violations:
+        first = armed_first.get((vid, target))
+        if first is not None and first <= vts:
+            violations_joined[vid] = violations_joined.get(vid, 0) + 1
+    violations_unmatched = sum(violations.values()) - sum(violations_joined.values())
+
     # Merge counts and violations: include all scars that fired OR violated
     all_scar_ids = set(counts.keys()) | set(violations.keys())
     per_scar = sorted(({"id": sid, "count": counts.get(sid, 0), "violations": violations.get(sid, 0)}
@@ -2242,6 +2267,14 @@ def _aggregate_firings(records: list[dict]) -> dict:
         retrieval_misses = None
 
     return {"counts": counts, "per_scar": per_scar, "last_fired": last_fired,
+            "compliance_raw": {
+                "armed_by_scar": armed_by_scar,
+                "violations_by_scar": violations_joined,
+                "violations_unmatched": violations_unmatched,
+                "verdicts_expected": len(verdict_expected_ids),
+                "verdicts_observed": verdicts_observed,
+                "verdicts_resolved": len(verdict_expected_ids & verdict_seen_ids),
+            },
             "retrieval_misses": retrieval_misses,
             "demotions": demotions,
             "demotions_path_only": demotions_path_only,
@@ -2294,6 +2327,80 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "instrument_disconnected": instrument_disconnected,
             "last_fired_age_days": _age_in_days(last_fired),
             "total": sum(counts.values())}
+
+
+def _compliance_block(parts: list[tuple[str, dict]]) -> dict:
+    """The compliance result (#373): F armed firings, V violations that
+    followed an armed firing, V/F, verdict completeness, and the dominant-scar
+    cut. ONE code path for every scope: a single repo is a one-part list, a
+    repository set is several, and --all-repos calls it once per repo.
+
+    `parts` is (repo key, aggregate) pairs. Counts are SUMMED across parts and
+    the rate is computed once from the sums, so a rate is never averaged. A
+    scar is identified by (repo, id), because ids are per-repo and a bare id
+    would fuse two different scars into one. Nothing here is a threshold: the
+    block always reports the top scar's share and the excluded figures, and
+    deciding what counts as dominant belongs to a pre-registration.
+    """
+    f_by: dict[tuple[str, int], int] = {}
+    v_by: dict[tuple[str, int], int] = {}
+    unmatched = expected = observed = resolved = 0
+    for repo_key, agg in parts:
+        raw = agg["compliance_raw"]
+        for sid, n in raw["armed_by_scar"].items():
+            f_by[(repo_key, sid)] = f_by.get((repo_key, sid), 0) + n
+        for sid, n in raw["violations_by_scar"].items():
+            v_by[(repo_key, sid)] = v_by.get((repo_key, sid), 0) + n
+        unmatched += raw["violations_unmatched"]
+        expected += raw["verdicts_expected"]
+        observed += raw["verdicts_observed"]
+        resolved += raw["verdicts_resolved"]
+    f_total = sum(f_by.values())
+    v_total = sum(v_by.values())
+
+    def ratio(v: int, f: int):
+        # Refused, not zero: V/F over no armed firings is not "perfect
+        # compliance", it is no measurement.
+        return round(v / f, 3) if f else None
+
+    top = {"repo": None, "id": None, "share": None, "F": None, "V": None,
+           "rate": None}
+    if f_total:
+        # Ties go to the lowest id (then repo key), so the cut is reproducible.
+        key = min(f_by, key=lambda k: (-f_by[k], k[1], k[0]))
+        f_top, v_top = f_by[key], v_by.get(key, 0)
+        top = {"repo": key[0], "id": key[1], "share": round(f_top / f_total, 3),
+               "F": f_total - f_top, "V": v_total - v_top,
+               "rate": ratio(v_total - v_top, f_total - f_top)}
+    return {"F": f_total, "V": v_total, "rate": ratio(v_total, f_total),
+            "violations_unmatched": unmatched,
+            "verdicts_expected": expected, "verdicts_observed": observed,
+            "verdicts_resolved": resolved,
+            # resolved, not observed: a verdict row that joins to no expected
+            # firing must not push completeness past 1.
+            "verdict_completeness": round(resolved / expected, 3) if expected else None,
+            "top_scar": top}
+
+
+def _compliance_lines(block: dict) -> list[str]:
+    """One human line for the compliance block, shared by every renderer."""
+    c = block.get("compliance")
+    if not c:
+        return []
+    rate = "n/a" if c["rate"] is None else f"{c['rate']:.1%}"
+    line = f"compliance: {c['V']} violation(s) / {c['F']} armed firing(s) = {rate}"
+    if c["verdict_completeness"] is not None:
+        line += (f"; verdicts {c['verdicts_resolved']}/{c['verdicts_expected']} "
+                 f"resolved ({c['verdict_completeness']:.1%})")
+    if c["violations_unmatched"]:
+        line += (f"; {c['violations_unmatched']} violation(s) with no earlier armed "
+                 "firing on that target (retrieval misses, not counted)")
+    top = c["top_scar"]
+    if top["id"] is not None:
+        excl = "n/a" if top["rate"] is None else f"{top['rate']:.1%}"
+        line += (f"; top scar #{top['id']} = {top['share']:.1%} of F; "
+                 f"without it {top['V']}/{top['F']} = {excl}")
+    return [line]
 
 
 def _age_in_days(ts: str | None) -> int | None:
@@ -2354,6 +2461,9 @@ def _cmd_stats(args) -> int:
     if getattr(args, "all_repos", False):
         return _stats_all_repos(records, log_path, args, window)
 
+    if getattr(args, "repo", None):
+        return _stats_repo_set(records, log_path, args, window)
+
     store = _require_store()
     if store is None:
         return 1
@@ -2389,6 +2499,7 @@ def _cmd_stats(args) -> int:
         "never_fired": never_fired,
         **_stage_block(agg),
         **_health_block(agg),
+        "compliance": _compliance_block([(repo_key, agg)]),
         "advisories": advisories,
     }
     if window is not None:
@@ -2449,7 +2560,8 @@ def _stats_all_repos(records: list[dict], log_path: Path, args,
         groups.append({"repo": repo_key, "total_firings": agg["total"],
                        "per_scar": agg["per_scar"],
                        "last_fired": agg["last_fired"],
-                       **_stage_block(agg), **_health_block(agg)})
+                       **_stage_block(agg), **_health_block(agg),
+                       "compliance": _compliance_block([(repo_key, agg)])})
     groups.sort(key=lambda g: (-g["total_firings"], g["repo"]))
     data = {"all_repos": True, "repos": groups}
     if window is not None:
@@ -2479,6 +2591,65 @@ def _stats_all_repos(records: list[dict], log_path: Path, args,
 
     output.render(data=data, json_flag=getattr(args, "json", False),
                   tty=lambda: _stats_all_repos_rich(data, log_path), plain=plain)
+    return 0
+
+
+def _resolve_repo_key(path_text: str) -> str:
+    """The key the hook stamps on a record for the repo at `path_text`: the
+    resolved store root when one is found, else the resolved path itself. A
+    path with no store is not an error: it selects no records, and the block
+    says so with zeros rather than refusing."""
+    p = Path(path_text).expanduser().resolve()
+    store = ScarStore.discover(p) if p.exists() else None
+    return str(store.root) if store is not None else str(p)
+
+
+def _stats_repo_set(records: list[dict], log_path: Path, args,
+                    window: dict | None = None) -> int:
+    """Repository-set scope (#373): `--repo PATH` (repeatable). Records are
+    filtered to the set BEFORE any metric runs, the same way the window is, so
+    the compliance block is computed by the code that computes it for one repo.
+    Each repo is aggregated on its own and the compliance counts are pooled by
+    `_compliance_block`; scar ids are never merged across repos, so the
+    per-repo stage fields do not appear in this view (use the default scope or
+    --all-repos for those)."""
+    keys = sorted({_resolve_repo_key(t) for t in args.repo})
+    selected = set(keys)
+    by_repo: dict[str, list[dict]] = {k: [] for k in keys}
+    for rec in records:
+        repo = rec.get("repo")
+        if isinstance(repo, str) and repo in selected:
+            by_repo[repo].append(rec)
+    parts = [(k, _aggregate_firings(by_repo[k])) for k in keys]
+    last = [a["last_fired"] for _k, a in parts if a["last_fired"]]
+    data = {
+        "repo": ", ".join(keys),
+        "repo_set": True,
+        "repos": keys,
+        "total_firings": sum(a["total"] for _k, a in parts),
+        "last_fired": max(last) if last else None,
+        "compliance": _compliance_block(parts),
+    }
+    if window is not None:
+        data["window"] = window
+
+    def plain():
+        if window is not None:
+            print(f"scar stats: window {window['since'] or 'start'} .. "
+                  f"{window['until'] or 'now'}"
+                  + (f" ({window['excluded_undated']} record(s) excluded: "
+                     "no usable timestamp)" if window["excluded_undated"] else ""))
+        print(f"scar stats: {data['total_firings']} firing(s) recorded across "
+              f"{len(keys)} repo(s) ({log_path})")
+        for k in keys:
+            print(f"  {k}")
+        for line in _compliance_lines(data):
+            print(f"  {line}")
+        print("  note: scars are counted per (repo, id); ids are not merged "
+              "across repos and rates are computed from pooled counts")
+
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=plain, plain=plain)
     return 0
 
 
@@ -3276,9 +3447,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "stats", _cmd_stats, help="firing counts from the precheck hook's firing log")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    p.add_argument("--all-repos", action="store_true",
-                   help="show the whole machine-global log grouped per repo "
-                        "(default: only the current repo's records)")
+    scope = p.add_mutually_exclusive_group()
+    scope.add_argument("--all-repos", action="store_true",
+                       help="show the whole machine-global log grouped per repo "
+                            "(default: only the current repo's records)")
+    scope.add_argument("--repo", action="append", metavar="PATH",
+                       help="restrict to this repository's records; repeat to "
+                            "pool a set. Records are filtered before any "
+                            "metric, and rates are computed from pooled counts, "
+                            "never averaged")
     p.add_argument("--since", metavar="WHEN",
                    help="only records at or after this ISO date/datetime "
                         "(a bare date means 00:00:00 that day)")
