@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/Daily-Nerd/Scar/compare/v0.27.3...v0.28.0) (2026-11-07)
+
+
+### Features
+
+* **stats:** compute the compliance result natively ([#374](https://github.com/Daily-Nerd/Scar/issues/374)) ([131a640](https://github.com/Daily-Nerd/Scar/commit/131a6400da7770d2a319155e2f0364c60260e3d1))
+
 ## [0.27.3](https://github.com/Daily-Nerd/Scar/compare/v0.27.2...v0.27.3) (2026-11-07)
 
 
