@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 29
 type: landmine
 title: Pooled stats must key a scar by (repo, id); a bare id fuses different scars and a pooled rate must be recomputed, never averaged
 severity: high
 confidence: 0.8
 created: 2026-11-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: src/scar/cli.py
   - pattern: "def _compliance_block"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "compliance pooling stops spanning more than one repository"
   review_after: 2027-05-07
-status: candidate
+status: active
 ---
 
 Scar ids are per-repo sequential integers, so #1 in one repo is a different
