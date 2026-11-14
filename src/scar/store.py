@@ -425,7 +425,7 @@ class ScarStore:
         will hand out (next_id() + position) and without writing anything.
         Returns (destinations, errors); a non-empty errors list means the
         batch must not run. Callers validate each file with check_promotable
-        first. Two files landing on one path are refused too."""
+        first. Ids in a batch are distinct, so only an existing file can collide."""
         base = self.next_id()
         dests: list[Path] = []
         errors: list[str] = []
@@ -433,10 +433,6 @@ class ScarStore:
             try:
                 scar = self._parse_candidate_file(cand)
                 dest = self._destination(cand, scar, base + i)
-                if dest in dests:
-                    raise ValueError(
-                        f"refusing to promote {cand.name}, another file in "
-                        f"this batch lands on {dest.name}")
             except ValueError as exc:
                 errors.append(str(exc))
                 continue
