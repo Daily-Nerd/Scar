@@ -4847,3 +4847,75 @@ def test_lint_command_plus_dead_path_anchor_gets_the_generic_reason(repo, capsys
     _, data = _shape_lint(repo, capsys)
     msgs = _shape_msgs(data, CANNOT_ARM)
     assert len(msgs) == 1 and "command anchors" not in msgs[0]
+
+
+# --- #377: promote validates every file before promoting any ---
+
+def _two_candidates_one_archived(repo):
+    init_scars(repo)
+    cdir = repo / ".scars" / "candidates"
+    (cdir / "good-one.md").write_text(CANDIDATE)
+    (cdir / "good-two.md").write_text(CANDIDATE)
+    (cdir / "old-news.md").write_text(
+        CANDIDATE.replace("status: candidate", "status: archived"))
+    return cdir
+
+
+def test_bulk_promote_with_one_bad_file_promotes_nothing(repo, capsys):
+    cdir = _two_candidates_one_archived(repo)
+    before = {p.name: p.read_bytes() for p in cdir.glob("*.md")}
+    rc = main(["promote", "good-one", "old-news", "good-two", "--reviewer", "kibukx"])
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "old-news.md" in out and "archived" in out
+    assert not list((repo / ".scars").glob("0*.md"))
+    assert {p.name: p.read_bytes() for p in cdir.glob("*.md")} == before
+
+
+def test_bulk_promote_of_good_files_promotes_all(repo, capsys):
+    _two_candidates_one_archived(repo)
+    assert main(["promote", "good-one", "good-two", "--reviewer", "kibukx"]) == 0
+    assert len(list((repo / ".scars").glob("0*.md"))) == 2
+
+
+def test_promote_refuses_a_path_outside_candidates(repo, capsys):
+    init_scars(repo)
+    stray = repo / ".scars" / "stray.md"
+    stray.write_text(CANDIDATE)
+    assert main(["promote", str(stray), "--reviewer", "kibukx"]) != 0
+    assert "stray.md" in capsys.readouterr().out
+    assert stray.exists() and not list((repo / ".scars").glob("0*.md"))
+
+
+def test_archive_candidate_by_path_keeps_file_and_blocks_promote(repo, capsys):
+    init_scars(repo)
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    assert main(["archive", str(cand), "--reason", "obsolete"]) == 0
+    text = cand.read_text()
+    assert "status: archived" in text and "obsolete" in text
+    capsys.readouterr()
+    assert main(["promote", "tried-x", "--reviewer", "kibukx"]) != 0
+    assert not list((repo / ".scars").glob("0*.md"))
+    assert main(["status"]) == 0
+    assert "0 candidate" in capsys.readouterr().out
+
+
+def test_archive_by_numeric_id_still_works(repo, capsys):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
+    assert main(["promote", "x", "--reviewer", "k"]) == 0
+    assert main(["archive", "1", "--reason", "done"]) == 0
+
+
+def test_bulk_promote_with_a_colliding_second_file_promotes_nothing(repo, capsys):
+    init_scars(repo)
+    cdir = repo / ".scars" / "candidates"
+    (cdir / "one.md").write_text(CANDIDATE)
+    (cdir / "two.md").write_text(CANDIDATE)
+    (repo / ".scars" / "0002-two.deadend.md").write_text("# not a scar\n")
+    before = {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")}
+    rc = main(["promote", "one", "two", "--reviewer", "kibukx"])
+    out = capsys.readouterr().out
+    assert rc != 0 and "two.md" in out
+    assert {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")} == before

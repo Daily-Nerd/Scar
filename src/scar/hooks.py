@@ -549,7 +549,7 @@ def _session_notice_payload(payload: dict, verify_claude_hook: bool = True) -> i
     store = ScarStore.discover(cwd)
     if store is None:
         return 0
-    active, broken, cands = store.active(), store.broken(), store.candidates()
+    active, broken, cands = store.active(), store.broken(), store.pending_candidates()
     state = (f"{len(active)} active scar(s)" if active
              else "0 scars yet — the convention is live, be the first to record one")
     pending = f", {len(cands)} candidate(s) pending review" if cands else ""
