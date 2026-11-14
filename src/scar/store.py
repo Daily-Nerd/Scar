@@ -378,10 +378,10 @@ class ScarStore:
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
-    def promote(self, candidate: Path, reviewer: str,
-                reviewer_source: str | None = None) -> Path:
-        # #377: gate on the lifecycle table BEFORE anything is allocated or
-        # written, so a refusal changes no file and burns no id.
+    def check_promotable(self, candidate: Path) -> None:
+        """Raise ValueError unless *candidate* may be promoted. Touches
+        nothing: no write, no unlink, no id allocated (#377). The CLI runs it
+        over a whole batch before promoting any file of it."""
         try:
             current = self._parse_candidate_file(candidate)
         except ValueError as exc:
@@ -395,11 +395,17 @@ class ScarStore:
                 raise ValueError(
                     f"refusing to promote {candidate.name}: status is "
                     f"{current.status}, only candidate can be promoted") from None
-        text = candidate.read_text(encoding="utf-8")
-        findings = lint_text(text)
+        findings = lint_text(candidate.read_text(encoding="utf-8"))
         errors = [f for f in findings if f.level == "error"]
         if errors:
             raise ValueError(f"refusing to promote, lint errors: {'; '.join(f.message for f in errors)}")
+
+    def promote(self, candidate: Path, reviewer: str,
+                reviewer_source: str | None = None) -> Path:
+        # #377: gate on the lifecycle table BEFORE anything is allocated or
+        # written, so a refusal changes no file and burns no id.
+        self.check_promotable(candidate)
+        text = candidate.read_text(encoding="utf-8")
         scar = parse_scar_text(text)
         scar.id = self.next_id()
         scar.status = "active"

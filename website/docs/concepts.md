@@ -76,6 +76,8 @@ candidate ──promote──▶ active ──challenge──▶ challenged
 ```
 
 - **Promotion is a human gate.** Agents and `scar harvest` write only to `candidates/`; a human promotes.
+- **Only a `status: candidate` file in `candidates/` can be promoted.** An archived candidate stays where it is, with its history, and `scar promote` refuses it. Give several files to one `scar promote` and every file is checked first: if any is refused, nothing is promoted and the exit code is non-zero.
+- **Legal status moves live in one table** (`LIFECYCLE_TRANSITIONS` in the store). `archived` is terminal.
 - **Nothing expires automatically.** `review_after` forces periodic freshness checks; `challenge` disputes with evidence; `archive` retires with a tombstone. The archive keeps everything — SCAR's own history is negative knowledge.
 - `confidence` is a static, human-authored ranking weight. Automatic decay was deliberately cut rather than shipping uncalibrated constants.
 

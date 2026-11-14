@@ -101,7 +101,7 @@ def candidate_ages(store: ScarStore) -> list[dict]:
     oldest-first. STRICTLY read-only — never writes to ``.scars/``."""
     now = time.time()
     entries = []
-    for p in store.candidates():
+    for p in store.pending_candidates():
         try:
             age_days = (now - p.stat().st_mtime) / SECONDS_PER_DAY
         except OSError:

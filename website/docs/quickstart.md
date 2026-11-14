@@ -78,6 +78,7 @@ Nothing expires automatically; retiring knowledge is a human decision with the s
 ```bash
 scar challenge 3 --reason "vendor fixed the rate limiter"   # dispute: still fires, marked disputed
 scar archive 3 --reason "confirmed fixed upstream"          # retire: never fires again, history kept
+scar archive redis-sessions.md --reason "obsolete"          # retire a candidate in place; promote will refuse it
 ```
 
 `scar lint` and `scar status` surface any scar whose `review_after` date has passed.

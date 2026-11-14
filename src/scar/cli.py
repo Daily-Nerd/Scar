@@ -948,7 +948,7 @@ def _cmd_status(args) -> int:
     store = _require_store()
     if store is None:
         return 1
-    active, broken, cands = store.active(), store.broken(), store.candidates()
+    active, broken, cands = store.active(), store.broken(), store.pending_candidates()
     challenged = [(f, s) for f, s in store.parsed() if s.status == "challenged"]
     due = _review_due(store)
 
@@ -1034,14 +1034,45 @@ def _stdin_is_a_terminal() -> bool:
         return False
 
 
+def _resolve_candidate(store: ScarStore, arg: str) -> tuple[Path | None, str]:
+    """An existing file path is taken as given (the store then refuses it if
+    it lives outside candidates/); otherwise *arg* is a filename or unique
+    substring among the candidates. Returns (path, error)."""
+    given = Path(arg)
+    if given.is_file():
+        return given, ""
+    matches = [c for c in store.candidates() if arg in c.name]
+    if len(matches) != 1:
+        opts = ", ".join(c.name for c in store.candidates()) or "(none)"
+        return None, f"need exactly one candidate matching '{arg}'; have: {opts}"
+    return matches[0], ""
+
+
 def _cmd_promote(args) -> int:
     store = _require_store()
     if store is None:
         return 1
-    matches = [c for c in store.candidates() if args.candidate in c.name]
-    if len(matches) != 1:
-        opts = ", ".join(c.name for c in store.candidates()) or "(none)"
-        print(f"need exactly one candidate matching '{args.candidate}'; have: {opts}")
+    # #377: validate EVERY file before promoting ANY. One refused file means
+    # nothing moves, every refusal is reported, and the exit code is non-zero.
+    targets: list[Path] = []
+    problems: list[str] = []
+    for arg in args.candidate:
+        path, err = _resolve_candidate(store, arg)
+        if path is None:
+            problems.append(err)
+            continue
+        try:
+            store.check_promotable(path)
+        except ValueError as exc:
+            problems.append(str(exc))
+            continue
+        targets.append(path)
+    if problems:
+        for line in problems:
+            print(line)
+        if targets:
+            print(f"nothing promoted: {len(problems)} of {len(args.candidate)} "
+                  "file(s) refused")
         return 1
     # Promote is human-run by contract; when --reviewer is omitted the git
     # identity of whoever runs it is the reviewer. Unset identity degrades to
@@ -1062,8 +1093,17 @@ def _cmd_promote(args) -> int:
                            else "git-config")
     else:
         reviewer_source = "explicit" if reviewer else None
+    for target in targets:
+        rc = _promote_one(store, target, args, reviewer, from_git, reviewer_source)
+        if rc:
+            return rc
+    return 0
+
+
+def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
+                 from_git: bool, reviewer_source: str | None) -> int:
     try:
-        new_path = store.promote(matches[0], reviewer=reviewer,
+        new_path = store.promote(target, reviewer=reviewer,
                                   reviewer_source=reviewer_source)
     except ValueError as exc:
         print(str(exc))
@@ -1233,7 +1273,32 @@ def _cmd_challenge(args) -> int:
 
 
 def _cmd_archive(args) -> int:
+    if not str(args.id).isdigit():
+        return _archive_candidate(args)
+    args.id = int(args.id)
     return _cmd_transition(args, "archived")
+
+
+def _archive_candidate(args) -> int:
+    """Archive a candidate in place (#377): the file keeps its name and sits
+    in candidates/ with status archived, so history stays and promote refuses
+    it. The date and reason land in an evidence note."""
+    store = _require_store()
+    if store is None:
+        return 1
+    path, err = _resolve_candidate(store, args.id)
+    if path is None:
+        print(err)
+        return 1
+    try:
+        store.archive_candidate(path, reason=args.reason,
+                                date=time.strftime("%Y-%m-%d"))
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    print(f"archived -> {path.name} (candidate kept in place; scar promote "
+          "will refuse it)")
+    return 0
 
 
 def _cmd_transition(args, new_status: str) -> int:
@@ -3419,7 +3484,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = _add(sub, "promote", _cmd_promote, help="review a candidate into an active scar")
-    p.add_argument("candidate", help="candidate filename (or unique substring)")
+    p.add_argument("candidate", nargs="+",
+                   help="candidate filename (or unique substring); several are "
+                        "validated together and promoted all-or-nothing")
     p.add_argument("--reviewer", default="",
                    help="the human vouching for this scar, recorded as promoted_by "
                         "(default: git config user.name)")
@@ -3478,8 +3545,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("--reason", required=True, help="why the scar may no longer hold")
 
-    p = _add(sub, "archive", _cmd_archive, help="retire a scar (never fires; history kept)")
-    p.add_argument("id", type=int)
+    p = _add(sub, "archive", _cmd_archive, help="retire a scar or a candidate (never fires; history kept)")
+    p.add_argument("id", help="scar id, or a candidate file/name to archive in place")
     p.add_argument("--reason", required=True, help="why it is retired (e.g. expiry condition met)")
 
     p = _add(sub, "orphan", _cmd_orphan, help="list scars whose anchors all went dead")
