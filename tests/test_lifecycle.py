@@ -135,3 +135,32 @@ def test_status_lists_review_due(repo, capsys):
     assert main(["status"]) == 0
     out = capsys.readouterr().out
     assert "review due" in out.lower() and "#1" in out
+
+
+# --- #377: archived is terminal, and the refusal says how to get knowledge back ---
+
+def _archive_scar_1(repo):
+    store_of(repo).transition(1, "archived", reason="obsolete", date="2026-06-12")
+    return repo / ".scars" / "0001-tried-x.deadend.md"
+
+
+@pytest.mark.parametrize("target", ["challenged", "orphaned", "active"])
+def test_transition_on_archived_scar_is_refused_with_revive_guidance(repo, target):
+    f = _archive_scar_1(repo)
+    before = f.read_bytes()
+    with pytest.raises(ValueError) as exc:
+        store_of(repo).transition(1, target, reason="r", date="2026-06-13")
+    msg = str(exc.value)
+    assert "#1" in msg and "archived" in msg and "terminal" in msg
+    assert ".scars/candidates/" in msg and "cites" in msg and "promote" in msg
+    assert f.read_bytes() == before
+
+
+def test_cli_challenge_on_archived_scar_fails_with_guidance(repo, capsys):
+    f = _archive_scar_1(repo)
+    before = f.read_bytes()
+    capsys.readouterr()
+    assert main(["challenge", "1", "--reason", "still bad"]) == 1
+    out = capsys.readouterr().out
+    assert "terminal" in out and ".scars/candidates/" in out
+    assert f.read_bytes() == before

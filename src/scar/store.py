@@ -91,6 +91,12 @@ class UnparseableCandidate(ValueError):
 
 
 def _check_transition(old: str, new: str, *, via_promote: bool = False) -> None:
+    if old == "archived":
+        raise ValueError(
+            f"status is archived, and archived is terminal (cannot become {new}). "
+            "To bring the knowledge back, write a new candidate in "
+            ".scars/candidates/ that cites the archived scar, then a human "
+            "promotes it")
     if new not in LIFECYCLE_TRANSITIONS.get(old, ()) or (
             ((old, new) in PROMOTE_ONLY) != via_promote):
         raise ValueError(f"illegal lifecycle transition {old} -> {new}")
