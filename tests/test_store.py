@@ -496,3 +496,40 @@ def test_archive_candidate_keeps_file_records_reason_and_blocks_promote(repo):
     assert not list((repo / ".scars").glob("0*.md"))
     assert store.pending_candidates() == []
     assert store.candidates() == [cand]
+
+
+# --- #377 follow-up: destination collisions are planned before any write ---
+
+def test_plan_promotions_reports_a_colliding_destination_and_writes_nothing(repo):
+    cdir = repo / ".scars" / "candidates"
+    (cdir / "one.md").write_text(CANDIDATE)
+    (cdir / "two.md").write_text(CANDIDATE)
+    # An unparseable numbered file is invisible to next_id() but owns the name.
+    (repo / ".scars" / "0002-two.deadend.md").write_text("# not a scar\n")
+    store = ScarStore.discover(repo)
+    before = _snapshot(repo)
+    dests, errors = store.plan_promotions([cdir / "one.md", cdir / "two.md"])
+    assert len(errors) == 1 and "two.md" in errors[0]
+    assert _snapshot(repo) == before
+
+
+def test_plan_promotions_gives_a_batch_distinct_destinations(repo):
+    cdir = repo / ".scars" / "candidates"
+    (cdir / "one.md").write_text(CANDIDATE)
+    (cdir / "two.md").write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    dests, errors = store.plan_promotions([cdir / "one.md", cdir / "two.md"])
+    assert errors == [] and len(set(dests)) == 2
+    assert [d.name.split("-")[0] for d in dests] == ["0001", "0002"]
+
+
+def test_unparseable_candidate_has_its_own_error_type(repo):
+    from scar.store import UnparseableCandidate
+    bad = repo / ".scars" / "candidates" / "bad.md"
+    bad.write_text("# not a scar\n")
+    store = ScarStore.discover(repo)
+    with pytest.raises(UnparseableCandidate):
+        store._parse_candidate_file(bad)
+    assert issubclass(UnparseableCandidate, ValueError)
+    with pytest.raises(ValueError):  # promote still reports it, as lint errors
+        store.promote(bad, reviewer="k")

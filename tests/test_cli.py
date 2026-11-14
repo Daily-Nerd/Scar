@@ -4906,3 +4906,16 @@ def test_archive_by_numeric_id_still_works(repo, capsys):
     (repo / ".scars" / "candidates" / "x.md").write_text(CANDIDATE)
     assert main(["promote", "x", "--reviewer", "k"]) == 0
     assert main(["archive", "1", "--reason", "done"]) == 0
+
+
+def test_bulk_promote_with_a_colliding_second_file_promotes_nothing(repo, capsys):
+    init_scars(repo)
+    cdir = repo / ".scars" / "candidates"
+    (cdir / "one.md").write_text(CANDIDATE)
+    (cdir / "two.md").write_text(CANDIDATE)
+    (repo / ".scars" / "0002-two.deadend.md").write_text("# not a scar\n")
+    before = {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")}
+    rc = main(["promote", "one", "two", "--reviewer", "kibukx"])
+    out = capsys.readouterr().out
+    assert rc != 0 and "two.md" in out
+    assert {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")} == before

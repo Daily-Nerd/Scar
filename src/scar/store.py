@@ -85,6 +85,11 @@ LIFECYCLE_TRANSITIONS: dict[str, tuple[str, ...]] = {
 PROMOTE_ONLY = {("candidate", "active")}
 
 
+class UnparseableCandidate(ValueError):
+    """A candidate whose frontmatter cannot be parsed. Still a ValueError so
+    existing callers keep catching it; promote's lint step reports it."""
+
+
 def _check_transition(old: str, new: str, *, via_promote: bool = False) -> None:
     if new not in LIFECYCLE_TRANSITIONS.get(old, ()) or (
             ((old, new) in PROMOTE_ONLY) != via_promote):
@@ -324,7 +329,7 @@ class ScarStore:
         try:
             return parse_scar_text(path.read_text(encoding="utf-8"))
         except (ParseError, OSError) as exc:
-            raise ValueError(f"{path.name}: unreadable ({exc})") from None
+            raise UnparseableCandidate(f"{path.name}: unreadable ({exc})") from None
 
     def next_id(self) -> int:
         ids = [scar.id for _, scar in self.active() if scar.id is not None]
@@ -384,9 +389,7 @@ class ScarStore:
         over a whole batch before promoting any file of it."""
         try:
             current = self._parse_candidate_file(candidate)
-        except ValueError as exc:
-            if "unreadable" not in str(exc):
-                raise
+        except UnparseableCandidate:
             current = None  # unparseable: lint below reports it as an error
         if current is not None:
             try:
@@ -399,6 +402,40 @@ class ScarStore:
         errors = [f for f in findings if f.level == "error"]
         if errors:
             raise ValueError(f"refusing to promote, lint errors: {'; '.join(f.message for f in errors)}")
+
+    def _destination(self, candidate: Path, scar: Scar, scar_id: int) -> Path:
+        """Where promoting *candidate* as *scar_id* will land. Raises if that
+        name is taken (#352: never clobber an existing active scar)."""
+        slug = active_slug(candidate.stem, scar.type)
+        new_path = self.scars_dir / f"{scar_id:04d}-{slug}.{scar.type}.md"
+        if new_path.exists():
+            raise ValueError(
+                f"refusing to promote {candidate.name}, active file already "
+                f"exists: {new_path.name}")
+        return new_path
+
+    def plan_promotions(self, candidates: list[Path]) -> tuple[list[Path], list[str]]:
+        """Destinations for a batch, in order, computed with the ids promote
+        will hand out (next_id() + position) and without writing anything.
+        Returns (destinations, errors); a non-empty errors list means the
+        batch must not run. Callers validate each file with check_promotable
+        first. Two files landing on one path are refused too."""
+        base = self.next_id()
+        dests: list[Path] = []
+        errors: list[str] = []
+        for i, cand in enumerate(candidates):
+            try:
+                scar = self._parse_candidate_file(cand)
+                dest = self._destination(cand, scar, base + i)
+                if dest in dests:
+                    raise ValueError(
+                        f"refusing to promote {cand.name}, another file in "
+                        f"this batch lands on {dest.name}")
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            dests.append(dest)
+        return dests, errors
 
     def promote(self, candidate: Path, reviewer: str,
                 reviewer_source: str | None = None) -> Path:
@@ -422,11 +459,7 @@ class ScarStore:
         # like promoted_by itself: whatever the candidate carried here was
         # never a real vouch either.
         scar.promoted_by_source = reviewer_source if reviewer else None
-        slug = active_slug(candidate.stem, scar.type)
-        new_path = self.scars_dir / f"{scar.id:04d}-{slug}.{scar.type}.md"
-        if new_path.exists():  # #352: never clobber an existing active scar
-            raise ValueError(
-                f"refusing to promote, active file already exists: {new_path.name}")
+        new_path = self._destination(candidate, scar, scar.id)
         new_path.write_text(scar.to_text(), encoding="utf-8")
         candidate.unlink()
         return new_path

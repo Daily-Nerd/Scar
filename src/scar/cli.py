@@ -1067,6 +1067,9 @@ def _cmd_promote(args) -> int:
             problems.append(str(exc))
             continue
         targets.append(path)
+    if targets and not problems:
+        # Destinations too (#352 collisions), so no refusal can come mid-batch.
+        _, problems = store.plan_promotions(targets)
     if problems:
         for line in problems:
             print(line)
