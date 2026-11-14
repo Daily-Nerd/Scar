@@ -68,6 +68,28 @@ def active_slug(stem: str, scar_type: str) -> str:
 
 SKIP_NAMES = {"readme.md", "template.md"}
 
+# #377: the ONE table of legal lifecycle moves. promote() and transition()
+# both consult it, so no caller can make a status change the table does not
+# name. archived is terminal on purpose: retired knowledge is brought back by
+# writing a new scar, never by flipping a flag (revives_if only reports it).
+LIFECYCLE_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "candidate": ("active", "archived"),
+    "active": ("challenged", "archived", "orphaned"),
+    "challenged": ("active", "archived", "orphaned"),
+    "orphaned": ("active", "challenged", "archived"),
+    "archived": (),
+    "template": (),
+}
+# candidate -> active is promote()'s move alone: it needs a fresh id and a
+# reviewer, which transition() has no way to supply.
+PROMOTE_ONLY = {("candidate", "active")}
+
+
+def _check_transition(old: str, new: str, *, via_promote: bool = False) -> None:
+    if new not in LIFECYCLE_TRANSITIONS.get(old, ()) or (
+            ((old, new) in PROMOTE_ONLY) != via_promote):
+        raise ValueError(f"illegal lifecycle transition {old} -> {new}")
+
 README = """\
 # .scars/ — Negative knowledge for this repo
 
@@ -266,6 +288,44 @@ class ScarStore:
         cand = self.candidates_dir
         return sorted(p for p in cand.glob("*.md")) if cand.is_dir() else []
 
+    def pending_candidates(self) -> list[Path]:
+        """Candidates still awaiting review. An archived candidate stays in
+        candidates/ (history kept, lint still checks it) but is not pending.
+        An unparseable file is kept: it still needs a human."""
+        out = []
+        for p in self.candidates():
+            try:
+                status = parse_scar_text(p.read_text(encoding="utf-8")).status
+            except (ParseError, OSError):
+                status = "candidate"
+            if status != "archived":
+                out.append(p)
+        return out
+
+    def archive_candidate(self, candidate: Path, reason: str, date: str) -> Path:
+        """Retire a candidate in place: same file, same name, status archived,
+        reason recorded as an evidence note (as transition() does for numbered
+        scars). It stays in candidates/ so its history sits next to its
+        siblings; the table makes archived terminal, so promote() refuses it."""
+        scar = self._parse_candidate_file(candidate)
+        _check_transition(scar.status, "archived")
+        scar.status = "archived"
+        scar.evidence.append(f"note: archived {date}: {reason}")
+        candidate.write_text(scar.to_text(), encoding="utf-8")
+        return candidate
+
+    def _parse_candidate_file(self, path: Path) -> Scar:
+        try:
+            inside = path.resolve().is_relative_to(self.candidates_dir.resolve())
+        except OSError:
+            inside = False
+        if not inside:
+            raise ValueError(f"{path.name}: not inside {self.candidates_dir.name}/")
+        try:
+            return parse_scar_text(path.read_text(encoding="utf-8"))
+        except (ParseError, OSError) as exc:
+            raise ValueError(f"{path.name}: unreadable ({exc})") from None
+
     def next_id(self) -> int:
         ids = [scar.id for _, scar in self.active() if scar.id is not None]
         for f in self._scar_files():  # count non-active numbered scars too
@@ -294,6 +354,10 @@ class ScarStore:
             if s.id == scar_id:
                 if s.status == new_status:
                     raise ValueError(f"scar #{scar_id} is already {new_status}")
+                try:
+                    _check_transition(s.status, new_status)
+                except ValueError as exc:
+                    raise ValueError(f"scar #{scar_id}: {exc}") from None
                 s.status = new_status
                 s.evidence.append(f"note: {new_status} {date}: {reason}")
                 f.write_text(s.to_text(), encoding="utf-8")
@@ -316,6 +380,21 @@ class ScarStore:
 
     def promote(self, candidate: Path, reviewer: str,
                 reviewer_source: str | None = None) -> Path:
+        # #377: gate on the lifecycle table BEFORE anything is allocated or
+        # written, so a refusal changes no file and burns no id.
+        try:
+            current = self._parse_candidate_file(candidate)
+        except ValueError as exc:
+            if "unreadable" not in str(exc):
+                raise
+            current = None  # unparseable: lint below reports it as an error
+        if current is not None:
+            try:
+                _check_transition(current.status, "active", via_promote=True)
+            except ValueError:
+                raise ValueError(
+                    f"refusing to promote {candidate.name}: status is "
+                    f"{current.status}, only candidate can be promoted") from None
         text = candidate.read_text(encoding="utf-8")
         findings = lint_text(text)
         errors = [f for f in findings if f.level == "error"]

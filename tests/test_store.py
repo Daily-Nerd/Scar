@@ -428,3 +428,71 @@ def test_ensure_candidates_dir_recreates_missing_folder_idempotently(repo):
     path = store.ensure_candidates_dir()
     assert path == repo / ".scars" / "candidates" and path.is_dir()
     assert store.ensure_candidates_dir() == path
+
+
+# --- #377: lifecycle transition table owns every status change ---
+
+from scar.model import STATUSES  # noqa: E402
+from scar.store import LIFECYCLE_TRANSITIONS  # noqa: E402
+
+NON_CANDIDATE = [s for s in STATUSES if s != "candidate"]
+
+
+def _snapshot(repo):
+    return {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")}
+
+
+@pytest.mark.parametrize("status", NON_CANDIDATE)
+def test_promote_refuses_every_non_candidate_status(repo, status):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace("status: candidate", f"status: {status}"))
+    store = ScarStore.discover(repo)
+    before, next_id = _snapshot(repo), store.next_id()
+    with pytest.raises(ValueError) as exc:
+        store.promote(cand, reviewer="kibukx")
+    assert "tried-x.md" in str(exc.value) and status in str(exc.value)
+    assert _snapshot(repo) == before
+    assert store.next_id() == next_id
+
+
+def test_promote_refuses_a_file_outside_candidates(repo):
+    stray = repo / ".scars" / "stray.md"
+    stray.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    before, next_id = _snapshot(repo), store.next_id()
+    with pytest.raises(ValueError, match="stray.md"):
+        store.promote(stray, reviewer="kibukx")
+    assert _snapshot(repo) == before
+    assert store.next_id() == next_id
+
+
+def test_transition_rejects_a_move_the_table_does_not_allow(repo):
+    f = repo / ".scars" / "0001-x.deadend.md"
+    f.write_text(CANDIDATE.replace("status: candidate", "status: archived").replace(
+        "type: deadend", "id: 1\ntype: deadend"))
+    store = ScarStore.discover(repo)
+    before = f.read_bytes()
+    with pytest.raises(ValueError, match="archived"):
+        store.transition(1, "challenged", reason="r", date="2026-06-12")
+    assert f.read_bytes() == before
+
+
+def test_table_only_names_known_statuses_and_archived_is_terminal():
+    for src, dsts in LIFECYCLE_TRANSITIONS.items():
+        assert src in STATUSES and set(dsts) <= set(STATUSES)
+    assert not LIFECYCLE_TRANSITIONS.get("archived")
+
+
+def test_archive_candidate_keeps_file_records_reason_and_blocks_promote(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    path = store.archive_candidate(cand, reason="obsolete", date="2026-06-12")
+    assert path == cand and cand.exists()
+    text = cand.read_text()
+    assert "status: archived" in text and "archived 2026-06-12: obsolete" in text
+    with pytest.raises(ValueError, match="archived"):
+        store.promote(cand, reviewer="kibukx")
+    assert not list((repo / ".scars").glob("0*.md"))
+    assert store.pending_candidates() == []
+    assert store.candidates() == [cand]
