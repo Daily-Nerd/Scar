@@ -49,6 +49,10 @@ class Scar:
     # promoted_by at all), never defaulted, the same missing-key-is-not-a-
     # value contract as review_after_firings.
     promoted_by_source: str | None = None
+    # #386: the compact JWS a person's promotion produced. Read-only for now
+    # (a later slice writes it at promotion). Never part of promoted_record:
+    # storing the act must not change the bytes it signed.
+    promotion_act: str = ""
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
     symbol_anchors: list[str] = field(default_factory=list)
@@ -85,6 +89,8 @@ class Scar:
             lines.append(f"promoted_by: {self.promoted_by}")
             if self.promoted_by_source:
                 lines.append(f"promoted_by_source: {self.promoted_by_source}")
+        if self.promotion_act:
+            lines.append(f"promotion_act: {self.promotion_act}")
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f"  - pattern: {_quote(p)}" for p in self.pattern_anchors]
@@ -224,6 +230,7 @@ def parse_scar_text(text: str) -> Scar:
         authors=authors,
         promoted_by=_scalar(front, "promoted_by"),
         promoted_by_source=_scalar(front, "promoted_by_source") or None,
+        promotion_act=_scalar(front, "promotion_act"),
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())
