@@ -573,3 +573,70 @@ def test_revives_if_absent_emits_no_key():
     would grow a meaningless field on any promote round-trip."""
     text = Scar(title="t", path_anchors=["src/"]).to_text()
     assert "revives_if" not in text
+
+
+def _scalar_scar(**lines: str) -> str:
+    fm = "\n".join(f"{k}: {v}" for k, v in lines.items())
+    return f"---\n{fm}\nanchors:\n  - path: src/\n---\n\nbody\n"
+
+
+@pytest.mark.parametrize("wrapped", ['"{}"', "'{}'", "{}"])
+@pytest.mark.parametrize("field,value,attr", [
+    ("type", "fence", "type"),
+    ("title", "Keep it", "title"),
+    ("severity", "high", "severity"),
+    ("status", "archived", "status"),
+    ("created", "2026-01-02", "created"),
+    ("promoted_by", "mara", "promoted_by"),
+    ("promoted_by_source", "git", "promoted_by_source"),
+])
+def test_scalar_quote_style_does_not_change_value(wrapped, field, value, attr):
+    s = parse_scar_text(_scalar_scar(**{field: wrapped.format(value)}))
+    assert getattr(s, attr) == value
+
+
+@pytest.mark.parametrize("wrapped", ['"{}"', "'{}'", "{}"])
+def test_numeric_scalars_ignore_quote_style(wrapped):
+    s = parse_scar_text(_scalar_scar(
+        id=wrapped.format("7"), confidence=wrapped.format("0.9")))
+    assert s.id == 7
+    assert s.confidence == 0.9
+
+
+@pytest.mark.parametrize("wrapped", ['"{}"', "'{}'", "{}"])
+def test_expires_scalars_ignore_quote_style(wrapped):
+    text = ("---\ntype: fence\ntitle: t\nanchors:\n  - path: src/\nexpires:\n"
+            f"  review_after: {wrapped.format('2027-01-01')}\n"
+            f"  review_after_firings: {wrapped.format('12')}\n---\n\nb\n")
+    s = parse_scar_text(text)
+    assert s.review_after == "2027-01-01"
+    assert s.review_after_firings == 12
+
+
+def test_title_not_wrapped_keeps_its_leading_quoted_word():
+    t = '"authors" is reserved in frontmatter'
+    assert parse_scar_text(_scalar_scar(title=t)).title == t
+
+
+def test_quoted_title_trailing_comment_is_dropped():
+    s = parse_scar_text(_scalar_scar(title='"Keep it"  # why'))
+    assert s.title == "Keep it"
+
+
+def test_unquoted_title_hash_is_data():
+    assert parse_scar_text(_scalar_scar(title="Fix #40 now")).title == "Fix #40 now"
+
+
+@pytest.mark.parametrize("title", [
+    "plain",
+    '"authors" is reserved',
+    '"quoted" and "again"',
+    "'single' wrapped",
+    "has: colon and #40",
+    '"fully wrapped"',
+    "x  # looks like comment",
+])
+def test_title_roundtrips_through_to_text(title):
+    s = Scar(title=title, type="fence", severity="high", confidence=0.9,
+             status="active", path_anchors=["src/"])
+    assert parse_scar_text(s.to_text()).title == title
