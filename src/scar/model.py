@@ -70,7 +70,12 @@ class Scar:
         lines = ["---"]
         if self.id is not None:
             lines.append(f"id: {self.id}")
-        lines += [f"type: {self.type}", f"title: {self.title}",
+        # Free text is written bare unless parsing it bare would drop
+        # characters that belong to it (a value that starts and ends with a
+        # quote, or carries a trailing "  # x"): then it gets the one
+        # _quote pair, the exact inverse of _unquote.
+        title = self.title if _unquote(self.title) == self.title else _quote(self.title)
+        lines += [f"type: {self.type}", f"title: {title}",
                   f"severity: {self.severity}", f"confidence: {self.confidence}"]
         if self.created:
             lines.append(f"created: {self.created}")
@@ -158,6 +163,14 @@ def _field(front: str, name: str, default: str = "", strip_comment: bool = True)
     return value
 
 
+def _scalar(front: str, name: str, default: str = "", strip_comment: bool = True) -> str:
+    """The ONE read path for a frontmatter scalar: field lookup, then the
+    wrapper-quote removal. Every scalar goes through here so a parsed value
+    never carries its YAML quotes (#383: type/title/severity were forgotten
+    when unquoting was applied field by field)."""
+    return _unquote(_field(front, name, default, strip_comment))
+
+
 def _int_or_none(raw: str) -> int | None:
     """A non-negative int, or None when absent/unparseable. An unparseable
     value must NOT become 0: 0 means "never escalate", so coercing garbage to
@@ -179,10 +192,10 @@ def parse_scar_text(text: str) -> Scar:
     front, body = m.groups()
 
     try:
-        confidence = float(_field(front, "confidence", "0.5"))
+        confidence = float(_scalar(front, "confidence", "0.5"))
     except ValueError:
         confidence = 0.5
-    raw_id = _field(front, "id")
+    raw_id = _scalar(front, "id")
     try:
         scar_id: int | None = int(raw_id) if raw_id else None
     except ValueError:
@@ -202,15 +215,15 @@ def parse_scar_text(text: str) -> Scar:
         r"^\s*-\s*(commit|pr|issue|incident|note|url):\s*(.+)\s*$", front, re.MULTILINE)]
 
     return Scar(
-        type=_field(front, "type", "deadend"),
-        title=_field(front, "title", strip_comment=False),
+        type=_scalar(front, "type", "deadend"),
+        title=_scalar(front, "title", strip_comment=False),
         id=scar_id,
-        severity=_field(front, "severity", "medium"),
+        severity=_scalar(front, "severity", "medium"),
         confidence=confidence,
-        created=_field(front, "created"),
+        created=_scalar(front, "created"),
         authors=authors,
-        promoted_by=_field(front, "promoted_by"),
-        promoted_by_source=_field(front, "promoted_by_source") or None,
+        promoted_by=_scalar(front, "promoted_by"),
+        promoted_by_source=_scalar(front, "promoted_by_source") or None,
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())
@@ -223,23 +236,23 @@ def parse_scar_text(text: str) -> Scar:
         command_anchors=[_unquote(c.strip())
                          for c in re.findall(r"^\s*-\s*command:\s*(.+?)\s*$", front, re.MULTILINE)],
         evidence=evidence,
-        expires_condition=_unquote(_field(front, "condition")),
-        review_after=_field(front, "review_after"),
+        expires_condition=_scalar(front, "condition"),
+        review_after=_scalar(front, "review_after"),
         # NOT a prefix collision with review_after: _field anchors on
         # "<name>:", and the line "review_after_firings: 10" has '_' where
         # review_after's rule needs ':'. Both directions are pinned by test,
         # because a silent cross-match here would either void the date
         # trigger or the count trigger with no error anywhere (#69 class).
-        review_after_firings=_int_or_none(_field(front, "review_after_firings")),
+        review_after_firings=_int_or_none(_scalar(front, "review_after_firings")),
         # Matched-pair removal, same as pattern/command/condition (#202): a
         # single-quoted violation value must not keep its wrapper attached
         # (silently-dead tripwire, #200), and a value with edge quotes of its
         # own must not lose them.
-        violation=_unquote(_field(front, "violation")),
+        violation=_scalar(front, "violation"),
         # Same raw-regex contract as violation (#205): wrapper quotes removed,
         # nothing un-escaped. Only meaningful on archived scars, but parsed
         # unconditionally so a promote/archive round-trip cannot drop it (#4).
-        revives_if=_unquote(_field(front, "revives_if")),
-        status=_field(front, "status", "active"),
+        revives_if=_scalar(front, "revives_if"),
+        status=_scalar(front, "status", "active"),
         body=body.strip(),
     )

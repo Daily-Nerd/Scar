@@ -73,13 +73,11 @@ def test_decision_changes_alter_bytes(old, new):
 
 
 def test_key_order_and_anchor_quote_style_do_not_matter():
-    # Scalars (type/title/severity) are NOT unquoted by the parser, so their
-    # quote style is parser behavior and is deliberately not asserted here.
     shuffled = """---
 status: active
-severity: high
-title: Keep the odd retry loop
-type: fence
+severity: 'high'
+title: "Keep the odd retry loop"
+type: "fence"
 id: 5
 anchors:
   - path: "src/x.py"
