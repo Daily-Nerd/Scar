@@ -11,7 +11,27 @@ size check here; the signer refuses an oversize record before any confirmation.
 """
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from .model import Scar
+
+
+def promotion_subject(repo: Path | str, scar_id: int) -> str | None:
+    """`<id>-<first 16 hex of the first-parent root commit>`: ties a promotion
+    act to one scar in one repository. None when git cannot name a root (not a
+    repo, no commits): a caller must report that, never invent a subject."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--first-parent",
+             "--max-parents=0", "HEAD"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    roots = proc.stdout.split()
+    if proc.returncode != 0 or len(roots) != 1:
+        return None
+    return f"{scar_id}-{roots[0][:16]}"
 
 
 def promoted_record(scar: Scar) -> bytes:

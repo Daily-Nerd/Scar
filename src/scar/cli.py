@@ -346,6 +346,10 @@ def _lint_rich(data: dict) -> None:
     for ue in data["unreachable_evidence"]:
         console.print(f"[yellow]WARNING evidence-unreachable:[/] scar #{ue['scar_id']} — "
                       f"commit {ue['sha']} {ue['reason']}")
+    for row in data.get("promotion", []):
+        verified = row["state"] == "verified"
+        console.print(f"[{'green' if verified else 'yellow'}]promotion:[/] "
+                      f"scar #{row['scar_id']}: {row['state']}")
     style = "red" if data["failed"] else "green"
     console.print(f"[{style}]lint:[/] {data['files']} file(s), {data['failed']} with errors, "
                   f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
@@ -878,6 +882,14 @@ def _cmd_lint(args) -> int:
         "failed_files": sorted(failed_files),
         "review_due": _review_due_json(review_due),
     }
+    if getattr(args, "verify_promotion", False):
+        from .verify import verify_store
+        # Reported, never a lint error: a runner without the verifier's local
+        # trust setup can never produce `verified`, so gating on it would keep
+        # CI permanently red.
+        data["promotion"] = [
+            {"scar_id": sc.id, "file": str(f.relative_to(store.root)), "state": state}
+            for f, sc, state in verify_store(store)]
 
     def plain():
         for rel, findings in findings_by_file:
@@ -919,6 +931,8 @@ def _cmd_lint(args) -> int:
         for ue in unreachable:
             print(f"WARNING evidence-unreachable: scar #{ue.scar_id} — commit "
                   f"{ue.sha} {ue.reason}, not reachable from HEAD")
+        for row in data.get("promotion", []):
+            print(f"promotion: scar #{row['scar_id']}: {row['state']}")
         print(f"lint: {len(files)} file(s), {failed} with errors, "
               f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
               f"{len(unreachable)} unreachable-evidence, "
@@ -3477,6 +3491,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fail-firing-review", action="store_true",
                    help="exit non-zero when any scar has crossed its "
                         "review_after_firings threshold")
+    p.add_argument("--verify-promotion", action="store_true",
+                   help="report each active scar's promotion act state via the "
+                        "presence verifier (reported only, never changes the exit code)")
     fmt = p.add_mutually_exclusive_group()
     fmt.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     fmt.add_argument("--review-queue", action="store_true",

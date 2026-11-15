@@ -183,6 +183,28 @@ scar lint                                     # format, dead tripwires, overdue 
 
 Advisory by default everywhere; CI opts into strictness explicitly.
 
+### Verifying promotions
+
+`promoted_by` is plain text, so anyone can write a name into it. `scar lint --verify-promotion` checks the `promotion_act` of each scar that still injects (active or challenged) (a compact JWS stored in the scar's frontmatter) with the presence verifier and prints one state per scar. Orphaned and archived scars are not listed. Without the flag, `scar lint` behaves exactly as before.
+
+The verifier is run from one fixed path, `/Library/Application Support/handsal/bin/handsal-check`, never through `PATH`, with no environment variable or flag to point it elsewhere. Scar sends it the promoted record bytes (rebuilt from the scar, never read from the act), the repository subject (`<id>-<first 16 hex of the root commit>`) and the organization id. The organization id comes from `.scars/config.json`, a committed JSON file with one key:
+
+```json
+{"org": "your-org-id"}
+```
+
+| State | Meaning |
+|---|---|
+| `verified` | the verifier answered `rechecked: true` |
+| `unverified` | no `promotion_act` (every scar promoted before this feature) |
+| `not proven: <reason>` | the verifier answered anything else; its reason is shown as it came |
+| `not verified: verifier not installed` | nothing at the fixed path |
+| `not verified: no org in .scars/config.json` | file missing, invalid, or `org` absent or empty |
+| `not verified: repository root commit unavailable` | git cannot name the root commit (not a repo, or no commits) |
+| `not verified: verifier failed` | nonzero exit, timeout, or output that is not the expected JSON |
+
+States are reported, never lint errors: the exit code does not change because of them. A CI runner has no local trust setup for the verifier, so it can never produce `verified`; failing lint on that would keep CI red for good. `promoted_by` is never shown as proof.
+
 ### Review queue
 
 Orphans, partial rot, symbol drift, unreachable evidence, revivals and passed `review_after` dates all end in a red job or a terminal warning that nobody owns. `scar lint --review-queue` turns them into one markdown checklist, one row per scar, and a scheduled workflow keeps a single rolling issue in sync with it:
