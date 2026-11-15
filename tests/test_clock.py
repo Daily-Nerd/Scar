@@ -140,6 +140,8 @@ _BAD = [
     (re.compile(r"""time\.strftime\(\s*["']%Y-%m-%d"""), 'time.strftime("%Y-%m-%d...")'),
     (re.compile(r"\bdate\.today\("), "date.today()"),
     (re.compile(r"\bdatetime\.(?:datetime\.)?now\(\s*\)"), "datetime.now() with no tz"),
+    (re.compile(r"^\s*from\s+(?:\.|scar\.)clock\s+import\b"),
+     "from-import of clock names (use `from . import clock`)"),
 ]
 
 
@@ -149,7 +151,12 @@ def test_no_module_reads_the_clock_for_today_outside_the_owner():
     except clock.py: time.strftime("%Y-%m-%d..."), date.today(), and a bare
     datetime.now() / datetime.datetime.now() with no tz argument. A call that
     passes tz (an age relative to a parsed timestamp) is not "today" and is
-    allowed. To get the date, call clock.today() or clock.now()."""
+    allowed. To get the date, call clock.today() or clock.now().
+
+    It also fails on `from .clock import ...` / `from scar.clock import ...`:
+    a name bound at import time cannot be monkeypatched through scar.clock, so
+    tests could no longer fix the date in one place. Use `from . import clock`
+    and call `clock.today()`. Only import statements match, not prose."""
     offenders = []
     for path in sorted(SRC.glob("*.py")):
         if path.name == "clock.py":
