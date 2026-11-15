@@ -248,6 +248,14 @@ jobs:
 
 The queue step records lint's exit code instead of failing, the issue is synced, and the last step fails the job when lint did, so CI stays red and the issue stays current. The issue is rewritten from scar's output on every run, never duplicated, closed when the queue is empty and reopened when it is not. Its visibility follows the repository's: on a public repo the titles and file paths in the checklist are public too.
 
+A `review_after` date is compared against the local date of the machine running the command, so a CI runner evaluates it in its own time zone, which is UTC on GitHub-hosted runners. Near midnight that can list a scar a few hours before `scar status` does on a developer's machine. If your team wants CI to match its calendar, set `TZ` on the step that builds the queue:
+
+```yaml
+      - name: Build the queue
+        env:
+          TZ: America/Mexico_City   # example value: use your team's zone
+```
+
 ## Machine-readable docs
 
 Agents reading these docs programmatically: fetch [`/llms.txt`](pathname:///Scar/llms.txt) for a plain-text index of every page with stable URLs, plus the changelog.
