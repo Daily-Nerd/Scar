@@ -6,10 +6,9 @@ contract in .scars/README.md.
 from __future__ import annotations
 
 import re
-import time
 from dataclasses import dataclass
 
-from . import symbols
+from . import clock, symbols
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
 
 
@@ -166,7 +165,7 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         scar = parse_scar_text(text)
     except ParseError:
         return [Finding("error", "missing YAML frontmatter — this scar can NEVER fire")]
-    today = today or time.strftime("%Y-%m-%d")
+    today = today or clock.today()
 
     findings = []
     if scar.type not in TYPES:

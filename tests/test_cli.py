@@ -773,8 +773,7 @@ def test_orphan_command_lists_failed_anchors_readonly(repo, capsys):
 
 
 def test_orphan_apply_persists_status_with_dated_note(repo, capsys, monkeypatch):
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-06-13")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-06-13")
     init_scars(repo)
     f = repo / ".scars" / "0005-both.deadend.md"
     f.write_text(MULTI_ANCHOR_ORPHAN)
@@ -1227,7 +1226,7 @@ def test_harvest_label_appends_jsonl_line(harvest_repo, tmp_path, capsys, monkey
     import scar.cli as cli
     labels = tmp_path / "labels.jsonl"
     monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-06-13")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-06-13")
     cid = _first_candidate_id(harvest_repo)
 
     assert main(["harvest", str(harvest_repo), "--label", cid, "keep",
@@ -1330,11 +1329,11 @@ def test_harvest_label_rejects_bogus_label(harvest_repo, tmp_path, capsys, monke
 
 
 def test_harvest_label_date_is_monkeypatchable(harvest_repo, tmp_path, monkeypatch):
-    """The date field comes from time.strftime, monkeypatchable for determinism."""
+    """The date field comes from scar.clock.today, monkeypatchable for determinism."""
     import scar.cli as cli
     labels = tmp_path / "labels.jsonl"
     monkeypatch.setattr(cli, "LABELS_PATH_OVERRIDE", labels)
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "1999-12-31")
+    monkeypatch.setattr("scar.clock.today", lambda: "1999-12-31")
     cid = _first_candidate_id(harvest_repo)
     main(["harvest", str(harvest_repo), "--label", cid, "keep"])
     rec = json.loads(labels.read_text(encoding="utf-8").splitlines()[0])
@@ -2333,8 +2332,7 @@ def test_reanchor_ambiguous_reports_both_and_apply_refuses(tmp_path, monkeypatch
 
 
 def test_reanchor_apply_rewrites_exactly_one_line(tmp_path, monkeypatch, capsys):
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2371,8 +2369,7 @@ def test_reanchor_apply_rewrites_exactly_one_line(tmp_path, monkeypatch, capsys)
 
 
 def test_reanchor_apply_multi_anchor_partial(tmp_path, monkeypatch, capsys):
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2420,8 +2417,7 @@ def test_reanchor_apply_note_uses_symbol_anchor_kind_word(tmp_path, monkeypatch,
     a fixture with a made-up SHA like _reanchor_scar's 'abc1234' never
     proposes anything with the [symbols] extra actually installed, so this
     test captures the real commit that added old_helper and cites it."""
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     # Same shape as test_reanchor.py's _OLD_BODY/_NEW_NAME_SAME_SHAPE, proven
@@ -2480,8 +2476,7 @@ def test_reanchor_apply_note_uses_symbol_anchor_kind_word(tmp_path, monkeypatch,
 
 
 def test_reanchor_apply_note_created_when_scar_has_no_evidence_block(tmp_path, monkeypatch, capsys):
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2521,8 +2516,7 @@ def test_reanchor_apply_note_created_when_scar_has_no_evidence_block(tmp_path, m
 
 def test_reanchor_apply_note_survives_parse_round_trip(tmp_path, monkeypatch, capsys):
     from scar.model import parse_scar_text
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"
@@ -2553,8 +2547,7 @@ def test_reanchor_apply_note_lints_clean_no_unreachable_evidence_complaint(
     """A note: entry needs no reachability check (only commit: does), so it
     must not trip evidence-unreachable and must not read as missing evidence."""
     from scar.lint import lint_text
-    import scar.cli as cli
-    monkeypatch.setattr(cli.time, "strftime", lambda fmt: "2026-09-02")
+    monkeypatch.setattr("scar.clock.today", lambda: "2026-09-02")
     _init_bare_git(tmp_path)
     init_scars(tmp_path)
     content = ("def hello():\n    return 'world from old module'\n\n"

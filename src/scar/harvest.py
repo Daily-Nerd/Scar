@@ -10,12 +10,13 @@ NB (scar 0001): no \\b in git grep patterns, no speculative extension globs.
 
 from __future__ import annotations
 
-import datetime
 import hashlib
 import re
 import subprocess
 from collections import defaultdict
 from pathlib import Path
+
+from . import clock
 
 REVERT_RE = re.compile(
     r"revert|rollback|roll back|downgrade|back to|undo|set back|"
@@ -191,8 +192,7 @@ def _now_months() -> int:
     """Current year*12+month from the real clock. Isolated so callers can inject
     a fixed value for deterministic tests (never hardcode 'now' in the formula —
     a frozen constant silently drifts wrong with every passing month)."""
-    today = datetime.date.today()
-    return today.year * 12 + today.month
+    return clock.month_index()
 
 
 def _recency_term(date_str: str, max_bonus: float = 1.0,
