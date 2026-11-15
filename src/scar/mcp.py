@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
+from . import clock
 from .lint import lint_text
 from .match import rank_matches_for_diff, rank_matches_for_paths
 from .model import Scar
@@ -81,7 +81,7 @@ def _scar_from_args(args: dict[str, Any]) -> Scar:
         title=str(args.get("title", "")),
         severity=str(args.get("severity", Scar.severity)),
         confidence=float(args.get("confidence", Scar.confidence)),
-        created=str(args.get("created") or time.strftime("%Y-%m-%d")),
+        created=str(args.get("created") or clock.today()),
         authors=[str(a) for a in args.get("authors", ["agent"])],
         path_anchors=path_anchors,
         pattern_anchors=pattern_anchors,

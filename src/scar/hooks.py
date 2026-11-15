@@ -18,6 +18,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import clock
 from .firing_log import read_firing_log_records
 from .match import (MatchCensus, armed_scar_ids, find_violations, has_content_signal,
                     rank_and_census_for_edit)
@@ -257,7 +258,7 @@ def _log_firing(store: ScarStore, target: str, hits: list,
         log_path = firing_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ts": clock.now(),
             "repo": str(store.root),
             "target": target,
             "scar_ids": [s.id for s in hits],
@@ -370,7 +371,7 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
         log_path = firing_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ts": clock.now(),
             "repo": str(store.root),
             "target": target,
             "violation_ids": [v.scar.id for v in violations],
@@ -651,7 +652,7 @@ def stop_drafter() -> int:
     state.mkdir(parents=True, exist_ok=True)
     marker.touch()
     with open(state / "drafter-log.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        fh.write(json.dumps({"ts": clock.now(),
                              "repo": str(store.root), "session": session,
                              "signals": signals}) + "\n")
     candidates = store.scars_dir / "candidates"

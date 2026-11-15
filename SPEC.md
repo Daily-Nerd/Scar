@@ -365,7 +365,8 @@ result are how a result gets laundered into a finding.
 
 `stats --since` / `--until` filter records **before** any metric is computed,
 so every number is window-scoped by the same code that computes it unwindowed.
-Timestamps in the firing log are **naive local time** (`time.strftime`), and the
+Timestamps in the firing log are **naive local time** (read through `scar.clock`,
+the one owner of the wall clock), and the
 bounds are interpreted in that same frame — a window is therefore local-time,
 never UTC. A bare date means `00:00:00` as `--since` and the END of that day as
 `--until`, so `--since D --until D` is the whole of day D. Records whose `ts` is

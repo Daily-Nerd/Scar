@@ -12,7 +12,6 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
@@ -54,7 +53,7 @@ from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
 from .store import ScarStore, init_scars, sanitize_signal_text, slugify
 from .violation_evidence import is_violation_summary
-from . import output
+from . import clock, output
 
 
 def _require_store(start: Path | None = None) -> ScarStore | None:
@@ -550,7 +549,7 @@ def _firing_reviews(store):
 def _review_due(store) -> list[Scar]:
     """Firing scars whose review_after date has passed. The one definition
     shared by `status` and `lint` so the two JSON surfaces cannot disagree."""
-    today = time.strftime("%Y-%m-%d")
+    today = clock.today()
     return [s for _f, s in store.firing() if s.review_after and s.review_after < today]
 
 
@@ -1295,7 +1294,7 @@ def _archive_candidate(args) -> int:
         return 1
     try:
         store.archive_candidate(path, reason=args.reason,
-                                date=time.strftime("%Y-%m-%d"))
+                                date=clock.today())
     except ValueError as exc:
         print(str(exc))
         return 1
@@ -1310,7 +1309,7 @@ def _cmd_transition(args, new_status: str) -> int:
         return 1
     try:
         path = store.transition(args.id, new_status, reason=args.reason,
-                                date=time.strftime("%Y-%m-%d"))
+                                date=clock.today())
     except ValueError as exc:
         print(str(exc))
         return 1
@@ -1440,7 +1439,7 @@ def _cmd_orphan(args) -> int:
     note = f"{args.reason} [orphan: {_orphan_reason(target)}]"
     try:
         path = store.transition(args.id, "orphaned", reason=note,
-                                date=time.strftime("%Y-%m-%d"))
+                                date=clock.today())
     except ValueError as exc:
         print(str(exc))
         return 1
@@ -1592,7 +1591,7 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
     # One note per applied rewrite, formatted before the file is touched so
     # the confidence tier is read off the proposal, not re-derived later.
     notes: list[str] = []
-    apply_date = time.strftime("%Y-%m-%d")
+    apply_date = clock.today()
     for kind, dead in dead_anchors:
         plist = groups.get((kind, dead), [])
         if not plist:
@@ -2947,7 +2946,7 @@ def _harvest_label(repo: Path, args) -> int:
         "id": cid,
         "label": label,
         "note": args.note,
-        "date": time.strftime("%Y-%m-%d"),
+        "date": clock.today(),
         "repo": repo.name,
     }
     path = _labels_path(repo)
@@ -3099,7 +3098,7 @@ def _harvest_write(repo: Path, args) -> int:
     flat = [(key, c) for key, cands in result.items() for c in cands]
     flat.sort(key=lambda kc: kc[1]["score"], reverse=True)
 
-    today = time.strftime("%Y-%m-%d")
+    today = clock.today()
     written: list[str] = []
     skipped_dead: list[str] = []
     skipped_existing: list[str] = []
