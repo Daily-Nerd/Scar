@@ -15,7 +15,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import presence
+from . import config, presence
 from .model import Scar
 from .record import promoted_record, promotion_subject
 from .store import ScarStore
@@ -31,12 +31,12 @@ FAILED = "not verified: verifier failed"
 
 
 def load_org(store: ScarStore) -> str | None:
+    # Reporting only: a config that cannot be read is "not verified", never an
+    # error here. Promote reads the same file through config.load and refuses.
     try:
-        cfg = json.loads((store.scars_dir / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return config.load(store.scars_dir).org
+    except config.ConfigError:
         return None
-    org = cfg.get("org") if isinstance(cfg, dict) else None
-    return org if isinstance(org, str) and org else None
 
 
 def _recheck(payload: dict) -> str:

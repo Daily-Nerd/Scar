@@ -53,7 +53,7 @@ from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
 from .store import ScarStore, init_scars, sanitize_signal_text, slugify
 from .violation_evidence import is_violation_summary
-from . import clock, output
+from . import clock, config, output, signedpromote
 
 
 def _require_store(start: Path | None = None) -> ScarStore | None:
@@ -217,6 +217,8 @@ def _init_rich(data: dict) -> None:
 def _promote_rich(data: dict) -> None:
     from rich.panel import Panel
     lines = [f"[green]promoted[/] -> [bold]{data['promoted']}[/]"]
+    lines.append("signed: a person's presence was proven" if data.get("signed")
+                 else "[yellow]not signed:[/] no org in .scars/config.json")
     if data["reviewer_from_git"]:
         lines.append(f"reviewer: {data['reviewer']} [dim](from git config)[/]")
     if data["born_orphan"]:
@@ -1090,6 +1092,14 @@ def _cmd_promote(args) -> int:
             print(f"nothing promoted: {len(problems)} of {len(args.candidate)} "
                   "file(s) refused")
         return 1
+    # #392: an org in .scars/config.json means every promotion needs a person's
+    # signature. A config that exists but cannot be read is a refusal, never "no
+    # org": reading it as unsigned would turn signing off by accident.
+    try:
+        org = config.load(store.scars_dir).org
+    except config.ConfigError as exc:
+        print(f"refusing to promote: {exc}")
+        return 1
     # Promote is human-run by contract; when --reviewer is omitted the git
     # identity of whoever runs it is the reviewer. Unset identity degrades to
     # the old behavior (no reviewer appended).
@@ -1110,18 +1120,26 @@ def _cmd_promote(args) -> int:
     else:
         reviewer_source = "explicit" if reviewer else None
     for target in targets:
-        rc = _promote_one(store, target, args, reviewer, from_git, reviewer_source)
+        rc = _promote_one(store, target, args, reviewer, from_git, reviewer_source, org)
         if rc:
             return rc
     return 0
 
 
 def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
-                 from_git: bool, reviewer_source: str | None) -> int:
+                 from_git: bool, reviewer_source: str | None,
+                 org: str | None = None) -> int:
     try:
-        new_path = store.promote(target, reviewer=reviewer,
-                                  reviewer_source=reviewer_source)
-    except ValueError as exc:
+        if org is None:
+            new_path = store.promote(target, reviewer=reviewer,
+                                      reviewer_source=reviewer_source)
+        else:
+            new_path = signedpromote.promote_one(
+                store,
+                store.prepare_promotion(target, reviewer=reviewer,
+                                        reviewer_source=reviewer_source),
+                org)
+    except (ValueError, signedpromote.SignedPromoteError) as exc:
         print(str(exc))
         return 1
     # Non-blocking advisory: a freshly promoted scar whose anchors already
@@ -1138,10 +1156,13 @@ def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
                     and git_name.casefold() == args.reviewer.casefold())
     data = {"promoted": str(rel), "reviewer": reviewer or None,
             "reviewer_from_git": from_git, "born_orphan": born_orphan,
-            "reviewer_case_warning": bool(case_warning)}
+            "reviewer_case_warning": bool(case_warning),
+            "signed": org is not None}
 
     def plain():
         print(f"promoted -> {rel}")
+        print("  signed: a person's presence was proven" if org is not None
+              else "  not signed: no org in .scars/config.json")
         if from_git:
             print(f"  reviewer: {reviewer} (from git config)")
         if case_warning:
