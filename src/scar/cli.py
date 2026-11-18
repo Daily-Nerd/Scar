@@ -715,6 +715,20 @@ def _cmd_lint(args) -> int:
                     "error", f"duplicate id {scar_id} also carried by {others}; "
                     f"renumber one of them (next free id is {next_free})")]))
                 failed_files.add(rel)
+    # #392: the downgrade guard. Signing is switched off by editing files (drop
+    # the org, drop an act), so lint refuses that structurally. An unreadable
+    # config is an error here, never "no org".
+    from .lint import CONFIG_REL, downgrade_findings
+    try:
+        cfg = config.load(store.scars_dir)
+    except config.ConfigError as exc:
+        findings_by_file.append((CONFIG_REL, [Finding("error", str(exc))]))
+        failed_files.add(CONFIG_REL)
+    else:
+        numbered_scars = [(rel, parsed) for rel, parsed in parsed_files if rel in numbered]
+        for rel, finding in downgrade_findings(numbered_scars, cfg, store.next_id()):
+            findings_by_file.append((rel, [finding]))
+            failed_files.add(rel)
     failed = len(failed_files)
 
     author_files: dict[str, dict[str, list[str]]] = {}
@@ -1096,10 +1110,17 @@ def _cmd_promote(args) -> int:
     # signature. A config that exists but cannot be read is a refusal, never "no
     # org": reading it as unsigned would turn signing off by accident.
     try:
-        org = config.load(store.scars_dir).org
+        cfg = config.load(store.scars_dir)
     except config.ConfigError as exc:
         print(f"refusing to promote: {exc}")
         return 1
+    org = cfg.org
+    if org is not None:
+        # The repository must be in a state lint accepts, before any touch.
+        problem = config.signing_problem(cfg, store.next_id())
+        if problem:
+            print(f"refusing to promote: {problem}")
+            return 1
     # Promote is human-run by contract; when --reviewer is omitted the git
     # identity of whoever runs it is the reviewer. Unset identity degrades to
     # the old behavior (no reviewer appended).

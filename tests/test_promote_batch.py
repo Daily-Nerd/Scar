@@ -51,7 +51,7 @@ def repo(tmp_path, monkeypatch):
     subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
                     "commit", "-q", "--allow-empty", "-m", "root"], check=True)
     init_scars(tmp_path)
-    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": ORG}))
+    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": ORG, "signed_from": 1}))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -252,7 +252,7 @@ def test_no_root_commit_is_refused_in_preflight(tmp_path, monkeypatch, fakes, ca
     signer, checker = fakes
     subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
     init_scars(tmp_path)
-    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": ORG}))
+    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": ORG, "signed_from": 1}))
     monkeypatch.chdir(tmp_path)
     names = make(tmp_path, 2)
     before = snapshot(tmp_path)
@@ -260,6 +260,12 @@ def test_no_root_commit_is_refused_in_preflight(tmp_path, monkeypatch, fakes, ca
     assert "root commit" in capsys.readouterr().out
     assert snapshot(tmp_path) == before
     assert signer.calls() == [] and checker.calls() == []
+
+
+def test_what_promote_writes_passes_the_downgrade_guard(repo, fakes, capsys):
+    assert run(*make(repo, 2)) == 0
+    capsys.readouterr()
+    assert main(["lint"]) == 0
 
 
 def test_the_fixed_paths_are_never_taken_from_the_environment(repo, fakes, monkeypatch, tmp_path):

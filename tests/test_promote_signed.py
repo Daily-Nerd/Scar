@@ -73,7 +73,7 @@ def fakes(tmp_path_factory, monkeypatch):
 
 
 def set_org(repo, org=ORG):
-    (repo / ".scars" / "config.json").write_text(json.dumps({"org": org}))
+    (repo / ".scars" / "config.json").write_text(json.dumps({"org": org, "signed_from": 1}))
 
 
 def candidate(repo, name="tried-x.md", text=CANDIDATE):

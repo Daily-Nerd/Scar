@@ -41,7 +41,7 @@ def repo(tmp_path, monkeypatch):
     git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit",
         "-q", "--allow-empty", "-m", "root")
     init_scars(tmp_path)
-    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": "org-1"}))
+    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": "org-1", "signed_from": 1}))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
