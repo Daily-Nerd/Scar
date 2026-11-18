@@ -212,6 +212,15 @@ def init_scars(repo_root: Path) -> Path:
 
 
 @dataclass
+class PreparedPromotion:
+    """A promotion that exists only in memory: the candidate it came from, the
+    scar to write (id and lifecycle already set) and where it will land."""
+    candidate: Path
+    scar: Scar
+    destination: Path
+
+
+@dataclass
 class ScarStore:
     root: Path        # repo root
     scars_dir: Path   # root/.scars
@@ -440,8 +449,11 @@ class ScarStore:
             dests.append(dest)
         return dests, errors
 
-    def promote(self, candidate: Path, reviewer: str,
-                reviewer_source: str | None = None) -> Path:
+    def prepare_promotion(self, candidate: Path, reviewer: str,
+                          reviewer_source: str | None = None) -> "PreparedPromotion":
+        """Everything promote will write, computed and written nowhere: no
+        file, no unlink, no id used up (#392). A signing step can sit between
+        this and commit_promotion without a half-promoted state to undo."""
         # #377: gate on the lifecycle table BEFORE anything is allocated or
         # written, so a refusal changes no file and burns no id.
         self.check_promotable(candidate)
@@ -466,7 +478,25 @@ class ScarStore:
         # source. relative_to raises for a file outside .scars/, before any
         # write, rather than recording a guess.
         scar.promoted_from = candidate.relative_to(self.scars_dir).as_posix()
-        new_path = self._destination(candidate, scar, scar.id)
-        new_path.write_text(scar.to_text(), encoding="utf-8")
-        candidate.unlink()
-        return new_path
+        return PreparedPromotion(
+            candidate=candidate, scar=scar,
+            destination=self._destination(candidate, scar, scar.id))
+
+    def commit_promotion(self, prepared: "PreparedPromotion") -> Path:
+        """Write the prepared scar, then remove its candidate. The write is an
+        exclusive create: a file that appeared since prepare_promotion is never
+        overwritten (#352), and a refusal leaves the candidate in place."""
+        try:
+            with open(prepared.destination, "x", encoding="utf-8") as fh:
+                fh.write(prepared.scar.to_text())
+        except FileExistsError:
+            raise ValueError(
+                f"refusing to promote {prepared.candidate.name}, active file already "
+                f"exists: {prepared.destination.name}") from None
+        prepared.candidate.unlink()
+        return prepared.destination
+
+    def promote(self, candidate: Path, reviewer: str,
+                reviewer_source: str | None = None) -> Path:
+        return self.commit_promotion(
+            self.prepare_promotion(candidate, reviewer, reviewer_source))

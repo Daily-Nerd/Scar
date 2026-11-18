@@ -553,3 +553,66 @@ def test_promote_overwrites_a_pre_seeded_promoted_from(repo):
     text = store.promote(cand, reviewer="mara").read_text()
     assert "promoted_from: candidates/tried-x.md" in text
     assert "other.md" not in text
+
+
+# #392: promote is prepare (no I/O) then commit (exclusive create, then unlink),
+# so a signing step can sit between the two without a half-promoted state.
+
+def test_prepare_promotion_touches_nothing_and_uses_no_id(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    before, next_id = _snapshot(repo), store.next_id()
+    prepared = store.prepare_promotion(cand, reviewer="kibukx", reviewer_source="explicit")
+    assert _snapshot(repo) == before
+    assert store.next_id() == next_id
+    assert prepared.scar.id == next_id
+    assert prepared.scar.status == "active"
+    assert prepared.scar.promoted_by == "kibukx"
+    assert prepared.scar.promoted_from == "candidates/tried-x.md"
+    assert prepared.destination.name == "0001-tried-x.deadend.md"
+    assert not prepared.destination.exists()
+
+
+def test_prepare_promotion_refuses_what_promote_refuses(repo):
+    stray = repo / ".scars" / "stray.md"
+    stray.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    before = _snapshot(repo)
+    with pytest.raises(ValueError, match="stray.md"):
+        store.prepare_promotion(stray, reviewer="k")
+    assert _snapshot(repo) == before
+
+
+def test_commit_promotion_writes_the_prepared_scar_and_removes_the_candidate(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    path = store.commit_promotion(prepared)
+    assert path == prepared.destination
+    assert path.read_text(encoding="utf-8") == prepared.scar.to_text()
+    assert not cand.exists()
+
+
+def test_promote_is_prepare_then_commit_byte_for_byte(repo):
+    text = CANDIDATE
+    a = repo / ".scars" / "candidates" / "tried-x.md"
+    a.write_text(text)
+    store = ScarStore.discover(repo)
+    expected = store.prepare_promotion(a, reviewer="kibukx", reviewer_source="explicit")
+    expected_bytes = expected.scar.to_text().encode("utf-8")
+    path = store.promote(a, reviewer="kibukx", reviewer_source="explicit")
+    assert path.read_bytes() == expected_bytes
+
+
+def test_commit_promotion_never_overwrites_a_file_that_appeared_after_prepare(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    prepared.destination.write_text("precious", encoding="utf-8")
+    with pytest.raises(ValueError, match="exists"):
+        store.commit_promotion(prepared)
+    assert prepared.destination.read_text(encoding="utf-8") == "precious"
+    assert cand.read_text(encoding="utf-8") == CANDIDATE
