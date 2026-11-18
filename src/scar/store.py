@@ -249,6 +249,15 @@ class ScarStore:
                 continue
         return out
 
+    def seen_receipts(self) -> list[str]:
+        """Receipt ids of every scar's promotion act, whatever its status
+        (archived and orphaned included), for the checker's `seen` list: an act
+        already used must stay refused after its scar retires, so one act
+        cannot be replayed for another scar. Sorted and unique, so the checker
+        input does not depend on file order. A file that cannot be parsed is
+        skipped with the rest of parsed(): its receipt cannot be read."""
+        return sorted({s.promotion_receipt for _f, s in self.parsed() if s.promotion_receipt})
+
     def active(self) -> list[tuple[Path, Scar]]:
         return [(f, s) for f, s in self.parsed() if s.status == "active"]
 

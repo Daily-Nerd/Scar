@@ -178,3 +178,52 @@ def test_enrolled_needs_a_real_true(checker, reply):
     checker.reply("enrolled", (reply, 0))
     with pytest.raises(presence.PresenceError):
         presence.enrolled(ORG, "KID43")
+
+
+# ---- first-acceptance check -------------------------------------------------
+
+def test_ingest_sends_exactly_the_check_act_input_and_returns_the_receipt(checker):
+    checker.reply("check-act", ({"class": "apple-se-bio", "reason": "ok",
+                                 "receipt_id": "uEiReceipt", "valid": True}, 0))
+    got = presence.ingest(ORG, SUBJECT, RECORD, "aaa.bbb.ccc", ["uEiOld1", "uEiOld2"])
+    assert got == "uEiReceipt"
+    (call,) = checker.calls("check-act")
+    assert call["argv"] == ["check-act"]
+    assert call["stdin_json"] == {
+        "action": "promote",
+        "consumer": "scar",
+        "decision_b64": base64.b64encode(RECORD).decode("ascii"),
+        "expect_method": "local:handsal.decision",
+        "jws": "aaa.bbb.ccc",
+        "org": ORG,
+        "seen": ["uEiOld1", "uEiOld2"],
+        "subject": SUBJECT,
+    }
+
+
+@pytest.mark.parametrize("reason", [
+    "duplicate_receipt", "expired", "revoked_key", "validity_too_long",
+    "inputs_mismatch", "consumer_mismatch", "stale_view", "weird_new_code",
+])
+def test_a_refusal_after_signing_carries_the_checker_reason_verbatim(checker, reason):
+    checker.reply("check-act", ({"class": None, "reason": reason,
+                                 "receipt_id": "uEiR", "valid": False}, 0))
+    with pytest.raises(presence.Refused) as exc:
+        presence.ingest(ORG, SUBJECT, RECORD, "a.b.c", [])
+    assert exc.value.reason == reason
+
+
+@pytest.mark.parametrize("reply,code", [
+    ("not json", 0),
+    ('{"error":"malformed_input"}', 0),
+    ('{"class":"x","reason":"ok","receipt_id":"r","valid":true}', 1),
+    ('{"class":"x","reason":"ok","receipt_id":"r","valid":"true"}', 0),
+    ('{"class":"x","reason":"ok","receipt_id":"","valid":true}', 0),
+    ('{"class":"x","reason":"ok","receipt_id":null,"valid":true}', 0),
+    ('{"class":"x","reason":"something","receipt_id":"r","valid":true}', 0),
+    ('{"reason":"ok","valid":true}', 0),
+])
+def test_only_valid_true_with_ok_and_a_receipt_is_accepted(checker, reply, code):
+    checker.reply("check-act", (reply, code))
+    with pytest.raises(presence.PresenceError):
+        presence.ingest(ORG, SUBJECT, RECORD, "a.b.c", [])

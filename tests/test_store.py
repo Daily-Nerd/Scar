@@ -630,3 +630,32 @@ def test_promotion_overwrites_an_act_and_receipt_the_candidate_carried(repo):
     assert prepared.scar.promotion_receipt == ""
     text = store.commit_promotion(prepared).read_text(encoding="utf-8")
     assert "promotion_act" not in text and "promotion_receipt" not in text
+
+
+# #392: every scar's receipt, archived included, feeds the checker's `seen`
+# list so one act cannot be reused for a second scar.
+
+def _scar_with_receipt(repo, name, receipt, status):
+    text = (f"---\nid: {int(name[:4])}\ntype: fence\ntitle: T\nseverity: low\nconfidence: 0.5\n"
+            "promoted_by: k\npromotion_act: a.b.c\n"
+            + (f"promotion_receipt: {receipt}\n" if receipt else "")
+            + f"anchors:\n  - path: src/x.py\nstatus: {status}\n---\n\nBody.\n")
+    (repo / ".scars" / name).write_text(text)
+
+
+def test_seen_receipts_include_every_status_archived_too(repo):
+    _scar_with_receipt(repo, "0001-a.fence.md", "uEiA", "active")
+    _scar_with_receipt(repo, "0002-b.fence.md", "uEiB", "archived")
+    _scar_with_receipt(repo, "0003-c.fence.md", "uEiC", "orphaned")
+    _scar_with_receipt(repo, "0004-d.fence.md", "uEiD", "challenged")
+    _scar_with_receipt(repo, "0005-e.fence.md", "", "active")
+    store = ScarStore.discover(repo)
+    assert store.seen_receipts() == ["uEiA", "uEiB", "uEiC", "uEiD"]
+
+
+def test_seen_receipts_are_unique_and_empty_for_a_fresh_store(repo):
+    store = ScarStore.discover(repo)
+    assert store.seen_receipts() == []
+    _scar_with_receipt(repo, "0001-a.fence.md", "uEiSame", "active")
+    _scar_with_receipt(repo, "0002-b.fence.md", "uEiSame", "active")
+    assert store.seen_receipts() == ["uEiSame"]

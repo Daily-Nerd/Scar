@@ -174,6 +174,31 @@ def _signer(command: str, payload: dict | None, timeout: float) -> dict:
     return out
 
 
+def ingest(org: str, subject: str, record: bytes, jws: str, seen: list[str]) -> str:
+    """The checker's first-acceptance check, run once, when an act first
+    arrives. Returns the receipt id of an act that is valid for this org,
+    consumer, subject and record and is not in `seen`. Anything else raises:
+    Refused with the checker's reason verbatim when it says no, Unavailable
+    when it does not give a clean yes or no. The caller must write nothing in
+    either case. Only `valid: true` with reason `ok` is an acceptance."""
+    out = _checker("check-act", {
+        "action": ACTION,
+        "consumer": CONSUMER,
+        "decision_b64": base64.b64encode(record).decode("ascii"),
+        "expect_method": METHOD,
+        "jws": jws,
+        "org": org,
+        "seen": list(seen),
+        "subject": subject,
+    })
+    reason, valid, receipt = out.get("reason"), out.get("valid"), out.get("receipt_id")
+    if valid is False and isinstance(reason, str) and reason:
+        raise Refused(reason)
+    if valid is True and reason == "ok" and isinstance(receipt, str) and receipt:
+        return receipt
+    raise Unavailable("the checker gave an answer that is neither accepted nor refused")
+
+
 def local_kid() -> str:
     """The key id of this machine's signing key. `pubkey` reads a public value
     and shows no prompt."""
