@@ -196,6 +196,10 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
         findings.append(Finding(
             "warning", f"candidate carries promoted_by: {scar.promoted_by} — "
             "only promote writes this field; nobody has vouched for a candidate"))
+    if scar.status == "candidate" and scar.promoted_from:
+        findings.append(Finding(
+            "warning", f"candidate carries promoted_from: {scar.promoted_from} — "
+            "only promote writes this field; a candidate has not been promoted"))
     if scar.promoted_by_source == "git-config":
         # #295: git-config is a computed identity, not a typed vouch: an
         # agent running promote under the human's git identity produces this

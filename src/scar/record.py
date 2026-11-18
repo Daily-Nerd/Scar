@@ -42,8 +42,12 @@ def promoted_record(scar: Scar) -> bytes:
         f"type: {scar.type}",
         f"title: {scar.title}",
         f"severity: {scar.severity}",
-        "anchors:",
     ]
+    # Present only when set, so the bytes of every scar promoted before the
+    # field existed are unchanged.
+    if scar.promoted_from:
+        lines.append(f"promoted_from: {scar.promoted_from}")
+    lines.append("anchors:")
     for kind, values in (
         ("path", scar.path_anchors),
         ("pattern", scar.pattern_anchors),

@@ -640,3 +640,15 @@ def test_title_roundtrips_through_to_text(title):
     s = Scar(title=title, type="fence", severity="high", confidence=0.9,
              status="active", path_anchors=["src/"])
     assert parse_scar_text(s.to_text()).title == title
+
+
+def test_promoted_from_parses_and_roundtrips():
+    """The candidate a scar was promoted from is its own field, read back
+    verbatim, absent (empty) on every scar promoted before it existed."""
+    from scar.model import Scar, parse_scar_text
+    s = Scar(title="t", path_anchors=["src/"], promoted_from="candidates/tried-x.md")
+    text = s.to_text()
+    assert "promoted_from: candidates/tried-x.md" in text
+    assert parse_scar_text(text).promoted_from == "candidates/tried-x.md"
+    assert "promoted_from" not in Scar(title="t", path_anchors=["src/"]).to_text()
+    assert parse_scar_text(VALID).promoted_from == ""

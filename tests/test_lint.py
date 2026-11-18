@@ -457,3 +457,12 @@ def test_touch_still_warns_as_unsupported_kind():
                         "  - path: payments/retry.py\n  - touch: a.py\n")
     assert any(f.level == "warning" and "touch" in f.message
                for f in lint_text(text))
+
+
+def test_candidate_carrying_promoted_from_is_a_warning():
+    """Only promote writes promoted_from; on a candidate it is a claim."""
+    cand = (GOOD.replace("status: active", "status: candidate")
+               .replace("authors: [mara]", "authors: [mara]\npromoted_from: candidates/x.md"))
+    assert any(f.level == "warning" and "promoted_from" in f.message for f in lint_text(cand))
+    active = GOOD.replace("authors: [mara]", "authors: [mara]\npromoted_from: candidates/x.md")
+    assert lint_text(active) == []
