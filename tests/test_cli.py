@@ -4912,3 +4912,81 @@ def test_bulk_promote_with_a_colliding_second_file_promotes_nothing(repo, capsys
     out = capsys.readouterr().out
     assert rc != 0 and "two.md" in out
     assert {p: p.read_bytes() for p in (repo / ".scars").rglob("*.md")} == before
+
+
+# --- #394: the candidate path may be typed any way ---
+
+def _promoted_from(repo):
+    done = sorted((repo / ".scars").glob("0*.md"))
+    assert len(done) == 1
+    line = [ln for ln in done[0].read_text().splitlines()
+            if ln.startswith("promoted_from:")]
+    return line[0].split(":", 1)[1].strip()
+
+
+@pytest.mark.parametrize("how", ["relative", "absolute", "bare", "dotted"])
+def test_promote_accepts_the_candidate_however_it_is_typed(repo, capsys, how):
+    init_scars(repo)
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    arg = {"relative": ".scars/candidates/tried-x.md", "absolute": str(cand),
+           "bare": "tried-x",
+           "dotted": "./.scars/../.scars/candidates/tried-x.md"}[how]
+    assert main(["promote", arg, "--reviewer", "k"]) == 0
+    assert not cand.exists()
+    assert _promoted_from(repo) == "candidates/tried-x.md"
+
+
+def test_promote_relative_path_from_a_subdirectory(repo, monkeypatch):
+    init_scars(repo)
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    sub = repo / "src" / "deep"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    assert main(["promote", "../../.scars/candidates/tried-x.md",
+                 "--reviewer", "k"]) == 0
+    assert _promoted_from(repo) == "candidates/tried-x.md"
+
+
+def test_promote_through_a_symlinked_repo_path(repo, tmp_path_factory):
+    init_scars(repo)
+    (repo / ".scars" / "candidates" / "tried-x.md").write_text(CANDIDATE)
+    link = tmp_path_factory.mktemp("links") / "alias"
+    link.symlink_to(repo, target_is_directory=True)
+    assert main(["promote", str(link / ".scars" / "candidates" / "tried-x.md"),
+                 "--reviewer", "k"]) == 0
+    assert _promoted_from(repo) == "candidates/tried-x.md"
+
+
+@pytest.mark.parametrize("where", ["repo_root", "elsewhere"])
+def test_promote_refuses_a_file_outside_scars_with_a_clear_message(
+        repo, capsys, tmp_path_factory, where):
+    init_scars(repo)
+    if where == "repo_root":
+        stray = repo / "stray.md"
+        arg = "stray.md"
+    else:
+        stray = tmp_path_factory.mktemp("else") / "stray.md"
+        arg = str(stray)
+    stray.write_text(CANDIDATE)
+    assert main(["promote", arg, "--reviewer", "k"]) != 0
+    out = capsys.readouterr().out
+    assert "stray.md" in out and "not inside" in out
+    assert "subpath" not in out and "Traceback" not in out
+    assert stray.read_text() == CANDIDATE
+    assert not list((repo / ".scars").glob("0*.md"))
+
+
+def test_signed_bytes_do_not_depend_on_how_the_path_was_typed(repo):
+    from scar.record import promoted_record
+    from scar.store import ScarStore
+    init_scars(repo)
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    records = {
+        promoted_record(store.prepare_promotion(Path(arg), "k").scar)
+        for arg in (".scars/candidates/tried-x.md", str(cand),
+                    "./.scars/../.scars/candidates/tried-x.md")}
+    assert len(records) == 1

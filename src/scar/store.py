@@ -337,6 +337,7 @@ class ScarStore:
         reason recorded as an evidence note (as transition() does for numbered
         scars). It stays in candidates/ so its history sits next to its
         siblings; the table makes archived terminal, so promote() refuses it."""
+        candidate = self.candidate_path(candidate)
         scar = self._parse_candidate_file(candidate)
         _check_transition(scar.status, "archived")
         scar.status = "archived"
@@ -344,13 +345,24 @@ class ScarStore:
         candidate.write_text(scar.to_text(), encoding="utf-8")
         return candidate
 
-    def _parse_candidate_file(self, path: Path) -> Scar:
+    def candidate_path(self, path: Path) -> Path:
+        """The one owner of "is this file inside .scars/candidates/" (#394).
+        Returns *path* resolved (cwd-relative, dotted and symlinked spellings
+        all collapse to one absolute path), or raises ValueError. Every
+        lifecycle step that takes a candidate goes through here, so a path
+        typed any way gets one answer and the same recorded form."""
         try:
-            inside = path.resolve().is_relative_to(self.candidates_dir.resolve())
+            resolved = Path(path).resolve()
+            inside = resolved.is_relative_to(self.candidates_dir.resolve())
         except OSError:
             inside = False
         if not inside:
-            raise ValueError(f"{path.name}: not inside {self.candidates_dir.name}/")
+            raise ValueError(
+                f"{Path(path).name}: not inside {self.candidates_dir.name}/")
+        return resolved
+
+    def _parse_candidate_file(self, path: Path) -> Scar:
+        path = self.candidate_path(path)
         try:
             return parse_scar_text(path.read_text(encoding="utf-8"))
         except (ParseError, OSError) as exc:
@@ -466,6 +478,7 @@ class ScarStore:
         # #377: gate on the lifecycle table BEFORE anything is allocated or
         # written, so a refusal changes no file and burns no id.
         self.check_promotable(candidate)
+        candidate = self.candidate_path(candidate)
         text = candidate.read_text(encoding="utf-8")
         scar = parse_scar_text(text)
         scar.id = self.next_id()
@@ -484,9 +497,10 @@ class ScarStore:
         # never a real vouch either.
         scar.promoted_by_source = reviewer_source if reviewer else None
         # Always overwritten, like promoted_by: only promote knows the real
-        # source. relative_to raises for a file outside .scars/, before any
-        # write, rather than recording a guess.
-        scar.promoted_from = candidate.relative_to(self.scars_dir).as_posix()
+        # source. candidate is already resolved and known to sit in
+        # candidates/, so this is the same string however the path was typed.
+        scar.promoted_from = candidate.relative_to(
+            self.scars_dir.resolve()).as_posix()
         # Like promoted_by, cleared: a candidate cannot have been signed, so an
         # act or receipt it carries is a claim nobody made (an agent can write
         # one). Only the signing step sets them, on the prepared scar.
