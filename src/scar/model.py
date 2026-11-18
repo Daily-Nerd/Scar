@@ -38,6 +38,9 @@ class Scar:
     confidence: float = 0.5
     created: str = ""
     authors: list[str] = field(default_factory=list)
+    # Names of one-line list fields that were present but not well-formed
+    # (filled by the parser, never written by to_text). Lint reports them.
+    unreadable_fields: list[str] = field(default_factory=list)
     # #287: who VOUCHED, distinct from who drafted. Written only by promote,
     # which overwrites whatever a candidate carried. Empty on every scar
     # promoted before the field existed, and never inferred from authors:
@@ -190,6 +193,56 @@ def _scalar(front: str, name: str, default: str = "", strip_comment: bool = True
     return _unquote(_field(front, name, default, strip_comment))
 
 
+_FLOW_ITEM_RE = re.compile(r"""\s*(?:"(.*?)"|'(.*?)'|([^,\]"'\[][^,\]]*?))\s*(?=[,\]])""")
+
+
+def _split_flow_list(raw: str) -> list[str] | None:
+    """Items of a one-line YAML flow list, or None when it is not well formed.
+    Commas inside a quoted item are data, a quoted item closes at the first
+    quote followed by ',' or ']', and a "  # comment" after the closing ']'
+    is dropped. Nothing is guessed: any other shape is None."""
+    s = raw.strip()
+    if not s.startswith("["):
+        return None
+    items: list[str] = []
+    i = 1
+    while True:
+        while s[i:i + 1].isspace():
+            i += 1
+        if s[i:i + 1] == "]":
+            break
+        m = _FLOW_ITEM_RE.match(s, i)
+        if not m:
+            return None
+        dq, sq, bare = m.groups()
+        item = dq if dq is not None else sq if sq is not None else bare.strip()
+        if bare is not None and (not item or re.search(r"\s#", item)):
+            return None
+        items.append(item)
+        i = m.end()
+        if s[i] == ",":
+            i += 1
+    tail = s[i + 1:]
+    if tail and not _TRAILING_COMMENT_RE.fullmatch(tail):
+        return None
+    return items
+
+
+def _flow_list(front: str, name: str, unreadable: list[str]) -> list[str]:
+    """The ONE read path for a one-line flow-list field (the sibling of
+    _scalar). Absent is []. Present but malformed is [] too, and the name is
+    appended to `unreadable` so lint can say so: never a best guess, never a
+    ParseError (that would stop an otherwise good scar from firing)."""
+    raw = _field(front, name, strip_comment=False)
+    if not raw:
+        return []
+    items = _split_flow_list(raw)
+    if items is None:
+        unreadable.append(name)
+        return []
+    return items
+
+
 def _int_or_none(raw: str) -> int | None:
     """A non-negative int, or None when absent/unparseable. An unparseable
     value must NOT become 0: 0 means "never escalate", so coercing garbage to
@@ -220,9 +273,8 @@ def parse_scar_text(text: str) -> Scar:
     except ValueError:
         scar_id = None
 
-    authors_raw = _field(front, "authors")
-    authors = [_unquote(a.strip())
-               for a in authors_raw.strip("[]").split(",") if a.strip()] if authors_raw else []
+    unreadable: list[str] = []
+    authors = _flow_list(front, "authors", unreadable)
 
     # Evidence values get the same inline-comment strip as scalar fields (#69,
     # #144): the template documents evidence lines WITH trailing comments, and
@@ -241,6 +293,7 @@ def parse_scar_text(text: str) -> Scar:
         confidence=confidence,
         created=_scalar(front, "created"),
         authors=authors,
+        unreadable_fields=unreadable,
         promoted_by=_scalar(front, "promoted_by"),
         promoted_by_source=_scalar(front, "promoted_by_source") or None,
         promotion_act=_scalar(front, "promotion_act"),

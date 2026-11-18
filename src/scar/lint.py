@@ -346,6 +346,10 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
                     "error", f"pathological revives_if /{scar.revives_if}/: nested "
                     "quantifier risks catastrophic backtracking (ReDoS) — simplify "
                     "the regex"))
+    for name in scar.unreadable_fields:
+        findings.append(Finding(
+            "error", f"{name} is not a well-formed flow list (expected "
+            f'[\"a\", \"b\"] on one line): it was read as empty'))
     if scar.status == "candidate":
         findings.extend(_candidate_author_findings(scar.authors))
     # Author identity drift (#182): one handle, two casings = one human

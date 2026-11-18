@@ -504,3 +504,15 @@ def test_unedited_template_copy_as_candidate_fails_lint():
 def test_tool_identities_in_seed_stay_clean():
     from scar.store import EXAMPLE_SEED
     assert not any(f.level == "error" for f in lint_text(EXAMPLE_SEED))
+
+
+def test_malformed_authors_list_is_an_error():
+    findings = lint_text(_authors_scar('"a" x'))
+    assert any(f.level == "error" and "authors" in f.message
+               and "flow list" in f.message for f in findings)
+
+
+def test_authors_with_trailing_comment_is_clean():
+    findings = lint_text(
+        _authors_scar('"codex"').replace('["codex"]', '["codex"]  # who drafted it'))
+    assert not any("authors" in f.message for f in findings)

@@ -671,3 +671,46 @@ def test_a_scar_without_a_receipt_writes_no_receipt_key():
                            "status: active\n---\n\nBody.\n")
     assert scar.promotion_receipt == ""
     assert "promotion_receipt" not in scar.to_text()
+
+
+def _with_authors(raw: str) -> Scar:
+    return parse_scar_text(
+        f"---\ntype: fence\ntitle: t\nauthors: {raw}\nanchors:\n  - path: a/\nstatus: active\n---\n\nb\n")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ('["codex"]', ["codex"]),
+    ('["codex"]   # who drafted it, not the reviewer', ["codex"]),
+    ('["a", "b"]  # two of them', ["a", "b"]),
+    ('["a, b", "c"]', ["a, b", "c"]),
+    ('["a # b"]  # real comment', ["a # b"]),
+    ("['codex']", ["codex"]),
+    ("['codex', 'x']  # c", ["codex", "x"]),
+    ("[codex, mara]", ["codex", "mara"]),
+    ("[codex, mara]  # c", ["codex", "mara"]),
+    ('["a",]', ["a"]),
+    ("[]", []),
+    ("[]  # none yet", []),
+])
+def test_authors_flow_list_forms(raw, expected):
+    s = _with_authors(raw)
+    assert s.authors == expected
+    assert s.unreadable_fields == []
+
+
+@pytest.mark.parametrize("raw", [
+    '["codex"', '"codex"', "codex", '["a" x]', "[a,,b]", '["a"] junk',
+    "[a, b # c]", '["unterminated]',
+])
+def test_malformed_authors_is_flagged_not_guessed(raw):
+    s = _with_authors(raw)
+    assert s.authors == []
+    assert s.unreadable_fields == ["authors"]
+
+
+@pytest.mark.parametrize("authors", [
+    ["codex"], ["a, b", "c"], ["has # hash"], ["x'y"], ["it's", "z"],
+])
+def test_authors_round_trip(authors):
+    s = Scar(title="t", path_anchors=["src/"], authors=authors)
+    assert parse_scar_text(s.to_text()).authors == authors
