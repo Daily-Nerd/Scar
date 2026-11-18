@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.29.0](https://github.com/Daily-Nerd/Scar/compare/v0.28.0...v0.29.0) (2026-11-18)
+
+
+### Features
+
+* **lint:** --verify-promotion checks each active scar's promotion act ([#387](https://github.com/Daily-Nerd/Scar/issues/387)) ([ce1f3ba](https://github.com/Daily-Nerd/Scar/commit/ce1f3ba46c5f9ad15428590395b23f4a40457555))
+* **promote:** record the source candidate as promoted_from ([#390](https://github.com/Daily-Nerd/Scar/issues/390)) ([c1e337e](https://github.com/Daily-Nerd/Scar/commit/c1e337eefc01a0e9be8ed92a36b6c67b13bf70e5))
+* **promote:** sign each promotion with the presence signer when the config names an org ([#393](https://github.com/Daily-Nerd/Scar/issues/393)) ([92ebd72](https://github.com/Daily-Nerd/Scar/commit/92ebd72c7368eeff838e3b86cf6fbf7d623ecc20))
+* **record:** one function builds the bytes of a promoted scar ([#384](https://github.com/Daily-Nerd/Scar/issues/384)) ([e73caf0](https://github.com/Daily-Nerd/Scar/commit/e73caf0636e83e026b121c329da5274b788ea2d4)), closes [#382](https://github.com/Daily-Nerd/Scar/issues/382)
+
+
+### Bug Fixes
+
+* **authors:** record the drafting runtime, refuse placeholders and role words ([#391](https://github.com/Daily-Nerd/Scar/issues/391)) ([55dae17](https://github.com/Daily-Nerd/Scar/commit/55dae17ee987cc28f364d48fbb9a0b29354a9cbf))
+* **model:** every frontmatter scalar drops its YAML quotes ([#385](https://github.com/Daily-Nerd/Scar/issues/385)) ([5fc62fc](https://github.com/Daily-Nerd/Scar/commit/5fc62fc7fcc65baef5c0e251e896574d744ebfa5))
+* **promote:** accept the candidate path however it is typed ([#396](https://github.com/Daily-Nerd/Scar/issues/396)) ([474bcf3](https://github.com/Daily-Nerd/Scar/commit/474bcf3c15a81c37a548b90eeefc065894fd4a82)), closes [#394](https://github.com/Daily-Nerd/Scar/issues/394)
+* **store:** one lifecycle table gates promote and transition ([#378](https://github.com/Daily-Nerd/Scar/issues/378)) ([8773a6b](https://github.com/Daily-Nerd/Scar/commit/8773a6b85706815281f2bd5f7a3e19507c2dc304)), closes [#377](https://github.com/Daily-Nerd/Scar/issues/377)
+
 ## [0.28.0](https://github.com/Daily-Nerd/Scar/compare/v0.27.3...v0.28.0) (2026-11-07)
 
 
