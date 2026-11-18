@@ -616,3 +616,17 @@ def test_commit_promotion_never_overwrites_a_file_that_appeared_after_prepare(re
         store.commit_promotion(prepared)
     assert prepared.destination.read_text(encoding="utf-8") == "precious"
     assert cand.read_text(encoding="utf-8") == CANDIDATE
+
+
+def test_promotion_overwrites_an_act_and_receipt_the_candidate_carried(repo):
+    # Like promoted_by: a candidate cannot have been signed, so an act it
+    # carries is a claim nobody made. Only the signing step may set these.
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace(
+        "status: candidate", "promotion_act: forged.jws.here\npromotion_receipt: uEiForged\nstatus: candidate"))
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    assert prepared.scar.promotion_act == ""
+    assert prepared.scar.promotion_receipt == ""
+    text = store.commit_promotion(prepared).read_text(encoding="utf-8")
+    assert "promotion_act" not in text and "promotion_receipt" not in text

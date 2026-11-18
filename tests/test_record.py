@@ -50,6 +50,8 @@ def test_crlf_and_lf_identical():
     ("promoted_by: kibukx", "promoted_by: someone"),
     ("status: active", "status: active\nviolation: foo"),
     ("created: 2026-11-01", "created: 2020-01-01"),
+    ("status: active", "status: active\npromotion_act: a.b.c"),
+    ("status: active", "status: active\npromotion_receipt: uEiAbc"),
 ])
 def test_lifecycle_changes_keep_bytes(old, new):
     assert old in BASE

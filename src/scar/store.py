@@ -478,6 +478,11 @@ class ScarStore:
         # source. relative_to raises for a file outside .scars/, before any
         # write, rather than recording a guess.
         scar.promoted_from = candidate.relative_to(self.scars_dir).as_posix()
+        # Like promoted_by, cleared: a candidate cannot have been signed, so an
+        # act or receipt it carries is a claim nobody made (an agent can write
+        # one). Only the signing step sets them, on the prepared scar.
+        scar.promotion_act = ""
+        scar.promotion_receipt = ""
         return PreparedPromotion(
             candidate=candidate, scar=scar,
             destination=self._destination(candidate, scar, scar.id))
