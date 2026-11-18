@@ -106,6 +106,39 @@ jobs:
       - name: ruff check
         run: uv run ruff check src/scar tests
 
+  # The signed promotion against the real external checker (#397). Every other
+  # presence test runs against a fake program. The tools come from one pinned
+  # release and one pinned commit (hashes in tests/conformance_support.py), are
+  # checked by tests/conformance_fetch.py before use, and are never built here.
+  # CONFORMANCE_REQUIRED=1 (set by that script) turns "tools missing" into a
+  # test failure, so this job cannot go green by skipping. Upgrading the pinned
+  # tag is a deliberate change of the pins, never automatic. No secrets.
+  conformance:
+    name: conformance round trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The checker needs Python 3.11 or newer; this job is independent of the
+      # 3.10 floor the matrix measures.
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Fetch and verify the pinned tools
+        run: uv run python tests/conformance_fetch.py "$RUNNER_TEMP/conformance-tools"
+
+      - name: Run the round trip
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-home"
+          HOME="$RUNNER_TEMP/fake-home" uv run pytest tests/test_conformance_round_trip.py -q -rs
+
   # Aggregator. Branch protection requires the context "Tests + scar lint", so
   # that name must survive: renaming it would leave every PR waiting on a check
   # that no longer exists, and giving both matrix legs the same name would let a
@@ -114,7 +147,7 @@ jobs:
   # required check can be treated as satisfied.
   test:
     name: Tests + scar lint
-    needs: [matrix-tests, lint]
+    needs: [matrix-tests, lint, conformance]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -122,5 +155,6 @@ jobs:
         run: |
           tests="${{ needs.matrix-tests.result }}"
           lint="${{ needs.lint.result }}"
-          echo "matrix-tests: $tests / lint: $lint"
-          [ "$tests" = "success" ] && [ "$lint" = "success" ] || exit 1
+          conformance="${{ needs.conformance.result }}"
+          echo "matrix-tests: $tests / lint: $lint / conformance: $conformance"
+          [ "$tests" = "success" ] && [ "$lint" = "success" ] && [ "$conformance" = "success" ] || exit 1
