@@ -12,6 +12,7 @@ the checker said.
 """
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 
@@ -66,10 +67,10 @@ def _canonical(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _run(binary: str, argv: str, payload: dict, timeout: float, who: str):
+def _run(binary: str, argv: str, payload: dict | None, timeout: float, who: str):
     try:
         proc = subprocess.run(
-            [binary, argv], input=_canonical(payload),
+            [binary, argv], input="" if payload is None else _canonical(payload),
             capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise Unavailable(f"{who} did not answer in {timeout:g}s") from None
@@ -118,3 +119,86 @@ def head(org: str) -> dict:
             or not isinstance(value["id"], str) or value["kind"] != "chain"):
         raise Unavailable("the checker gave an ok head of an unknown shape")
     return value
+
+
+def enrolled(org: str, device_kid: str) -> None:
+    """Refuse, with the checker's reason, unless this machine holds a valid pin
+    for the org and `device_kid` is an active accepted device of it. Run before
+    any touch so a removed key is refused at the terminal and not after a
+    prompt. It does not prove a person is present (the signature does)."""
+    out = _checker("enrolled", {"device_kid": device_kid, "org": org})
+    if out.get("enrolled") is True:
+        return
+    reason = out.get("reason")
+    if out.get("enrolled") is False and isinstance(reason, str) and reason:
+        raise Refused(reason)
+    raise Unavailable("the checker gave an answer that is neither enrolled nor refused")
+
+
+def decision_input(org: str, subject: str, record: bytes, head: dict) -> dict:
+    """The one builder of the signer's input for a promotion: the draft and the
+    record bytes as the attachment the person will see. The signer fills the
+    nonce, the time, the performer and the key id; the head is the checker's,
+    copied unchanged."""
+    return {
+        "attachments": {"decision_b64": base64.b64encode(record).decode("ascii")},
+        "draft": {
+            "body": {"action": ACTION, "consumer": CONSUMER, "subject": subject},
+            "expires_in_s": EXPIRES_IN_S,
+            "head": head,
+            "method": METHOD,
+            "org": org,
+        },
+    }
+
+
+def _signer(command: str, payload: dict | None, timeout: float) -> dict:
+    """One signer call. Exit 0 is the result. Exit 1 is the person declining.
+    Every other exit (2 input rejected, 3 no key, 4 cannot ask, 5 internal)
+    writes {"error": code} and is a Refused with that code."""
+    proc = _run(SIGNER, command, payload, timeout, "the signer")
+    if proc.returncode == 1:
+        raise Cancelled("user_cancel")
+    if proc.returncode != 0:
+        try:
+            out = _last_json(proc, "the signer")
+        except Unavailable:
+            raise Unavailable(f"the signer exited {proc.returncode} with no error code") from None
+        code = out.get("error")
+        if isinstance(code, str) and code:
+            raise Refused(code)
+        raise Unavailable(f"the signer exited {proc.returncode} with no error code")
+    out = _last_json(proc, "the signer")
+    if "error" in out:
+        raise Unavailable(f"the signer exited 0 but said: {out['error']}")
+    return out
+
+
+def local_kid() -> str:
+    """The key id of this machine's signing key. `pubkey` reads a public value
+    and shows no prompt."""
+    kid = _signer("pubkey", None, CHECKER_TIMEOUT_S).get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise Unavailable("the signer gave no key id")
+    return kid
+
+
+def render(request: dict) -> dict:
+    """Ask the signer to render the draft without signing it: it refuses a
+    record the person could not see in full (over 2048 bytes or 32 lines) and
+    shows no prompt. Its words come back verbatim."""
+    out = _signer("render", request, CHECKER_TIMEOUT_S)
+    if not isinstance(out.get("first_line"), str) or not isinstance(out.get("text"), str):
+        raise Unavailable("the signer gave a render of an unknown shape")
+    return {"first_line": out["first_line"], "text": out["text"]}
+
+
+def sign(request: dict) -> tuple[str, str]:
+    """One signature, one touch. Returns (jws, receipt_id). Raises Cancelled
+    when the person declines and Refused/Unavailable for everything else; no
+    signature exists unless this returns."""
+    out = _signer("sign", request, SIGNER_TIMEOUT_S)
+    jws, receipt = out.get("jws"), out.get("receipt_id")
+    if (not isinstance(jws, str) or not jws or not isinstance(receipt, str) or not receipt):
+        raise Unavailable("the signer gave a signature of an unknown shape")
+    return jws, receipt
