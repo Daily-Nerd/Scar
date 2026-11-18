@@ -652,3 +652,22 @@ def test_promoted_from_parses_and_roundtrips():
     assert parse_scar_text(text).promoted_from == "candidates/tried-x.md"
     assert "promoted_from" not in Scar(title="t", path_anchors=["src/"]).to_text()
     assert parse_scar_text(VALID).promoted_from == ""
+
+
+def test_promotion_receipt_round_trips_next_to_the_act():
+    text = ("---\nid: 3\ntype: fence\ntitle: T\nseverity: high\nconfidence: 0.7\n"
+            "promoted_by: kibukx\npromotion_act: a.b.c\npromotion_receipt: uEiAbc123\n"
+            "anchors:\n  - path: src/x.py\nstatus: active\n---\n\nBody.\n")
+    scar = parse_scar_text(text)
+    assert scar.promotion_receipt == "uEiAbc123"
+    out = scar.to_text()
+    assert out.index("promotion_act: a.b.c") < out.index("promotion_receipt: uEiAbc123")
+    assert parse_scar_text(out).promotion_receipt == "uEiAbc123"
+
+
+def test_a_scar_without_a_receipt_writes_no_receipt_key():
+    scar = parse_scar_text("---\nid: 3\ntype: fence\ntitle: T\nseverity: high\n"
+                           "confidence: 0.7\nanchors:\n  - path: src/x.py\n"
+                           "status: active\n---\n\nBody.\n")
+    assert scar.promotion_receipt == ""
+    assert "promotion_receipt" not in scar.to_text()

@@ -183,15 +183,29 @@ scar lint                                     # format, dead tripwires, overdue 
 
 Advisory by default everywhere; CI opts into strictness explicitly.
 
-### Verifying promotions
+### Signing promotions
 
-`promoted_by` is plain text, so anyone can write a name into it. `scar lint --verify-promotion` checks the `promotion_act` of each scar that still injects (active or challenged) (a compact JWS stored in the scar's frontmatter) with the presence verifier and prints one state per scar. Orphaned and archived scars are not listed. Without the flag, `scar lint` behaves exactly as before.
-
-The verifier is run from one fixed path, `/Library/Application Support/handsal/bin/handsal-check`, never through `PATH`, with no environment variable or flag to point it elsewhere. Scar sends it the promoted record bytes (rebuilt from the scar, never read from the act), the repository subject (`<id>-<first 16 hex of the root commit>`) and the organization id. The organization id comes from `.scars/config.json`, a committed JSON file with one key:
+`promoted_by` is plain text, so anyone can write a name into it. When `.scars/config.json` names an org, `scar promote` asks a person to prove they are present for every scar it promotes, and refuses to write the scar without that proof. The config is a committed JSON file:
 
 ```json
-{"org": "your-org-id"}
+{"org": "your-org-id", "signed_from": 12}
 ```
+
+`signed_from` is the first scar id whose promotion must be signed. Scars with a lower id predate the org and need no act. Set it to the next free id when you add the org: `scar lint` and `scar promote` both say what that number is if it is missing, and both refuse a value past the next free id, because the scars between would then need no proof.
+
+For each scar, promote asks the checker for the current chain head, has the presence signer sign the promoted record (one touch per scar), runs the checker's first-acceptance check once, and only then writes the active file with two new fields: `promotion_act` (the signed act) and `promotion_receipt` (the receipt id the checker returned). The candidate is removed last. Both programs are run from fixed absolute paths, `/Library/Application Support/handsal/bin/handsal-sign` and `/Library/Application Support/handsal/bin/handsal-check`, never through `PATH`, with no environment variable or flag to move them. There is no flag to skip signing, and no org means no signing: promote behaves as before and prints `not signed`.
+
+Before the first prompt, promote checks that both programs exist, that the repository can name its root commit, that the checker has a head, that this machine's key is still enrolled, and that the signer can show every record in full (a record over 2048 bytes or 32 lines is refused). A batch is a guided queue: each scar is signed, accepted and written in turn. A cancel or a failure at scar k leaves scars 1 to k-1 promoted and the rest as candidates, prints `promoted k-1 of n`, and exits 1.
+
+If the checker refuses an act after the person has touched the key, nothing is written. The candidate stays byte for byte, the id is not used up, and the output says the touch was spent and gives the checker's reason as it came. The window an act stays acceptable is fixed at one hour in the code. An organization that allows less answers `validity_too_long` there; the fix is a deliberate change to that constant, not a setting. The receipts of every scar, archived ones included, are passed to the checker, so one act cannot be reused for a second scar.
+
+A config that exists but cannot be read is an error, never "no org". `scar lint` also refuses the two ways of turning signing off by editing files, with no verifier needed: a scar that carries a `promotion_act` while the config names no org, and a scar at or after `signed_from` that carries no act. After `scar reanchor --apply` or a rename fix changes a scar's anchors, its act no longer matches the record. Re-signing is not part of promote yet.
+
+### Verifying promotions
+
+`scar lint --verify-promotion` checks the `promotion_act` of each scar that still injects (active or challenged) (a compact JWS stored in the scar's frontmatter) with the presence verifier and prints one state per scar. Orphaned and archived scars are not listed. Without the flag, `scar lint` behaves exactly as before.
+
+The verifier is run from one fixed path, `/Library/Application Support/handsal/bin/handsal-check`, never through `PATH`, with no environment variable or flag to point it elsewhere. Scar sends it the promoted record bytes (rebuilt from the scar, never read from the act), the repository subject (`<id>-<first 16 hex of the root commit>`) and the organization id. The organization id is the `org` of `.scars/config.json` (see Signing promotions above). The check reads no clock, so an act that has expired since it was signed still verifies: expiry is checked once, when promote runs.
 
 | State | Meaning |
 |---|---|

@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from scar import verify
+from scar import presence, verify
 from scar.cli import main
 from scar.model import parse_scar_text
 from scar.record import promoted_record, promotion_subject
@@ -41,7 +41,7 @@ def repo(tmp_path, monkeypatch):
     git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit",
         "-q", "--allow-empty", "-m", "root")
     init_scars(tmp_path)
-    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": "org-1"}))
+    (tmp_path / ".scars" / "config.json").write_text(json.dumps({"org": "org-1", "signed_from": 1}))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -59,7 +59,7 @@ def fake(tmp_path_factory, monkeypatch):
     out = d / "stdin.json"
     path = d / "handsal-check"
 
-    def install(reply='{"class":"x","not_proven":false,"reason":"","receipt_id":"r","rechecked":true}',
+    def install(reply='{"class":"x","not_proven":["expiry","freshness","order_of_arrival","replay","revocation_after_head"],"reason":"","receipt_id":"r","rechecked":true}',
                 code=0, sleep=0):
         path.write_text(
             f"#!{sys.executable}\nimport sys, time\n"
@@ -67,7 +67,7 @@ def fake(tmp_path_factory, monkeypatch):
             f"open({str(out)!r} + '.argv', 'w').write(' '.join(sys.argv[1:]))\n"
             f"time.sleep({sleep})\nprint({reply!r})\nsys.exit({code})\n")
         path.chmod(0o755)
-        monkeypatch.setattr(verify, "VERIFIER", str(path))
+        monkeypatch.setattr(presence, "CHECKER", str(path))
         return out
     return install
 
@@ -107,7 +107,7 @@ def test_rechecked_true_is_verified(repo, fake):
 
 
 def test_rechecked_false_shows_reason_verbatim(repo, fake):
-    fake('{"class":"c","not_proven":true,"reason":"weird_reason_code","receipt_id":"","rechecked":false}')
+    fake('{"class":"c","not_proven":["expiry","freshness","order_of_arrival","replay","revocation_after_head"],"reason":"weird_reason_code","receipt_id":"","rechecked":false}')
     write_scar(repo)
     assert states(repo) == ["not proven: weird_reason_code"]
 
@@ -133,13 +133,14 @@ def test_timeout_is_verifier_failed(repo, fake, monkeypatch):
 
 
 def test_missing_verifier(repo, monkeypatch, tmp_path):
-    monkeypatch.setattr(verify, "VERIFIER", str(tmp_path / "nope"))
+    monkeypatch.setattr(presence, "CHECKER", str(tmp_path / "nope"))
     write_scar(repo)
     assert states(repo) == ["not verified: verifier not installed"]
 
 
 def test_verifier_default_is_the_fixed_path():
-    assert verify.VERIFIER == "/Library/Application Support/handsal/bin/handsal-check"
+    assert not hasattr(verify, "VERIFIER")  # one owner: presence.CHECKER
+    assert presence.CHECKER == "/Library/Application Support/handsal/bin/handsal-check"
 
 
 @pytest.mark.parametrize("content", [None, "{bad", "[]", "{}", '{"org": ""}', '{"org": 5}'])
@@ -240,7 +241,7 @@ def test_default_lint_unchanged(repo, fake, capsys):
 
 
 def test_flag_reports_state_and_never_changes_exit(repo, fake, capsys):
-    fake('{"class":"c","not_proven":true,"reason":"nope","receipt_id":"","rechecked":false}')
+    fake('{"class":"c","not_proven":["expiry","freshness","order_of_arrival","replay","revocation_after_head"],"reason":"nope","receipt_id":"","rechecked":false}')
     write_scar(repo)
     assert main(["lint"]) == 0
     capsys.readouterr()

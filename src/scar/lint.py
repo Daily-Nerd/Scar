@@ -9,7 +9,8 @@ import re
 from dataclasses import dataclass
 
 from . import clock, symbols
-from .model import SEVERITIES, STATUSES, TYPES, ParseError, is_valid_url, parse_scar_text
+from .config import Config, signing_problem
+from .model import SEVERITIES, STATUSES, TYPES, ParseError, Scar, is_valid_url, parse_scar_text
 
 
 # A valid regex can still be a ReDoS weapon. re.compile accepts it (the syntax
@@ -185,6 +186,40 @@ def _candidate_author_findings(authors: list[str]) -> list[Finding]:
                 "Use the drafting runtime (e.g. claude-code); the human "
                 "reviewer goes in promoted_by, written by `scar promote`"))
     return findings
+
+
+CONFIG_REL = ".scars/config.json"
+
+
+def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
+                       next_id: int) -> list[tuple[str, Finding]]:
+    """The downgrade guard (#392): structural, so CI runs it with no verifier.
+    `scars` are the numbered scar files (candidates excluded) as (relative
+    path, scar). Signing is switched off by editing files, not by forging an
+    act, so lint refuses both ways of doing it:
+    - an act with no org in the config (the org was deleted);
+    - an org, and a scar at or after signed_from with no act (the act was
+      dropped, or the scar was promoted around signing).
+    It reads no signature: whether an act is genuine is the checker's job."""
+    out: list[tuple[str, Finding]] = []
+    if cfg.org is None:
+        for rel, scar in scars:
+            if scar.promotion_act:
+                out.append((rel, Finding(
+                    "error", "carries promotion_act but .scars/config.json names no org; "
+                    "signing was switched off, or the org was removed to skip it")))
+        return out
+    problem = signing_problem(cfg, next_id)
+    if problem:
+        out.append((CONFIG_REL, Finding("error", problem)))
+    if cfg.signed_from is not None:
+        for rel, scar in scars:
+            if (scar.status != "candidate" and scar.id is not None
+                    and scar.id >= cfg.signed_from and not scar.promotion_act):
+                out.append((rel, Finding(
+                    "error", f"scar {scar.id} was promoted under the org "
+                    f"(signed_from is {cfg.signed_from}) but carries no promotion_act")))
+    return out
 
 
 def lint_text(text: str, today: str | None = None) -> list[Finding]:

@@ -49,10 +49,15 @@ class Scar:
     # promoted_by at all), never defaulted, the same missing-key-is-not-a-
     # value contract as review_after_firings.
     promoted_by_source: str | None = None
-    # #386: the compact JWS a person's promotion produced. Read-only for now
-    # (a later slice writes it at promotion). Never part of promoted_record:
-    # storing the act must not change the bytes it signed.
+    # #386: the compact JWS a person's promotion produced. Written only by the
+    # signed promote (#392). Never part of promoted_record: storing the act must
+    # not change the bytes it signed.
     promotion_act: str = ""
+    # #392: the receipt id the checker returned when it first accepted the act.
+    # The only ingestion data kept: a stored valid/reason would be constant and
+    # forgeable. Every scar's receipt feeds the checker's `seen` list, so one
+    # act cannot be reused for another scar. Never part of promoted_record.
+    promotion_receipt: str = ""
     # The candidate this scar was promoted from, as a path relative to
     # .scars/ ("candidates/foo.md"). Written only by promote, which owns the
     # slug rule, so no reader re-derives it. Empty on scars promoted earlier.
@@ -97,6 +102,8 @@ class Scar:
             lines.append(f"promoted_from: {self.promoted_from}")
         if self.promotion_act:
             lines.append(f"promotion_act: {self.promotion_act}")
+        if self.promotion_receipt:
+            lines.append(f"promotion_receipt: {self.promotion_receipt}")
         lines.append("anchors:")
         lines += [f"  - path: {p}" for p in self.path_anchors]
         lines += [f"  - pattern: {_quote(p)}" for p in self.pattern_anchors]
@@ -237,6 +244,7 @@ def parse_scar_text(text: str) -> Scar:
         promoted_by=_scalar(front, "promoted_by"),
         promoted_by_source=_scalar(front, "promoted_by_source") or None,
         promotion_act=_scalar(front, "promotion_act"),
+        promotion_receipt=_scalar(front, "promotion_receipt"),
         promoted_from=_scalar(front, "promoted_from"),
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],

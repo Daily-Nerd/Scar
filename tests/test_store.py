@@ -553,3 +553,109 @@ def test_promote_overwrites_a_pre_seeded_promoted_from(repo):
     text = store.promote(cand, reviewer="mara").read_text()
     assert "promoted_from: candidates/tried-x.md" in text
     assert "other.md" not in text
+
+
+# #392: promote is prepare (no I/O) then commit (exclusive create, then unlink),
+# so a signing step can sit between the two without a half-promoted state.
+
+def test_prepare_promotion_touches_nothing_and_uses_no_id(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    before, next_id = _snapshot(repo), store.next_id()
+    prepared = store.prepare_promotion(cand, reviewer="kibukx", reviewer_source="explicit")
+    assert _snapshot(repo) == before
+    assert store.next_id() == next_id
+    assert prepared.scar.id == next_id
+    assert prepared.scar.status == "active"
+    assert prepared.scar.promoted_by == "kibukx"
+    assert prepared.scar.promoted_from == "candidates/tried-x.md"
+    assert prepared.destination.name == "0001-tried-x.deadend.md"
+    assert not prepared.destination.exists()
+
+
+def test_prepare_promotion_refuses_what_promote_refuses(repo):
+    stray = repo / ".scars" / "stray.md"
+    stray.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    before = _snapshot(repo)
+    with pytest.raises(ValueError, match="stray.md"):
+        store.prepare_promotion(stray, reviewer="k")
+    assert _snapshot(repo) == before
+
+
+def test_commit_promotion_writes_the_prepared_scar_and_removes_the_candidate(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    path = store.commit_promotion(prepared)
+    assert path == prepared.destination
+    assert path.read_text(encoding="utf-8") == prepared.scar.to_text()
+    assert not cand.exists()
+
+
+def test_promote_is_prepare_then_commit_byte_for_byte(repo):
+    text = CANDIDATE
+    a = repo / ".scars" / "candidates" / "tried-x.md"
+    a.write_text(text)
+    store = ScarStore.discover(repo)
+    expected = store.prepare_promotion(a, reviewer="kibukx", reviewer_source="explicit")
+    expected_bytes = expected.scar.to_text().encode("utf-8")
+    path = store.promote(a, reviewer="kibukx", reviewer_source="explicit")
+    assert path.read_bytes() == expected_bytes
+
+
+def test_commit_promotion_never_overwrites_a_file_that_appeared_after_prepare(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    prepared.destination.write_text("precious", encoding="utf-8")
+    with pytest.raises(ValueError, match="exists"):
+        store.commit_promotion(prepared)
+    assert prepared.destination.read_text(encoding="utf-8") == "precious"
+    assert cand.read_text(encoding="utf-8") == CANDIDATE
+
+
+def test_promotion_overwrites_an_act_and_receipt_the_candidate_carried(repo):
+    # Like promoted_by: a candidate cannot have been signed, so an act it
+    # carries is a claim nobody made. Only the signing step may set these.
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace(
+        "status: candidate", "promotion_act: forged.jws.here\npromotion_receipt: uEiForged\nstatus: candidate"))
+    store = ScarStore.discover(repo)
+    prepared = store.prepare_promotion(cand, reviewer="kibukx")
+    assert prepared.scar.promotion_act == ""
+    assert prepared.scar.promotion_receipt == ""
+    text = store.commit_promotion(prepared).read_text(encoding="utf-8")
+    assert "promotion_act" not in text and "promotion_receipt" not in text
+
+
+# #392: every scar's receipt, archived included, feeds the checker's `seen`
+# list so one act cannot be reused for a second scar.
+
+def _scar_with_receipt(repo, name, receipt, status):
+    text = (f"---\nid: {int(name[:4])}\ntype: fence\ntitle: T\nseverity: low\nconfidence: 0.5\n"
+            "promoted_by: k\npromotion_act: a.b.c\n"
+            + (f"promotion_receipt: {receipt}\n" if receipt else "")
+            + f"anchors:\n  - path: src/x.py\nstatus: {status}\n---\n\nBody.\n")
+    (repo / ".scars" / name).write_text(text)
+
+
+def test_seen_receipts_include_every_status_archived_too(repo):
+    _scar_with_receipt(repo, "0001-a.fence.md", "uEiA", "active")
+    _scar_with_receipt(repo, "0002-b.fence.md", "uEiB", "archived")
+    _scar_with_receipt(repo, "0003-c.fence.md", "uEiC", "orphaned")
+    _scar_with_receipt(repo, "0004-d.fence.md", "uEiD", "challenged")
+    _scar_with_receipt(repo, "0005-e.fence.md", "", "active")
+    store = ScarStore.discover(repo)
+    assert store.seen_receipts() == ["uEiA", "uEiB", "uEiC", "uEiD"]
+
+
+def test_seen_receipts_are_unique_and_empty_for_a_fresh_store(repo):
+    store = ScarStore.discover(repo)
+    assert store.seen_receipts() == []
+    _scar_with_receipt(repo, "0001-a.fence.md", "uEiSame", "active")
+    _scar_with_receipt(repo, "0002-b.fence.md", "uEiSame", "active")
+    assert store.seen_receipts() == ["uEiSame"]

@@ -15,11 +15,11 @@ import os
 import subprocess
 from pathlib import Path
 
+from . import config, presence
 from .model import Scar
 from .record import promoted_record, promotion_subject
 from .store import ScarStore
 
-VERIFIER = "/Library/Application Support/handsal/bin/handsal-check"
 TIMEOUT_SECONDS = 10
 
 UNVERIFIED = "unverified"
@@ -31,18 +31,18 @@ FAILED = "not verified: verifier failed"
 
 
 def load_org(store: ScarStore) -> str | None:
+    # Reporting only: a config that cannot be read is "not verified", never an
+    # error here. Promote reads the same file through config.load and refuses.
     try:
-        cfg = json.loads((store.scars_dir / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return config.load(store.scars_dir).org
+    except config.ConfigError:
         return None
-    org = cfg.get("org") if isinstance(cfg, dict) else None
-    return org if isinstance(org, str) and org else None
 
 
 def _recheck(payload: dict) -> str:
     try:
         proc = subprocess.run(
-            [VERIFIER, "recheck-act"], input=json.dumps(payload, sort_keys=True),
+            [presence.CHECKER, "recheck-act"], input=json.dumps(payload, sort_keys=True),
             capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return FAILED
@@ -62,7 +62,7 @@ def _recheck(payload: dict) -> str:
 def verify_scar(scar: Scar, *, org: str | None, repo: Path) -> str:
     if not scar.promotion_act:
         return UNVERIFIED
-    if not os.path.exists(VERIFIER):
+    if not os.path.exists(presence.CHECKER):
         return NO_VERIFIER
     if org is None:
         return NO_ORG
@@ -70,10 +70,10 @@ def verify_scar(scar: Scar, *, org: str | None, repo: Path) -> str:
     if subject is None:
         return NO_ROOT
     return _recheck({
-        "action": "promote",
-        "consumer": "scar",
+        "action": presence.ACTION,
+        "consumer": presence.CONSUMER,
         "decision_b64": base64.b64encode(promoted_record(scar)).decode("ascii"),
-        "expect_method": "local:handsal.decision",
+        "expect_method": presence.METHOD,
         "jws": scar.promotion_act,
         "org": org,
         "subject": subject,
