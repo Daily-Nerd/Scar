@@ -1119,10 +1119,27 @@ def _cmd_promote(args) -> int:
                            else "git-config")
     else:
         reviewer_source = "explicit" if reviewer else None
-    for target in targets:
+    if org is not None:
+        # Nothing that can be refused without a person is left for mid-batch.
+        try:
+            signedpromote.preflight(store, org, targets, reviewer, reviewer_source)
+        except signedpromote.SignedPromoteError as exc:
+            print(f"cannot sign: {exc}")
+            print("nothing promoted: no touch was requested")
+            return 1
+    total = len(targets)
+    for done, target in enumerate(targets):
+        if org is not None:
+            print(f"signing {done + 1} of {total}: {target.name}")
         rc = _promote_one(store, target, args, reviewer, from_git, reviewer_source, org)
         if rc:
+            if org is not None:
+                # A batch is a guided queue: what was accepted stays promoted,
+                # the rest stay candidates.
+                print(f"promoted {done} of {total}")
             return rc
+    if org is not None:
+        print(f"promoted {total} of {total}")
     return 0
 
 

@@ -12,6 +12,7 @@ for each scar, as the profile requires, never reused from a previous one.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import presence
@@ -37,6 +38,40 @@ def subject_for(store: ScarStore, prepared: PreparedPromotion) -> str:
             f"{prepared.candidate.name}: repository root commit unavailable, so the "
             "promotion cannot be bound to this repository. Nothing was signed.")
     return subject
+
+
+def preflight(store: ScarStore, org: str, targets: list[Path], reviewer: str,
+              reviewer_source: str | None) -> None:
+    """Everything that can be refused without a person, checked before the
+    first prompt so a batch never starts what it cannot finish: both programs
+    exist at their fixed paths, the repository can name its root, the checker
+    has a head, and the signer can show every record in full. Touches no file
+    and asks for no signature."""
+    for path in (presence.SIGNER, presence.CHECKER):
+        if not os.path.exists(path):
+            raise SignedPromoteError(f"not installed at its fixed path: {path}")
+    base = store.next_id()
+    if promotion_subject(store.root, base) is None:
+        raise SignedPromoteError(
+            "repository root commit unavailable, so a promotion cannot be bound to "
+            "this repository.")
+    try:
+        head = presence.head(org)
+    except presence.PresenceError as exc:
+        raise SignedPromoteError(f"no chain head from the checker: {exc.reason}.") from None
+    for i, target in enumerate(targets):
+        prepared = store.prepare_promotion(target, reviewer, reviewer_source)
+        # The id this scar will get once the ones before it are written: it is
+        # in the bytes and in the subject, and a record at the size limit must
+        # be judged with the right digits.
+        prepared.scar.id = base + i
+        subject = promotion_subject(store.root, prepared.scar.id)
+        try:
+            presence.render(presence.decision_input(
+                org, subject, promoted_record(prepared.scar), head))
+        except presence.PresenceError as exc:
+            raise SignedPromoteError(
+                f"{target.name}: the signer cannot show this record: {exc.reason}.") from None
 
 
 def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path:

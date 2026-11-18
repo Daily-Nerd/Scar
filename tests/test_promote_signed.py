@@ -106,8 +106,10 @@ def test_the_calls_go_head_then_sign_then_check_with_the_same_bytes(repo, fakes)
     record = promoted_record(scar)
     subject = promotion_subject(repo, 1)
 
-    (head_call,) = checker.calls("head")
-    assert head_call["stdin_json"] == {"org": ORG}
+    # One head in the preflight, then a fresh one for the scar itself.
+    head_calls = checker.calls("head")
+    assert len(head_calls) == 2
+    assert all(c["stdin_json"] == {"org": ORG} for c in head_calls)
 
     (sign_call,) = signer.calls("sign")
     draft = sign_call["stdin_json"]["draft"]
