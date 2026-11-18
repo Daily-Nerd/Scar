@@ -53,6 +53,10 @@ class Scar:
     # (a later slice writes it at promotion). Never part of promoted_record:
     # storing the act must not change the bytes it signed.
     promotion_act: str = ""
+    # The candidate this scar was promoted from, as a path relative to
+    # .scars/ ("candidates/foo.md"). Written only by promote, which owns the
+    # slug rule, so no reader re-derives it. Empty on scars promoted earlier.
+    promoted_from: str = ""
     path_anchors: list[str] = field(default_factory=list)
     pattern_anchors: list[str] = field(default_factory=list)
     symbol_anchors: list[str] = field(default_factory=list)
@@ -89,6 +93,8 @@ class Scar:
             lines.append(f"promoted_by: {self.promoted_by}")
             if self.promoted_by_source:
                 lines.append(f"promoted_by_source: {self.promoted_by_source}")
+        if self.promoted_from:
+            lines.append(f"promoted_from: {self.promoted_from}")
         if self.promotion_act:
             lines.append(f"promotion_act: {self.promotion_act}")
         lines.append("anchors:")
@@ -231,6 +237,7 @@ def parse_scar_text(text: str) -> Scar:
         promoted_by=_scalar(front, "promoted_by"),
         promoted_by_source=_scalar(front, "promoted_by_source") or None,
         promotion_act=_scalar(front, "promotion_act"),
+        promoted_from=_scalar(front, "promoted_from"),
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],
         pattern_anchors=[_unquote(p.strip())

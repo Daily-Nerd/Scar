@@ -461,6 +461,10 @@ class ScarStore:
         # like promoted_by itself: whatever the candidate carried here was
         # never a real vouch either.
         scar.promoted_by_source = reviewer_source if reviewer else None
+        # Always overwritten, like promoted_by: only promote knows the real
+        # source. relative_to raises for a file outside .scars/, before any
+        # write, rather than recording a guess.
+        scar.promoted_from = candidate.relative_to(self.scars_dir).as_posix()
         new_path = self._destination(candidate, scar, scar.id)
         new_path.write_text(scar.to_text(), encoding="utf-8")
         candidate.unlink()

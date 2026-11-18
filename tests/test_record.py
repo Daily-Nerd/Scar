@@ -151,3 +151,12 @@ def test_id_none_raises():
     scar = parse_scar_text(BASE.replace("id: 5\n", ""))
     with pytest.raises(ValueError, match="id"):
         promoted_record(scar)
+
+
+def test_promoted_from_is_in_the_record_only_when_present():
+    """Signed bytes of scars promoted before the field existed must not move."""
+    assert b"promoted_from" not in rec(BASE)
+    with_from = rec(BASE.replace("promoted_by: kibukx",
+                                 "promoted_by: kibukx\npromoted_from: candidates/x.md"))
+    assert b"promoted_from: candidates/x.md\n" in with_from
+    assert with_from != rec(BASE)

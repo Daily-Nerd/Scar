@@ -533,3 +533,23 @@ def test_unparseable_candidate_has_its_own_error_type(repo):
     assert issubclass(UnparseableCandidate, ValueError)
     with pytest.raises(ValueError):  # promote still reports it, as lint errors
         store.promote(bad, reviewer="k")
+
+
+def test_promote_records_the_candidate_path_in_promoted_from(repo):
+    """The link from an active scar to its candidate is written down, so a
+    reader never re-derives active_slug/slugify to find it."""
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE)
+    store = ScarStore.discover(repo)
+    text = store.promote(cand, reviewer="mara").read_text()
+    assert "promoted_from: candidates/tried-x.md" in text
+
+
+def test_promote_overwrites_a_pre_seeded_promoted_from(repo):
+    cand = repo / ".scars" / "candidates" / "tried-x.md"
+    cand.write_text(CANDIDATE.replace('authors: ["claude-code"]',
+                                      'authors: ["claude-code"]\npromoted_from: candidates/other.md'))
+    store = ScarStore.discover(repo)
+    text = store.promote(cand, reviewer="mara").read_text()
+    assert "promoted_from: candidates/tried-x.md" in text
+    assert "other.md" not in text
