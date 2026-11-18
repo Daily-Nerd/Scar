@@ -75,6 +75,13 @@ A file without `---`-fenced YAML frontmatter is **not a scar at all** — it nev
 fires. Minimum valid block: `type`, `title`, `severity`, `confidence`,
 `created`, `authors`, at least one `anchors` entry, and `status: candidate`.
 
+`authors` is the runtime that drafted the scar (`claude-code`, `codex`,
+`cursor`, `windsurf`, `opencode`), replacing the template's `<your-runtime>`
+placeholder. It must never hold the human reviewer: the reviewer is recorded
+in `promoted_by` by `scar promote`. Role words such as `agent` or
+`maintainer` name no runtime. `scar lint` rejects a candidate that keeps the
+placeholder or uses a role word.
+
 Write `anchors` as a block list, one `- kind: value` line per anchor. A flow-style
 list (`anchors: [...]`) is not read, so the scar loads with no anchors.
 

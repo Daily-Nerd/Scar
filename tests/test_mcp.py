@@ -1,7 +1,11 @@
 """MCP tool dispatch."""
 
-from scar.mcp import TOOLS
 import json
+
+import pytest
+
+import scar.mcp as scar_mcp
+from scar.mcp import TOOLS
 
 from scar.mcp import _handle
 from scar.store import init_scars
@@ -24,6 +28,13 @@ status: active
 
 Do not lower the sleep.
 """
+
+
+@pytest.fixture(autouse=True)
+def _connected_client(monkeypatch):
+    """Draft tests run as a connected client; the no-client refusal and the
+    client-to-author mapping have their own tests that override this."""
+    monkeypatch.setattr(scar_mcp, "_client_name", "claude-code")
 
 
 def _text(result):
@@ -201,3 +212,41 @@ def test_scar_draft_recreates_missing_candidates_dir(tmp_path):
     })
     assert json.loads(_text(result))["status"] == "candidate"
     assert (tmp_path / ".scars" / "candidates" / "redis-failed-here.md").is_file()
+
+
+# --- authors comes from the connected client, never a hardcoded default ---
+
+def _draft_args(tmp_path, **extra):
+    return {"name": "scar_draft", "arguments": {
+        "repo": str(tmp_path), "type": "deadend", "title": "Redis failed here",
+        "anchors": [{"pattern": "redis"}], "body": "Tried and abandoned.",
+        **extra}}
+
+
+def test_scar_draft_records_the_connected_client_as_author(tmp_path, monkeypatch):
+    import scar.mcp as mcp
+    monkeypatch.setattr(mcp, "_client_name", None)
+    init_scars(tmp_path)
+    _handle("initialize", {"clientInfo": {"name": "cursor-vscode"}})
+    data = json.loads(_text(_handle("tools/call", _draft_args(tmp_path))))
+    text = (tmp_path / data["candidate"]).read_text()
+    assert 'authors: ["cursor-vscode"]' in text
+
+
+def test_scar_draft_refuses_when_runtime_unknown(tmp_path, monkeypatch):
+    import pytest
+    import scar.mcp as mcp
+    monkeypatch.setattr(mcp, "_client_name", None)
+    init_scars(tmp_path)
+    with pytest.raises(ValueError, match="authors"):
+        _handle("tools/call", _draft_args(tmp_path))
+    assert not list((tmp_path / ".scars" / "candidates").glob("redis*"))
+
+
+def test_scar_draft_refuses_role_word_authors(tmp_path, monkeypatch):
+    import pytest
+    import scar.mcp as mcp
+    monkeypatch.setattr(mcp, "_client_name", "claude-code")
+    init_scars(tmp_path)
+    with pytest.raises(ValueError, match="authors"):
+        _handle("tools/call", _draft_args(tmp_path, authors=["agent"]))

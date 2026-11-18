@@ -160,6 +160,33 @@ class Finding:
         return f"{self.level}: {self.message}"
 
 
+# `authors` records the runtime that DRAFTED a candidate. The template carries
+# an angle-bracket placeholder instead of a default, so a copy nobody edited
+# fails here rather than silently crediting the wrong runtime. Role words name
+# no runtime, and the human reviewer belongs in promoted_by (written by
+# promote), never in authors. Checked on candidates only: that is the write
+# gate, and promoted scars keep whatever history they were promoted with.
+_ROLE_WORDS = frozenset({"agent", "assistant", "ai", "maintainer", "human",
+                         "user", "reviewer", "owner"})
+
+
+def _candidate_author_findings(authors: list[str]) -> list[Finding]:
+    findings = []
+    for author in authors:
+        value = author.strip()
+        if re.fullmatch(r"<[^<>]*>", value):
+            findings.append(Finding(
+                "error", f"authors still holds the template placeholder "
+                f"{value}: replace it with the runtime that drafted this "
+                "(e.g. claude-code, codex, cursor)"))
+        elif value.casefold() in _ROLE_WORDS:
+            findings.append(Finding(
+                "error", f"authors names a role, not a runtime: '{value}'. "
+                "Use the drafting runtime (e.g. claude-code); the human "
+                "reviewer goes in promoted_by, written by `scar promote`"))
+    return findings
+
+
 def lint_text(text: str, today: str | None = None) -> list[Finding]:
     try:
         scar = parse_scar_text(text)
@@ -284,6 +311,8 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
                     "error", f"pathological revives_if /{scar.revives_if}/: nested "
                     "quantifier risks catastrophic backtracking (ReDoS) — simplify "
                     "the regex"))
+    if scar.status == "candidate":
+        findings.extend(_candidate_author_findings(scar.authors))
     # Author identity drift (#182): one handle, two casings = one human
     # credited twice. Warning, never error — two genuinely distinct people
     # whose handles differ only by case is possible, so report, don't break.

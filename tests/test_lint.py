@@ -466,3 +466,41 @@ def test_candidate_carrying_promoted_from_is_a_warning():
     assert any(f.level == "warning" and "promoted_from" in f.message for f in lint_text(cand))
     active = GOOD.replace("authors: [mara]", "authors: [mara]\npromoted_from: candidates/x.md")
     assert lint_text(active) == []
+
+
+# --- authors names the drafting runtime, never a placeholder or a role ---
+
+def _candidate_authors(authors: str) -> str:
+    return _authors_scar(authors).replace("status: active", "status: candidate")
+
+
+def test_candidate_with_template_placeholder_author_is_an_error():
+    findings = lint_text(_candidate_authors('"<your-runtime>"'))
+    assert any(f.level == "error" and "authors" in f.message
+               and "placeholder" in f.message for f in findings)
+
+
+def test_candidate_with_role_word_author_is_an_error():
+    for word in ("agent", "maintainer", "Human", "reviewer"):
+        findings = lint_text(_candidate_authors(f'"{word}"'))
+        assert any(f.level == "error" and "authors" in f.message
+                   for f in findings), word
+
+
+def test_candidate_with_real_runtime_author_is_clean():
+    findings = lint_text(_candidate_authors('"codex"'))
+    assert not any(f.level == "error" and "authors" in f.message
+                   for f in findings)
+
+
+def test_unedited_template_copy_as_candidate_fails_lint():
+    from scar.store import TEMPLATE
+    text = TEMPLATE.replace("status: template", "status: candidate")
+    findings = lint_text(text)
+    assert any(f.level == "error" and "placeholder" in f.message
+               for f in findings)
+
+
+def test_tool_identities_in_seed_stay_clean():
+    from scar.store import EXAMPLE_SEED
+    assert not any(f.level == "error" for f in lint_text(EXAMPLE_SEED))

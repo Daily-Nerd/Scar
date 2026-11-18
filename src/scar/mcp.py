@@ -59,6 +59,25 @@ def _json_result(data: Any) -> dict[str, Any]:
     return _text_result(json.dumps(data, indent=2))
 
 
+# The MCP client names itself in `initialize` (clientInfo.name). That is the
+# one place this server learns which runtime is drafting, so it is the source
+# of `authors`; there is deliberately no fallback default. Whether an explicit
+# value is acceptable is lint's call (one owner), not re-checked here.
+_client_name: str | None = None
+
+
+def _drafting_authors(args: dict[str, Any]) -> list[str]:
+    explicit = args.get("authors")
+    if explicit:
+        return [str(a) for a in explicit]
+    if _client_name:
+        return [_client_name]
+    raise ValueError(
+        "refusing to draft: authors unknown. The MCP client did not name "
+        "itself in initialize (clientInfo.name); pass authors with the "
+        "runtime that is drafting (e.g. claude-code, codex, cursor)")
+
+
 def _scar_from_args(args: dict[str, Any]) -> Scar:
     anchors = args.get("anchors") or []
     path_anchors = []
@@ -82,7 +101,7 @@ def _scar_from_args(args: dict[str, Any]) -> Scar:
         severity=str(args.get("severity", Scar.severity)),
         confidence=float(args.get("confidence", Scar.confidence)),
         created=str(args.get("created") or clock.today()),
-        authors=[str(a) for a in args.get("authors", ["agent"])],
+        authors=_drafting_authors(args),
         path_anchors=path_anchors,
         pattern_anchors=pattern_anchors,
         evidence=evidence,
@@ -181,7 +200,8 @@ TOOLS = [
                 "title": {"type": "string"},
                 "severity": {"type": "string"},
                 "confidence": {"type": "number"},
-                "authors": {"type": "array", "items": {"type": "string"}},
+                "authors": {"type": "array", "items": {"type": "string"},
+                            "description": "Runtime that drafted this. Defaults to the connected client's name; never the human reviewer or a role word."},
                 "anchors": {"type": "array", "items": {"type": "object"}},
                 "evidence": {"type": "array"},
                 "expires_condition": {"type": "string"},
@@ -196,6 +216,9 @@ TOOLS = [
 
 def _handle(method: str, params: dict[str, Any]) -> dict[str, Any] | None:
     if method == "initialize":
+        global _client_name
+        name = (params.get("clientInfo") or {}).get("name")
+        _client_name = str(name).strip() or None if name else None
         return {
             "protocolVersion": params.get("protocolVersion", "2025-06-18"),
             "capabilities": {"tools": {}},

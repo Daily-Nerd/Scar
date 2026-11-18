@@ -98,7 +98,8 @@ def test_mcp_created_default_uses_owner(tmp_path, monkeypatch):
     init_scars(tmp_path)
     _handle("tools/call", {"name": "scar_draft", "arguments": {
         "repo": str(tmp_path), "type": "deadend", "title": "Clock check",
-        "anchors": [{"path": "src/"}], "body": "Body."}})
+        "anchors": [{"path": "src/"}], "body": "Body.",
+        "authors": ["claude-code"]}})
     cand = next((tmp_path / ".scars" / "candidates").glob("clock-check*.md"))
     assert "created: 2031-02-03" in cand.read_text()
 

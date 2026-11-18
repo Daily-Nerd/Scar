@@ -10,7 +10,8 @@ title: One line, searchable, says the constraint
 severity: medium           # low | medium | high | critical
 confidence: 0.7            # 0..1 — how sure are we this still holds
 created: 1970-01-01
-authors: ["claude-code"]   # who DRAFTED it; the promoting human goes in promoted_by, written by promote
+# authors = the RUNTIME that DRAFTED it (claude-code, codex, cursor...). Replace the placeholder; never the human reviewer (promoted_by, written by promote).
+authors: ["<your-runtime>"]
 anchors:
   - path: src/module/      # file or directory this protects
   - pattern: "regex"       # optional: fires when matching code appears in ANY new/edited file
