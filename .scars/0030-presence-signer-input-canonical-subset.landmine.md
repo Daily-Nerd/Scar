@@ -1,20 +1,24 @@
 ---
+id: 30
 type: landmine
 title: The presence signer reads a canonical subset of JSON, so a draft with a number, a boolean or default json.dumps whitespace is refused
 severity: medium
 confidence: 0.8
 created: 2026-11-18
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/presence-signer-input-canonical-subset.md
 anchors:
   - path: src/scar/presence.py
   - pattern: "expires_in_s"
 evidence:
   - issue: 392
-  - note: "Profile ACT-04 and SG-04 (signer v0.4.0): no numbers, no true/false, no whitespace outside strings; expires_in_s is a decimal string."
+  - note: Profile ACT-04 and SG-04 (signer v0.4.0): no numbers, no true/false, no whitespace outside strings; expires_in_s is a decimal string.
 expires:
   condition: "the signer accepts general JSON on stdin"
   review_after: 2027-05-18
-status: candidate
+status: active
 ---
 
 The signer and the checker are fed through one canonical-subset recognizer.
