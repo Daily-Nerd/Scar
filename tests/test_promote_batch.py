@@ -195,6 +195,38 @@ def test_a_refused_head_is_refused_before_the_first_prompt(repo, fakes, capsys, 
     assert snapshot(repo) == before
 
 
+@pytest.mark.parametrize("reason", ["local_key_not_active", "local_key_unknown",
+                                    "local_class_not_accepted", "stale_view"])
+def test_a_key_that_is_not_enrolled_is_refused_before_the_prompt(repo, fakes, capsys, reason):
+    # A removed member's key still signs; the refusal must come at the terminal,
+    # not after a touch.
+    signer, checker = fakes
+    checker.reply("enrolled", ({"enrolled": False, "reason": reason}, 0))
+    names = make(repo, 2)
+    before = snapshot(repo)
+    assert run(*names) == 1
+    assert reason in capsys.readouterr().out
+    assert signer.calls("sign") == [] and signer.calls("render") == []
+    assert snapshot(repo) == before
+
+
+def test_the_enrolled_question_names_this_machines_own_key(repo, fakes):
+    signer, checker = fakes
+    run(*make(repo, 1))
+    assert checker.calls("enrolled")[0]["stdin_json"] == {"device_kid": "KID43", "org": ORG}
+
+
+def test_no_local_key_is_refused_before_the_prompt(repo, fakes, capsys):
+    signer, checker = fakes
+    signer.reply("pubkey", ({"error": "key_unavailable"}, 3))
+    names = make(repo, 1)
+    before = snapshot(repo)
+    assert run(*names) == 1
+    assert "key_unavailable" in capsys.readouterr().out
+    assert signer.calls("sign") == []
+    assert snapshot(repo) == before
+
+
 def test_a_record_the_signer_cannot_show_stops_the_whole_batch_before_any_touch(repo, fakes, capsys):
     signer, checker = fakes
     signer.reply("render", ({"first_line": "l", "text": "t"}, 0),

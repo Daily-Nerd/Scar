@@ -45,8 +45,10 @@ def preflight(store: ScarStore, org: str, targets: list[Path], reviewer: str,
     """Everything that can be refused without a person, checked before the
     first prompt so a batch never starts what it cannot finish: both programs
     exist at their fixed paths, the repository can name its root, the checker
-    has a head, and the signer can show every record in full. Touches no file
-    and asks for no signature."""
+    has a head, this machine's key is still enrolled (a removed member's key
+    can still sign, and the checker would only refuse it after the touch), and
+    the signer can show every record in full. Touches no file and asks for no
+    signature."""
     for path in (presence.SIGNER, presence.CHECKER):
         if not os.path.exists(path):
             raise SignedPromoteError(f"not installed at its fixed path: {path}")
@@ -59,6 +61,10 @@ def preflight(store: ScarStore, org: str, targets: list[Path], reviewer: str,
         head = presence.head(org)
     except presence.PresenceError as exc:
         raise SignedPromoteError(f"no chain head from the checker: {exc.reason}.") from None
+    try:
+        presence.enrolled(org, presence.local_kid())
+    except presence.PresenceError as exc:
+        raise SignedPromoteError(f"this machine's key is not enrolled: {exc.reason}.") from None
     for i, target in enumerate(targets):
         prepared = store.prepare_promotion(target, reviewer, reviewer_source)
         # The id this scar will get once the ones before it are written: it is
