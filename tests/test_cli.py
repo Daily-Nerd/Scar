@@ -5078,3 +5078,13 @@ def test_fresh_init_then_lint_has_no_findings(repo, capsys):
     rc, data = _shape_lint(repo, capsys)
     assert rc == 0
     assert data["findings"] == []
+
+
+def test_lint_candidate_uncompilable_pattern_errors_without_dead_warning(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "bad.md").write_text(_shape_scar(
+        [("pattern", "unclosed(group")], scar_id=None, status="candidate"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc != 0
+    assert len(_shape_msgs(data, "invalid pattern anchor")) == 1
+    assert _shape_msgs(data, DEAD_CAND_PAT) == []

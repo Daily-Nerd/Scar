@@ -616,3 +616,10 @@ def test_uncompilable_overescaped_regex_reports_both_causes():
               if f.level == "error"]
     assert any("invalid violation" in m for m in errors)
     assert any("over-escaped" in m and "/New\\(/" in m for m in errors)
+
+
+def test_leading_bracket_in_class_does_not_close_it_early():
+    # []...] and [^]...] hold a literal "]" as the first member, so the doubled
+    # backslash after it is still inside the class and is the clean hatch.
+    assert _overescaped(lint_text(_with("violation", r"x[]\\(]"))) == []
+    assert _overescaped(lint_text(_with("violation", r"x[^]\\(]"))) == []
