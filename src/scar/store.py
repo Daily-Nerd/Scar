@@ -26,14 +26,32 @@ def _strip_link_targets(s: str) -> str:
     return re.sub(r"https?://\S+", "", s)
 
 
+_CODE_SPAN = re.compile(r"`([^`]*)`")
+# A run of `_`/`*` is an emphasis delimiter unless word characters sit on both
+# sides of it (CommonMark's intraword rule). For `_` that is exact; `*` is
+# treated the same way for simplicity, so `a*b` keeps its star although
+# CommonMark would let it emphasise.
+_EMPHASIS_RUN = re.compile(r"(?<!\w)[*_]+|[*_]+(?!\w)")
+
+
 def sanitize_signal_text(s: str) -> str:
-    """Mined git text (revert subjects, squash-merge subjects) can carry
-    markdown links, emphasis markers, and bare URLs; leaked into a candidate
-    they make the title unreadable and a URL eats the whole slug budget (#159).
-    This is DISPLAY text: `_*` and backticks are emphasis markers and are
-    deleted. A filename must not reuse that rule, see `slugify` (#365)."""
-    s = re.sub(r"[*_`]+", "", _strip_link_targets(s))
-    return " ".join(s.split())
+    """Clean mined git free text (revert subjects, squash-merge subjects) for
+    use as a candidate title. Markdown links lose their targets, bare URLs go
+    (#159), whitespace collapses, backticks are dropped but code-span content
+    is kept verbatim, and `_`/`*` are removed only where they can be emphasis
+    delimiters, never between two word characters, so `retry_count` survives
+    (#402). Identifiers (keys, paths, components) must not be passed through
+    here at all. This is DISPLAY text; a filename must not reuse the rule, see
+    `slugify` (#365)."""
+    parts = _CODE_SPAN.split(s)  # odd indices are code-span contents
+    out = []
+    for i, part in enumerate(parts):
+        if i % 2:
+            out.append(part)
+            continue
+        part = _EMPHASIS_RUN.sub("", _strip_link_targets(part))
+        out.append(part.replace("`", ""))
+    return " ".join("".join(out).split())
 
 
 def slugify(text: str, fallback: str = "scar") -> str:

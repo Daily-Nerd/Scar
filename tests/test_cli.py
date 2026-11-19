@@ -1504,6 +1504,22 @@ def test_write_title_and_slug_sanitize_markdown_and_urls():
     assert _write_slug(title) == "reverted-see-172-and"
 
 
+def test_write_title_keeps_identifiers_verbatim():
+    """Keys, files, components and locations are identifiers, not prose: only
+    a revert subject is free text and gets cleaned (#402)."""
+    from scar.cli import _write_title
+    assert _write_title("flapping", {"key": "MAX_RETRY_COUNT",
+                                     "file": "src/my_app/settings_prod.py"}) == (
+        "Flapping value MAX_RETRY_COUNT in src/my_app/settings_prod.py")
+    assert _write_title("comments", {"location": "src/user_service/db_pool.py:42"}) == (
+        "Keep-out comment in src/user_service/db_pool.py")
+    assert _write_title("deleted_components",
+                        {"component": "legacy_payment_gateway"}) == (
+        "Deleted component: legacy_payment_gateway")
+    assert _write_title("reverts", {"subject": "retry_count failed"}) == (
+        "Reverted: retry_count failed")
+
+
 def test_write_slug_truncates_at_word_boundary():
     """The 60-char slug cut must drop a severed trailing fragment, not keep it
     — unless the slug is a single token with no boundary to cut at (#159)."""
