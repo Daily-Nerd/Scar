@@ -92,6 +92,9 @@ must use a `pattern:` regex, know that the value reaches the matcher
 **verbatim** — this reader is not a YAML parser and nothing un-escapes. Write
 the regex exactly as it must execute: `\b` stays `\b`, `\(` stays `\(`.
 Doubling backslashes "for YAML" yields a literal backslash and a dead anchor.
+`scar lint` rejects it as an error and prints the single-backslash form you
+meant. If you really need to match a literal backslash, write it inside a
+character class, `[\\]`, which lint accepts.
 
 The pattern is also matched against all tracked content **including the scar's
 own body**, so a broken pattern keeps itself alive by self-reference. Run
@@ -128,7 +131,8 @@ the fired→violated compliance metric).
 - **The regex is RAW.** Surrounding quotes are stripped; nothing else
   un-escapes. Write it exactly as it must execute — `\b` stays `\b`, `\(`
   stays `\(`. Doubling backslashes "for YAML" is the over-escape trap that
-  kills pattern anchors, and it kills violation regexes the same way.
+  kills pattern anchors, and it kills violation regexes the same way. The
+  same lint error and the same `[\\]` form apply (see Anti-Over-Escape).
 - **Prove both cases.** Before finishing, run a synthetic
   `scar check --diff` twice: once with a diff that MUST fire the violation,
   once with an innocent diff that must NOT. A tripwire verified only on the
