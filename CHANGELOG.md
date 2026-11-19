@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.29.1](https://github.com/Daily-Nerd/Scar/compare/v0.29.0...v0.29.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **harvest:** keep identifiers and code spans verbatim in candidate titles ([#403](https://github.com/Daily-Nerd/Scar/issues/403)) ([657e752](https://github.com/Daily-Nerd/Scar/commit/657e752a52e7955302f9d69b33b0c597cf437438)), closes [#402](https://github.com/Daily-Nerd/Scar/issues/402)
+* **lint:** reject over-escaped regex fields and dead candidate patterns ([#405](https://github.com/Daily-Nerd/Scar/issues/405)) ([fa54514](https://github.com/Daily-Nerd/Scar/commit/fa54514666ff4ec318f0999ac49f7eeed77d2271)), closes [#404](https://github.com/Daily-Nerd/Scar/issues/404)
+* **model:** read authors through one flow-list parser ([#400](https://github.com/Daily-Nerd/Scar/issues/400)) ([2ac838a](https://github.com/Daily-Nerd/Scar/commit/2ac838a134eebc1c801eb412b64d5143fd5b819d))
+
+
+### Documentation
+
+* **skill:** name the lint error and the [\\] form for a literal backslash ([#406](https://github.com/Daily-Nerd/Scar/issues/406)) ([506dd84](https://github.com/Daily-Nerd/Scar/commit/506dd84f976b80e6438488899a79706cdba730d5)), closes [#404](https://github.com/Daily-Nerd/Scar/issues/404)
+
 ## [0.29.0](https://github.com/Daily-Nerd/Scar/compare/v0.28.0...v0.29.0) (2026-11-18)
 
 
