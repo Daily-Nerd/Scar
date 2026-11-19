@@ -394,15 +394,25 @@ def test_slugify_falls_back_when_nothing_decomposes_to_ascii():
     assert slugify("日本語のタイトル", fallback="fb") == "fb"
 
 
-def test_sanitize_signal_text_is_unchanged_by_the_slug_fix():
-    """The display-text cleaner keeps deleting emphasis markers (its own job,
-    #159). `retry_count` -> `retrycount` is a known sibling of #365, left alone
-    on purpose: it is a title, not a filename."""
+@pytest.mark.parametrize("raw,expected", [
+    ("Reverted: retry_count failed", "Reverted: retry_count failed"),
+    ("Reverted: fix `retry_count` reset", "Reverted: fix retry_count reset"),
+    ("a `x_*_y` b", "a x_*_y b"),
+    ("**bold** and _em_ ok", "bold and em ok"),
+    ("Redis *failed* [here](http://x.io)", "Redis failed here"),
+    ("see https://x.io/a_b  `code`", "see code"),
+    ("ünï", "ünï"),
+    ("Revert [`retry_count` fix](https://x.io/pull/3)", "Revert retry_count fix"),
+    ("see `[a](http://b)` here", "see [a](http://b) here"),
+    ("fix **retry_count** bug", "fix retry_count bug"),
+])
+def test_sanitize_signal_text_keeps_identifiers_and_code_spans(raw, expected):
+    """Display cleaning removes emphasis markers only where they can be
+    emphasis delimiters. An underscore between two word characters is part of
+    an identifier (CommonMark intraword rule) and code-span content is kept
+    verbatim (#402). Supersedes the #365-era pin that expected `retrycount`."""
     from scar.store import sanitize_signal_text
-    assert sanitize_signal_text("retry_count failed") == "retrycount failed"
-    assert sanitize_signal_text("Redis *failed* [here](http://x.io)") == "Redis failed here"
-    assert sanitize_signal_text("see https://x.io/a_b  `code`") == "see code"
-    assert sanitize_signal_text("ünï") == "ünï"
+    assert sanitize_signal_text(raw) == expected
 
 
 def test_promote_keeps_underscores_as_separators(repo):

@@ -3125,15 +3125,15 @@ def _write_anchors(repo: Path, section: str, c: dict, tracked: set[str]) -> list
 
 
 def _write_title(section: str, c: dict) -> str:
+    """Only a revert subject is free text. Keys, files, components and
+    locations are identifiers and go in unchanged (#402)."""
     if section == "reverts":
-        raw = f"Reverted: {c['subject']}"
-    elif section == "deleted_components":
-        raw = f"Deleted component: {c['component']}"
-    elif section == "flapping":
-        raw = f"Flapping value {c['key']} in {c['file']}"
-    else:
-        raw = "Keep-out comment in " + c["location"].split(":", 1)[0]
-    return sanitize_signal_text(raw)
+        return "Reverted: " + sanitize_signal_text(c["subject"])
+    if section == "deleted_components":
+        return f"Deleted component: {c['component']}"
+    if section == "flapping":
+        return f"Flapping value {c['key']} in {c['file']}"
+    return "Keep-out comment in " + c["location"].split(":", 1)[0]
 
 
 def _write_evidence(section: str, c: dict) -> str:

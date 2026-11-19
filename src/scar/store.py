@@ -26,13 +26,40 @@ def _strip_link_targets(s: str) -> str:
     return re.sub(r"https?://\S+", "", s)
 
 
+_CODE_SPAN = re.compile(r"`([^`]*)`")
+_PLACEHOLDER_CHARS = re.compile("[\ue000\ue001]")
+_PLACEHOLDER = re.compile("\ue000(\\d+)\ue001")
+# A run of `_`/`*` is an emphasis delimiter unless word characters sit on both
+# sides of it (CommonMark's intraword rule). For `_` that is exact; `*` is
+# treated the same way for simplicity, so `a*b` keeps its star although
+# CommonMark would let it emphasise.
+_EMPHASIS_RUN = re.compile(r"(?<!\w)[*_]+|[*_]+(?!\w)")
+
+
 def sanitize_signal_text(s: str) -> str:
-    """Mined git text (revert subjects, squash-merge subjects) can carry
-    markdown links, emphasis markers, and bare URLs; leaked into a candidate
-    they make the title unreadable and a URL eats the whole slug budget (#159).
-    This is DISPLAY text: `_*` and backticks are emphasis markers and are
-    deleted. A filename must not reuse that rule, see `slugify` (#365)."""
-    s = re.sub(r"[*_`]+", "", _strip_link_targets(s))
+    """Clean mined git free text (revert subjects, squash-merge subjects) for
+    use as a candidate title. Markdown links lose their targets, bare URLs go
+    (#159), whitespace collapses, backticks are dropped but code-span content
+    is kept verbatim, and `_`/`*` are removed only where they can be emphasis
+    delimiters, never between two word characters, so `retry_count` survives
+    (#402). Identifiers (keys, paths, components) must not be passed through
+    here at all. This is DISPLAY text; a filename must not reuse the rule, see
+    `slugify` (#365)."""
+    # Mask code spans first so link and emphasis rules see the whole string
+    # (a link may wrap a code span) while span content is never rewritten. The
+    # placeholder is private-use, hence not \w, exactly like the backtick it
+    # replaces, so adjacent `_`/`*` classify the same. Stray private-use
+    # input is dropped so it cannot forge a placeholder.
+    spans: list[str] = []
+
+    def _mask(m: re.Match) -> str:
+        spans.append(m.group(1))
+        return f"\ue000{len(spans) - 1}\ue001"
+
+    s = _PLACEHOLDER_CHARS.sub("", s)
+    s = _CODE_SPAN.sub(_mask, s)
+    s = _EMPHASIS_RUN.sub("", _strip_link_targets(s)).replace("`", "")
+    s = _PLACEHOLDER.sub(lambda m: spans[int(m.group(1))], s)
     return " ".join(s.split())
 
 
