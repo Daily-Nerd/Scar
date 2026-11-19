@@ -27,6 +27,8 @@ def _strip_link_targets(s: str) -> str:
 
 
 _CODE_SPAN = re.compile(r"`([^`]*)`")
+_PLACEHOLDER_CHARS = re.compile("[\ue000\ue001]")
+_PLACEHOLDER = re.compile("\ue000(\\d+)\ue001")
 # A run of `_`/`*` is an emphasis delimiter unless word characters sit on both
 # sides of it (CommonMark's intraword rule). For `_` that is exact; `*` is
 # treated the same way for simplicity, so `a*b` keeps its star although
@@ -43,15 +45,22 @@ def sanitize_signal_text(s: str) -> str:
     (#402). Identifiers (keys, paths, components) must not be passed through
     here at all. This is DISPLAY text; a filename must not reuse the rule, see
     `slugify` (#365)."""
-    parts = _CODE_SPAN.split(s)  # odd indices are code-span contents
-    out = []
-    for i, part in enumerate(parts):
-        if i % 2:
-            out.append(part)
-            continue
-        part = _EMPHASIS_RUN.sub("", _strip_link_targets(part))
-        out.append(part.replace("`", ""))
-    return " ".join("".join(out).split())
+    # Mask code spans first so link and emphasis rules see the whole string
+    # (a link may wrap a code span) while span content is never rewritten. The
+    # placeholder is private-use, hence not \w, exactly like the backtick it
+    # replaces, so adjacent `_`/`*` classify the same. Stray private-use
+    # input is dropped so it cannot forge a placeholder.
+    spans: list[str] = []
+
+    def _mask(m: re.Match) -> str:
+        spans.append(m.group(1))
+        return f"\ue000{len(spans) - 1}\ue001"
+
+    s = _PLACEHOLDER_CHARS.sub("", s)
+    s = _CODE_SPAN.sub(_mask, s)
+    s = _EMPHASIS_RUN.sub("", _strip_link_targets(s)).replace("`", "")
+    s = _PLACEHOLDER.sub(lambda m: spans[int(m.group(1))], s)
+    return " ".join(s.split())
 
 
 def slugify(text: str, fallback: str = "scar") -> str:

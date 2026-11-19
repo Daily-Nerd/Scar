@@ -402,6 +402,9 @@ def test_slugify_falls_back_when_nothing_decomposes_to_ascii():
     ("Redis *failed* [here](http://x.io)", "Redis failed here"),
     ("see https://x.io/a_b  `code`", "see code"),
     ("ünï", "ünï"),
+    ("Revert [`retry_count` fix](https://x.io/pull/3)", "Revert retry_count fix"),
+    ("see `[a](http://b)` here", "see [a](http://b) here"),
+    ("fix **retry_count** bug", "fix retry_count bug"),
 ])
 def test_sanitize_signal_text_keeps_identifiers_and_code_spans(raw, expected):
     """Display cleaning removes emphasis markers only where they can be
