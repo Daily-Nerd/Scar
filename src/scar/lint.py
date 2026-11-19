@@ -126,6 +126,104 @@ def _is_redos_prone(pattern: str) -> bool:
     return False
 
 
+# #404: the reader takes regex fields verbatim (no YAML unescaping), so a
+# doubled backslash before a regex escape or metacharacter is a literal
+# backslash followed by that character. It compiles, it is not ReDoS-prone,
+# and it can never match the code it was written to protect.
+_OVERESCAPE_NEXT = frozenset("()[]{}.*+?|^$bBsSwWdD")
+
+
+def _overescape_runs(pattern: str) -> list[tuple[int, int]]:
+    """(start, length) of each over-escaped backslash run in *pattern*.
+
+    A backslash run is read left to right: an odd run ends in a real escape
+    (the last backslash binds the next character) and is never flagged; an
+    even run is only literal backslashes, so the character after it is
+    unescaped. An even run of two or more directly before a character in
+    _OVERESCAPE_NEXT is flagged, which covers four backslashes too: they
+    mean two literal backslashes and then a live metacharacter, almost never
+    intended. A run at the very end of the string, or before an ordinary
+    character, is a legitimate literal backslash and is not flagged.
+
+    Runs inside a character class are skipped, structurally: `[\\\\]` is the
+    sanctioned way to say "a literal backslash" and must stay clean, so the
+    escape hatch is the class itself, not a string match on its spelling.
+    """
+    runs: list[tuple[int, int]] = []
+    in_class = False
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            j = i
+            while j < n and pattern[j] == "\\":
+                j += 1
+            length = j - i
+            if (not in_class and length % 2 == 0 and j < n
+                    and pattern[j] in _OVERESCAPE_NEXT):
+                runs.append((i, length))
+            # Odd run: the last backslash escapes pattern[j], so it can
+            # neither open nor close a class. Even run: pattern[j] is live.
+            i = j + 1 if length % 2 else j
+            continue
+        if in_class:
+            if c == "]":
+                in_class = False
+        elif c == "[":
+            in_class = True
+            # A leading "^" and then "]" are literal members of the class.
+            if i + 1 < n and pattern[i + 1] == "^":
+                i += 1
+            if i + 1 < n and pattern[i + 1] == "]":
+                i += 1
+        i += 1
+    return runs
+
+
+def _overescape_hint(pattern: str) -> str | None:
+    """*pattern* with only the offending runs halved, or None when clean."""
+    runs = _overescape_runs(pattern)
+    if not runs:
+        return None
+    out, last = [], 0
+    for start, length in runs:
+        out.append(pattern[last:start])
+        out.append("\\" * (length // 2))
+        last = start + length
+    out.append(pattern[last:])
+    return "".join(out)
+
+
+def _regex_field_findings(label: str, value: str) -> tuple[list[Finding], re.Pattern | None]:
+    """The one gate every regex-valued field passes (#404): pattern anchors,
+    command anchors, violation and revives_if. Compile, over-escape, ReDoS.
+
+    Returns the findings and the compiled regex (None when it did not
+    compile), so a caller with a field-specific rule can reuse it.
+    """
+    findings = []
+    # Reported even when the regex does not compile: `NewConformance\\(` fails
+    # with "missing )", which hides the real cause. Name both.
+    hint = _overescape_hint(value)
+    if hint is not None:
+        findings.append(Finding(
+            "error", f"over-escaped {label} /{value}/: a doubled backslash "
+            "before a regex escape or metacharacter is a literal backslash, "
+            "so this can never match real code (the value is read verbatim, "
+            f"nothing un-escapes it); you probably meant /{hint}/. For a "
+            "literal backslash write it inside a character class, [\\\\]"))
+    try:
+        rx = re.compile(value)
+    except re.error as exc:
+        findings.append(Finding("error", f"invalid {label} /{value}/: {exc}"))
+        return findings, None
+    if _is_redos_prone(value):
+        findings.append(Finding(
+            "error", f"pathological {label} /{value}/: nested quantifier "
+            "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+    return findings, rx
+
+
 # The model extracts `path`/`pattern`/`symbol` anchors; any other anchor key is
 # silently dropped, so a SPEC-following author who writes `- touch:` or
 # `- breaks:` gets false protection (the scar never fires on that anchor).
@@ -297,55 +395,22 @@ def lint_text(text: str, today: str | None = None) -> list[Finding]:
             "warning", "symbol anchors need the [symbols] extra to resolve — "
             "install scar-cli[symbols], or keep a path/pattern anchor as backup"))
     for pat in scar.pattern_anchors:
-        try:
-            re.compile(pat)
-        except re.error as exc:
-            findings.append(Finding("error", f"invalid pattern anchor /{pat}/: {exc}"))
-            continue
-        if _is_redos_prone(pat):
-            findings.append(Finding(
-                "error", f"pathological pattern anchor /{pat}/: nested quantifier "
-                "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+        findings.extend(_regex_field_findings("pattern anchor", pat)[0])
     for cmd in scar.command_anchors:
-        try:
-            rx = re.compile(cmd)
-        except re.error as exc:
-            findings.append(Finding("error", f"invalid command anchor /{cmd}/: {exc}"))
-            continue
-        if rx.search(""):
+        cmd_findings, rx = _regex_field_findings("command anchor", cmd)
+        findings.extend(cmd_findings)
+        if rx is not None and rx.search(""):
             findings.append(Finding(
                 "error", f"command anchor /{cmd}/ matches the empty string — it "
                 "would fire on every command; anchor a concrete command shape"))
-        if _is_redos_prone(cmd):
-            findings.append(Finding(
-                "error", f"pathological command anchor /{cmd}/: nested quantifier "
-                "risks catastrophic backtracking (ReDoS) — simplify the regex"))
     if scar.violation:
-        try:
-            re.compile(scar.violation)
-        except re.error as exc:
-            findings.append(Finding("error", f"invalid violation /{scar.violation}/: {exc}"))
-        else:
-            if _is_redos_prone(scar.violation):
-                findings.append(Finding(
-                    "error", f"pathological violation /{scar.violation}/: nested quantifier "
-                    "risks catastrophic backtracking (ReDoS) — simplify the regex"))
+        findings.extend(_regex_field_findings("violation", scar.violation)[0])
     # revives_if (#205): compiled and matched against tracked content on every
     # liveness pass, so it carries the same gates as violation. NOT checked for
     # liveness: a revival predicate matching nothing is the HEALTHY state (the
     # hazard has not returned) — the #156 reintroduction-guard distinction.
     if scar.revives_if:
-        try:
-            re.compile(scar.revives_if)
-        except re.error as exc:
-            findings.append(Finding(
-                "error", f"invalid revives_if /{scar.revives_if}/: {exc}"))
-        else:
-            if _is_redos_prone(scar.revives_if):
-                findings.append(Finding(
-                    "error", f"pathological revives_if /{scar.revives_if}/: nested "
-                    "quantifier risks catastrophic backtracking (ReDoS) — simplify "
-                    "the regex"))
+        findings.extend(_regex_field_findings("revives_if", scar.revives_if)[0])
     for name in scar.unreadable_fields:
         findings.append(Finding(
             "error", f"{name} is not a well-formed flow list (expected "

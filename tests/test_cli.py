@@ -5006,3 +5006,64 @@ def test_signed_bytes_do_not_depend_on_how_the_path_was_typed(repo):
         for arg in (".scars/candidates/tried-x.md", str(cand),
                     "./.scars/../.scars/candidates/tried-x.md")}
     assert len(records) == 1
+
+
+DEAD_CAND_PAT = "candidate pattern anchor"
+
+
+def test_lint_candidate_dead_pattern_anchor_warns(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "candidates" / "pat.md").write_text(_shape_scar(
+        [("pattern", "nothing_matches_this")], scar_id=None,
+        status="candidate"))
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    msgs = _shape_msgs(data, DEAD_CAND_PAT)
+    assert len(msgs) == 1
+    assert "nothing_matches_this" in msgs[0]
+    assert "before promotion" in msgs[0]
+    assert chr(0x2014) not in msgs[0]
+    hit = [f for f in data["findings"] if DEAD_CAND_PAT in f["message"]][0]
+    assert hit["level"] == "warning"
+
+
+def test_lint_candidate_live_pattern_anchor_is_quiet(repo, capsys):
+    _shape_repo(repo, markers={3: "needle_token = 1\n"})
+    (repo / ".scars" / "candidates" / "pat.md").write_text(_shape_scar(
+        [("pattern", "needle_token")], scar_id=None, status="candidate"))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, DEAD_CAND_PAT) == []
+
+
+def test_lint_candidate_pattern_matching_only_its_own_body_is_dead(repo, capsys):
+    _shape_repo(repo)
+    scar = _shape_scar([("pattern", "only_in_the_scar")], scar_id=None,
+                       status="candidate").replace("body", "only_in_the_scar")
+    (repo / ".scars" / "candidates" / "self.md").write_text(scar)
+    _, data = _shape_lint(repo, capsys)
+    assert len(_shape_msgs(data, DEAD_CAND_PAT)) == 1
+
+
+def test_lint_dead_pattern_check_leaves_numbered_scars_alone(repo, capsys):
+    _shape_repo(repo)
+    (repo / ".scars" / "0001-x.fence.md").write_text(_shape_scar(
+        [("pattern", "nothing_matches_this")]))
+    _, data = _shape_lint(repo, capsys)
+    assert _shape_msgs(data, DEAD_CAND_PAT) == []
+
+
+def test_lint_issue_404_reproduction_errors_and_exits_nonzero(repo, capsys):
+    init_scars(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.go").write_text("func (s *Snapshot) MarshalJSON() {}\n")
+    _shape_commit(repo)
+    (repo / ".scars" / "candidates" / "snap.md").write_text(
+        "---\ntype: fence\ntitle: snapshot json\nseverity: medium\n"
+        "confidence: 0.8\ncreated: 2026-08-01\nauthors: [\"claude-code\"]\n"
+        "anchors:\n  - path: src/a.go\n"
+        '  - pattern: "func \\\\(\\\\w+ \\\\*?Snapshot\\\\) MarshalJSON"\n'
+        'violation: "func \\\\(\\\\w+ Snapshot\\\\) MarshalJSON"\n'
+        "evidence:\n  - issue: 404\nstatus: candidate\n---\n\nbody\n")
+    rc, data = _shape_lint(repo, capsys)
+    assert rc != 0
+    assert len(_shape_msgs(data, "over-escaped")) == 2

@@ -516,3 +516,103 @@ def test_authors_with_trailing_comment_is_clean():
     findings = lint_text(
         _authors_scar('"codex"').replace('["codex"]', '["codex"]  # who drafted it'))
     assert not any("authors" in f.message for f in findings)
+
+
+# --- over-escaped regex fields (#404) ---
+#
+# The reader takes regex fields verbatim, so a doubled backslash before a
+# metacharacter is a literal backslash followed by the metacharacter. That
+# compiles, never matches real code, and used to pass lint.
+
+OVER_PATTERN = r"func \\(\\w+ \\*?Snapshot\\) MarshalJSON"
+OVER_VIOLATION = r"func \\(\\w+ Snapshot\\) MarshalJSON"
+
+
+def _with(field, value):
+    return GOOD.replace("status: active", f'{field}: "{value}"\nstatus: active')
+
+
+def _anchored(pattern):
+    return GOOD.replace(
+        "  - path: payments/retry.py",
+        f'  - path: payments/retry.py\n  - pattern: "{pattern}"')
+
+
+def _overescaped(findings):
+    return [f for f in findings if f.level == "error" and "over-escaped" in f.message]
+
+
+def test_overescaped_pattern_anchor_is_error_naming_single_backslash_form():
+    found = _overescaped(lint_text(_anchored(OVER_PATTERN)))
+    assert len(found) == 1
+    assert r"func \(\w+ \*?Snapshot\) MarshalJSON" in found[0].message
+
+
+def test_overescaped_violation_is_error_naming_single_backslash_form():
+    found = _overescaped(lint_text(_with("violation", OVER_VIOLATION)))
+    assert len(found) == 1
+    assert r"func \(\w+ Snapshot\) MarshalJSON" in found[0].message
+
+
+def test_overescaped_revives_if_is_error():
+    text = GOOD.replace(
+        "status: active", f'revives_if: "{OVER_VIOLATION}"\nstatus: archived')
+    found = _overescaped(lint_text(text))
+    assert len(found) == 1 and "revives_if" in found[0].message
+
+
+def test_overescaped_command_anchor_is_error():
+    text = GOOD.replace(
+        "  - path: payments/retry.py",
+        '  - command: "git \\\\(status\\\\)"')
+    assert len(_overescaped(lint_text(text))) == 1
+
+
+def test_each_metachar_and_class_escape_is_flagged():
+    for ch in "()[]{}.*+?|^$bBsSwWdD":
+        found = _overescaped(lint_text(_with("violation", f"a\\\\{ch}")))
+        assert found, ch
+
+
+def test_literal_backslash_class_escape_hatch_is_clean():
+    # [\\]b = a literal backslash, then the letter b. Recognised because the
+    # doubled backslash sits inside a character class, not by matching text.
+    assert _overescaped(lint_text(_with("violation", r"[\\]b"))) == []
+    assert _overescaped(lint_text(_with("violation", r"x[^a\\]+\\"))) == []
+
+
+def test_hatch_is_structural_not_a_string_match():
+    # Doubled backslash before a bracket outside any class is still flagged.
+    assert _overescaped(lint_text(_with("violation", r"a\\]b")))
+
+
+def test_single_backslash_regexes_stay_clean():
+    for ok in (r"func \(\w+ \*?Snapshot\) MarshalJSON", r"\bwiden\b",
+               r"a\.b", r"\\n", r"a\\", r"\\\("):
+        assert _overescaped(lint_text(_with("violation", ok))) == [], ok
+
+
+def test_doubled_backslash_at_end_of_string_is_a_literal_backslash():
+    assert _overescaped(lint_text(_with("violation", "path" + "\\\\"))) == []
+
+
+def test_four_backslashes_before_metachar_is_flagged_and_collapses_pairs_once():
+    # An even run >= 2 leaves the metachar unescaped. Pairs collapse once, so
+    # the hint for four is two (a literal backslash then a group).
+    found = _overescaped(lint_text(_with("violation", "a" + "\\" * 4 + "(b")))
+    assert len(found) == 1
+    assert "/a" + "\\" * 2 + "(b/" in found[0].message
+
+
+def test_odd_run_before_metachar_is_not_flagged():
+    # Three backslashes: a literal backslash then an escaped paren.
+    assert _overescaped(lint_text(_with("violation", "a" + "\\" * 3 + "(b"))) == []
+
+
+def test_uncompilable_overescaped_regex_reports_both_causes():
+    # NewConformance\\( fails to compile ("missing )"), which hides the real
+    # cause; both errors must surface.
+    errors = [f.message for f in lint_text(_with("violation", "New\\\\("))
+              if f.level == "error"]
+    assert any("invalid violation" in m for m in errors)
+    assert any("over-escaped" in m and "/New\\(/" in m for m in errors)
