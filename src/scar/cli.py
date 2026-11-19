@@ -793,7 +793,7 @@ def _cmd_lint(args) -> int:
     # and an error would block promotion on a judgment call.
     if ctx is not None:
         from .match import _anchor_signal, _pattern_anchor_matches
-        from .orphan import _path_anchor_live
+        from .orphan import _path_anchor_live, _pattern_anchor_live
 
         # A violation that can never arm. The matcher arms a violation only
         # when _anchor_signal is positive on an edited PATH with empty content,
@@ -831,6 +831,21 @@ def _cmd_lint(args) -> int:
                         "warning", f"candidate path anchor '{anchor}' matches "
                         "no tracked file; before promotion, check the path "
                         "(a scar anchored to nothing never fires)")]))
+            # The same for a pattern anchor, through the liveness check the
+            # orphan scan uses (whole body, candidate's own file excluded so
+            # it cannot vouch for itself). An uncompilable regex is already
+            # a lint error; do not also call it dead.
+            for pattern in parsed.pattern_anchors:
+                try:
+                    re.compile(pattern)
+                except re.error:
+                    continue
+                if not _pattern_anchor_live(pattern, ctx, exclude_path=rel):
+                    findings_by_file.append((rel, [Finding(
+                        "warning", f"candidate pattern anchor /{pattern}/ "
+                        "matches no tracked file; before promotion, check the "
+                        "regex against the code it must catch (a scar anchored "
+                        "to nothing never fires)")]))
 
         # Broad pattern anchors: the path-breadth rule above, applied to the
         # pattern anchors it ignores. A pattern is matched against the path
