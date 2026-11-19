@@ -5067,3 +5067,14 @@ def test_lint_issue_404_reproduction_errors_and_exits_nonzero(repo, capsys):
     rc, data = _shape_lint(repo, capsys)
     assert rc != 0
     assert len(_shape_msgs(data, "over-escaped")) == 2
+
+
+def test_fresh_init_then_lint_has_no_findings(repo, capsys):
+    """The seed is advertised as lint-clean, so a fresh init followed by lint
+    must report nothing at all, in a real repo with the seed tracked (#404)."""
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    rc, data = _shape_lint(repo, capsys)
+    assert rc == 0
+    assert data["findings"] == []

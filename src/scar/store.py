@@ -193,9 +193,11 @@ for someone (human or agent) with zero context. Cite the evidence inline.
 EXAMPLE_SEED_NAME = "example-first-scar.md"
 
 # A real, lint-clean candidate seeded on FRESH init only (#136 item 3): shows
-# the format, both anchor kinds, and the candidate -> promote lifecycle before
+# the format, the path anchor, and the candidate -> promote lifecycle before
 # any real pain accumulates. status: candidate means it never injects and is
-# never orphan-checked; the inert pattern anchor can't match real code.
+# never orphan-checked. It carries NO pattern anchor on purpose: a candidate
+# pattern that matches no tracked file draws a lint warning (#404), and the
+# seed must not demonstrate a shape lint calls a mistake.
 EXAMPLE_SEED = """\
 ---
 type: fence
@@ -205,7 +207,6 @@ confidence: 1.0
 authors: ["scar-init"]
 anchors:
   - path: .scars/candidates/example-first-scar.md
-  - pattern: "scar-example-inert-anchor-never-matches"
 evidence:
   - note: seeded by `scar init` as a worked example
 status: candidate
@@ -217,8 +218,8 @@ something there (landmine). Agents get matching scars injected before they
 edit anchored code — pain recorded once, never repeated.
 
 This file is a live example of the format. The `path:` anchor points at a file
-(this one); the `pattern:` anchor would fire when matching code appears in any
-edit (this one is inert on purpose). `status: candidate` means it does NOT
+(this one). A `pattern:` anchor fires when matching code appears in any edit,
+and lint warns if it matches nothing. `status: candidate` means it does NOT
 inject yet — a human reviews and runs `scar promote example-first-scar.md` to
 activate it, which assigns an id and moves it to `.scars/`.
 
