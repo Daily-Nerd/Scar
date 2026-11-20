@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.30.0](https://github.com/Daily-Nerd/Scar/compare/v0.29.1...v0.30.0) (2026-11-20)
+
+
+### Features
+
+* **lint:** report a promotion act that no longer matches its record ([#410](https://github.com/Daily-Nerd/Scar/issues/410)) ([d8dc89a](https://github.com/Daily-Nerd/Scar/commit/d8dc89a55de3c0a066f11f88f2d791976c893c93)), closes [#409](https://github.com/Daily-Nerd/Scar/issues/409)
+
+
+### Bug Fixes
+
+* **lint:** say only what the over-escape check proves and offer both respellings ([#408](https://github.com/Daily-Nerd/Scar/issues/408)) ([3d01d66](https://github.com/Daily-Nerd/Scar/commit/3d01d66d353232699ed50aacf98897872ad5472c)), closes [#407](https://github.com/Daily-Nerd/Scar/issues/407)
+
 ## [0.29.1](https://github.com/Daily-Nerd/Scar/compare/v0.29.0...v0.29.1) (2026-11-19)
 
 
