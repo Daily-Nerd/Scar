@@ -6,13 +6,18 @@ embedded so `scar init` works from a bare install with no data files.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import presence
 from .lint import lint_text
 from .model import TYPES, ParseError, Scar, parse_scar_text
+from .record import record_hash
 
 SLUG_MAX = 60
 _TYPE_EXT_CHAIN = re.compile(r"(?:\.(?:%s))+$" % "|".join(TYPES))
@@ -127,6 +132,66 @@ def _check_transition(old: str, new: str, *, via_promote: bool = False) -> None:
     if new not in LIFECYCLE_TRANSITIONS.get(old, ()) or (
             ((old, new) in PROMOTE_ONLY) != via_promote):
         raise ValueError(f"illegal lifecycle transition {old} -> {new}")
+
+class SignedRecordWouldChange(ValueError):
+    """A rewrite was refused because the scar carries a promotion act that
+    matches its record today and would not afterwards. Nothing was written."""
+
+    def __init__(self, scar_id: int | None):
+        self.scar_id = scar_id
+        super().__init__(
+            f"scar {scar_id} is signed: this rewrite would change its record "
+            "(or its promotion_act) under a signed act, so nothing was written")
+
+
+def _act_matches_record(scar: Scar) -> bool | None:
+    """True when the scar's act matches its record, False when it does not,
+    None when there is no act to judge (none, no id, or unreadable)."""
+    if not scar.promotion_act or scar.id is None:
+        return None
+    try:
+        signed = presence.act_inputs_hash(scar.promotion_act)
+    except presence.MalformedAct:
+        return None
+    return signed == record_hash(scar)
+
+
+def write_active_scar(path: Path, new_text: str) -> None:
+    """The one in-place write of an active scar file (#412).
+
+    Rule: no Scar command turns an act that matches its record into one that
+    does not. An act that already mismatched or cannot be read is left to
+    lint, and the file is written, so such a scar stays archivable. When the
+    old act matched, the new text must keep the same act and the same record;
+    anything else (record changed, act dropped, act altered, text that no
+    longer parses) raises SignedRecordWouldChange and the file is untouched.
+    The write is a temp file in the same directory swapped in with
+    os.replace, keeping the file's mode and following a symlink."""
+    target = Path(os.path.realpath(path))
+    try:
+        old = parse_scar_text(target.read_text(encoding="utf-8"))
+    except ParseError:
+        old = None
+    if old is not None and _act_matches_record(old):
+        try:
+            new = parse_scar_text(new_text)
+            keeps = (new.promotion_act == old.promotion_act
+                     and _act_matches_record(new) is True)
+        except ParseError:
+            keeps = False
+        if not keeps:
+            raise SignedRecordWouldChange(old.id)
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.",
+                                    suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(new_text)
+        shutil.copymode(target, tmp_name)
+        os.replace(tmp_name, target)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
 
 README = """\
 # .scars/ — Negative knowledge for this repo
@@ -430,7 +495,7 @@ class ScarStore:
                     raise ValueError(f"scar #{scar_id}: {exc}") from None
                 s.status = new_status
                 s.evidence.append(f"note: {new_status} {date}: {reason}")
-                f.write_text(s.to_text(), encoding="utf-8")
+                write_active_scar(f, s.to_text())
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
@@ -444,7 +509,7 @@ class ScarStore:
         for f, s in self.parsed():
             if s.id == scar_id:
                 s.evidence.append(note)
-                f.write_text(s.to_text(), encoding="utf-8")
+                write_active_scar(f, s.to_text())
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
