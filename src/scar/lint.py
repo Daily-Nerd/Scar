@@ -361,7 +361,8 @@ def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
                     and scar.id >= cfg.signed_from and not scar.promotion_act):
                 out.append((rel, Finding(
                     "error", f"scar {scar.id} was promoted under the org "
-                    f"(signed_from is {cfg.signed_from}) but carries no promotion_act")))
+                    f"(signed_from is {cfg.signed_from}) but carries no promotion_act"
+                    f"{_resign_hint(scar)}")))
     return out
 
 

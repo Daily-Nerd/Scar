@@ -463,3 +463,16 @@ def test_outside_a_scars_repo_resign_fails(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["resign", "--id", "1"]) == 1
     assert "no .scars/ directory" in capsys.readouterr().out
+
+
+def test_lint_names_the_remedy_for_a_never_signed_active_scar(repo, capsys):
+    put(repo, scar_text(act=""))
+    rc, out = lint(capsys)
+    assert rc == 1
+    assert "carries no promotion_act; run scar resign --id 1" in out
+
+
+def test_lint_does_not_offer_resign_for_an_archived_scar_without_an_act(repo, capsys):
+    put(repo, scar_text(act="", status="archived"))
+    rc, out = lint(capsys)
+    assert "carries no promotion_act" in out and "scar resign" not in out

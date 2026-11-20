@@ -235,7 +235,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines`, `path` (the state-dir log, #341), `legacy` (`null`, or `path` + `lines` of a leftover `.scars/candidates/fp-log.txt`) |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
-| `resign` | `signed` bool, `id` int. `path` str **only when `signed` is true**; `reason` str and `touch_spent` bool **only when it is false** | — |
+| `resign` | `signed` bool, `id` int. `path` str **only when `signed` is true**; `reason` str and `touch_spent` bool **only when it is false** | none |
 | `draft-check` | `triggered` bool, `revert_language`, `revert_commits`, `reset_hard`, `churn` ints. `message` str **only when `triggered` is true** | — |
 
 `gc` mutates state. A consumer that only wants to observe MUST pass
