@@ -20,7 +20,8 @@ from typing import Callable
 from rich_argparse import RichHelpFormatter
 
 from .firing_log import read_firing_log_records
-from .lint import _is_redos_prone, lint_text
+from .lint import _is_redos_prone, lint_text, render_fit_findings
+from .record import render_fit
 from .match import (
     _armed_candidates,
     _violation_lines,
@@ -721,6 +722,17 @@ def _cmd_lint(args) -> int:
         for rel, finding in downgrade_findings(numbered_scars, cfg, store.next_id()):
             findings_by_file.append((rel, [finding]))
             failed_files.add(rel)
+    # #419: a candidate is measured as it will be promoted, with the id and
+    # promoted_from promote will set. Active scars are never measured.
+    for f in store.candidates():
+        try:
+            candidate = parse_scar_text(f.read_text(encoding="utf-8"))
+        except ParseError:
+            continue  # lint_text already reported it as an error
+        fit_findings = render_fit_findings(
+            f.name, render_fit(store.as_promoted(f, candidate)))
+        if fit_findings:
+            findings_by_file.append((str(f.relative_to(store.root)), fit_findings))
     failed = len(failed_files)
 
     author_files: dict[str, dict[str, list[str]]] = {}

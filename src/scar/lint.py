@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from . import clock, presence, symbols
 from .config import Config, signing_problem
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, Scar, is_valid_url, parse_scar_text
-from .record import record_hash
+from .record import MAX_RECORD_BYTES, MAX_RECORD_LINES, RenderFit, record_hash
 
 
 # A valid regex can still be a ReDoS weapon. re.compile accepts it (the syntax
@@ -354,6 +354,24 @@ def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
                     "error", f"scar {scar.id} was promoted under the org "
                     f"(signed_from is {cfg.signed_from}) but carries no promotion_act")))
     return out
+
+
+def render_fit_findings(name: str, fit: RenderFit) -> list[Finding]:
+    """The warning for a candidate whose record the signer would refuse (#419).
+    A warning, never an error: a repo with signing off loses nothing, and the
+    signer's own render check stays the authority at promotion."""
+    if fit.fits:
+        return []
+    parts = []
+    if fit.bytes_over:
+        parts.append(f"{fit.bytes_over} bytes over the signer's limit of "
+                     f"{MAX_RECORD_BYTES} ({fit.bytes} bytes)")
+    if fit.lines_over:
+        parts.append(f"{fit.lines_over} lines over the signer's limit of "
+                     f"{MAX_RECORD_LINES} ({fit.lines} lines)")
+    return [Finding(
+        "warning", f"candidate {name}: record is {' and '.join(parts)}; it "
+        "cannot be signed at promotion until it is shortened")]
 
 
 def lint_text(text: str, today: str | None = None) -> list[Finding]:

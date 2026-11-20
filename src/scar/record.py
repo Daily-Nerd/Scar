@@ -6,14 +6,16 @@ them. The record holds only what a person decides (id, type, title, severity,
 anchors, body), built from parsed values so frontmatter quoting, key order and
 line endings cannot change it. Lifecycle fields are never included.
 
-Anchors are in on purpose: moving one changes where the scar fires. There is no
-size check here; the signer refuses an oversize record before any confirmation.
+Anchors are in on purpose: moving one changes where the scar fires. Nothing
+here refuses an oversize record: the signer does that before any confirmation,
+and render_fit only predicts it so an author hears about it while drafting.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from .model import Scar
@@ -69,3 +71,59 @@ def record_hash(scar: Scar) -> str:
     stored, so an act can be compared against the record it sits on."""
     digest = hashlib.sha256(promoted_record(scar)).digest()
     return "u" + base64.urlsafe_b64encode(b"\x12\x20" + digest).decode("ascii").rstrip("=")
+
+
+# The signer's render limits for the block that shows a record (#419). It
+# refuses, never truncates, so a record over either cannot be signed.
+MAX_RECORD_BYTES = 2048
+MAX_RECORD_LINES = 32
+# An escaped line wraps into continuation lines of at most this many characters.
+_WRAP_WIDTH = 96
+
+
+@dataclass(frozen=True)
+class RenderFit:
+    bytes: int
+    lines: int
+
+    @property
+    def bytes_over(self) -> int:
+        return max(0, self.bytes - MAX_RECORD_BYTES)
+
+    @property
+    def lines_over(self) -> int:
+        return max(0, self.lines - MAX_RECORD_LINES)
+
+    @property
+    def fits(self) -> bool:
+        return self.bytes_over == 0 and self.lines_over == 0
+
+
+def _block_lines(raw: bytes) -> int:
+    """Block lines the signer renders for `raw`. Per source line: a printable
+    ASCII byte (0x20 to 0x7E) is one character, any other byte is the four
+    characters `\\xHH`; an escape is never split, so a line wraps before the
+    escape that would pass the width. A final LF ends the last line, it does
+    not start another; an empty line still takes one block line."""
+    pieces = raw.split(b"\n")
+    if pieces[-1] == b"":
+        pieces.pop()
+    total = 0
+    for piece in pieces:
+        total += 1
+        size = 0
+        for byte in piece:
+            width = 1 if 0x20 <= byte <= 0x7E else 4
+            if size + width > _WRAP_WIDTH:
+                total += 1
+                size = 0
+            size += width
+    return total
+
+
+def render_fit(scar: Scar) -> RenderFit:
+    """Size of the record a promotion would sign, in the two units the signer
+    limits. Like promoted_record it needs the scar as it will be promoted (an
+    id, and promoted_from when promote sets it)."""
+    raw = promoted_record(scar)
+    return RenderFit(bytes=len(raw), lines=_block_lines(raw))

@@ -573,8 +573,7 @@ class ScarStore:
         self.check_promotable(candidate)
         candidate = self.candidate_path(candidate)
         text = candidate.read_text(encoding="utf-8")
-        scar = parse_scar_text(text)
-        scar.id = self.next_id()
+        scar = self.as_promoted(candidate, parse_scar_text(text))
         scar.status = "active"
         # #287: the reviewer is who VOUCHED, its own key. Never appended to
         # authors (that was #182's dedup, which an agent could turn into a
@@ -589,11 +588,6 @@ class ScarStore:
         # like promoted_by itself: whatever the candidate carried here was
         # never a real vouch either.
         scar.promoted_by_source = reviewer_source if reviewer else None
-        # Always overwritten, like promoted_by: only promote knows the real
-        # source. candidate is already resolved and known to sit in
-        # candidates/, so this is the same string however the path was typed.
-        scar.promoted_from = candidate.relative_to(
-            self.scars_dir.resolve()).as_posix()
         # Like promoted_by, cleared: a candidate cannot have been signed, so an
         # act or receipt it carries is a claim nobody made (an agent can write
         # one). Only the signing step sets them, on the prepared scar.
@@ -602,6 +596,18 @@ class ScarStore:
         return PreparedPromotion(
             candidate=candidate, scar=scar,
             destination=self._destination(candidate, scar, scar.id))
+
+    def as_promoted(self, candidate: Path, scar: Scar) -> Scar:
+        """`scar` with the two record fields promotion decides: the next free
+        id and promoted_from. The one place they are set, so lint can measure
+        the record a candidate will sign without promoting it (#419).
+        promoted_from is always overwritten, like promoted_by: only promote
+        knows the real source. `candidate` must be resolved and inside
+        candidates/, so this is the same string however the path was typed."""
+        scar.id = self.next_id()
+        scar.promoted_from = candidate.relative_to(
+            self.scars_dir.resolve()).as_posix()
+        return scar
 
     def commit_promotion(self, prepared: "PreparedPromotion") -> Path:
         """Write the prepared scar, then remove its candidate. The write is an
