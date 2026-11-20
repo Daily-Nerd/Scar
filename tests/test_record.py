@@ -2,7 +2,7 @@
 import pytest
 
 from scar.model import parse_scar_text
-from scar.record import promoted_record
+from scar.record import promoted_record, record_hash
 
 BASE = """---
 id: 5
@@ -162,3 +162,31 @@ def test_promoted_from_is_in_the_record_only_when_present():
                                  "promoted_by: kibukx\npromoted_from: candidates/x.md"))
     assert b"promoted_from: candidates/x.md\n" in with_from
     assert with_from != rec(BASE)
+
+
+def test_record_hash_is_a_prefixed_multihash_of_the_record_bytes():
+    import base64
+    import hashlib
+    digest = hashlib.sha256(promoted_record(parse_scar_text(BASE))).digest()
+    expected = "u" + base64.urlsafe_b64encode(b"\x12\x20" + digest).decode().rstrip("=")
+    assert record_hash(parse_scar_text(BASE)) == expected
+    assert expected.startswith("uEi") and "=" not in expected
+
+
+def test_record_hash_follows_the_record_and_ignores_lifecycle():
+    scar = parse_scar_text(BASE)
+    before = record_hash(scar)
+    scar.status = "archived"
+    scar.evidence.append("note: more")
+    assert record_hash(scar) == before
+    scar.title = "Another title"
+    assert record_hash(scar) != before
+
+
+def test_the_conformance_fixture_act_pins_scars_hash_to_the_signers():
+    import json
+    import conformance_support as cs
+    from scar import presence
+    fixture = json.loads(cs.FIXTURE_PATH.read_text())
+    scar = parse_scar_text(cs.FIXTURE_SCAR)
+    assert presence.act_inputs_hash(fixture["jws"]) == record_hash(scar)

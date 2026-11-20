@@ -11,6 +11,8 @@ size check here; the signer refuses an oversize record before any confirmation.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -58,3 +60,12 @@ def promoted_record(scar: Scar) -> bytes:
     body = scar.body.replace("\r\n", "\n").replace("\r", "\n").rstrip()
     lines += ["---", body]
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def record_hash(scar: Scar) -> str:
+    """The hash string an act stores as `inputs_hash` for this scar's record:
+    "u" plus unpadded base64url of 0x12 0x20 (sha256 multihash prefix) and the
+    sha256 of promoted_record(). Computed from the file every time, never
+    stored, so an act can be compared against the record it sits on."""
+    digest = hashlib.sha256(promoted_record(scar)).digest()
+    return "u" + base64.urlsafe_b64encode(b"\x12\x20" + digest).decode("ascii").rstrip("=")

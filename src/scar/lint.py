@@ -8,9 +8,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from . import clock, symbols
+from . import clock, presence, symbols
 from .config import Config, signing_problem
 from .model import SEVERITIES, STATUSES, TYPES, ParseError, Scar, is_valid_url, parse_scar_text
+from .record import record_hash
 
 
 # A valid regex can still be a ReDoS weapon. re.compile accepts it (the syntax
@@ -298,6 +299,9 @@ def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
     - an act with no org in the config (the org was deleted);
     - an org, and a scar at or after signed_from with no act (the act was
       dropped, or the scar was promoted around signing).
+    - an act whose inputs_hash is not the hash of the scar's current record
+      (#409): the record was changed after signing. Only a mismatch is
+      reported; a match proves nothing about the signature.
     It reads no signature: whether an act is genuine is the checker's job."""
     out: list[tuple[str, Finding]] = []
     if cfg.org is None:
@@ -310,6 +314,23 @@ def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
     problem = signing_problem(cfg, next_id)
     if problem:
         out.append((CONFIG_REL, Finding("error", problem)))
+    # With no org (returned above) the act is already an error for that cause,
+    # so staleness is only judged once an org exists: one cause, one error.
+    for rel, scar in scars:
+        if not scar.promotion_act or scar.id is None:
+            continue
+        try:
+            signed = presence.act_inputs_hash(scar.promotion_act)
+        except presence.MalformedAct as exc:
+            out.append((rel, Finding(
+                "error", f"scar {scar.id} carries a promotion_act that cannot be read "
+                f"({exc.reason}); it cannot be compared with the record")))
+            continue
+        if signed != record_hash(scar):
+            out.append((rel, Finding(
+                "error", f"scar {scar.id} changed since it was signed: its promotion_act "
+                "was made for a different record (id, type, title, severity, promoted_from, "
+                "anchors or body), so it needs a new signature")))
     if cfg.signed_from is not None:
         for rel, scar in scars:
             if (scar.status != "candidate" and scar.id is not None
