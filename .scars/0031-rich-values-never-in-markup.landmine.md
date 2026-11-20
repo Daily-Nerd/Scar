@@ -1,16 +1,20 @@
 ---
+id: 31
 type: landmine
 title: Terminal output must pass values to rich as data through output.fmt, never inside a markup string
 severity: high
 confidence: 0.9
 created: 2026-11-20
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/rich-values-never-in-markup.md
 anchors:
   - path: src/scar/output.py
   - path: src/scar/cli.py
 evidence:
   - issue: 414
-status: candidate
+status: active
 ---
 
 Rich reads square brackets in any string as style tags. A value put into a
