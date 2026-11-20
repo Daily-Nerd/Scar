@@ -305,6 +305,14 @@ def _candidate_author_findings(authors: list[str]) -> list[Finding]:
 CONFIG_REL = ".scars/config.json"
 
 
+def _resign_hint(scar: Scar) -> str:
+    """The remedy for an act that cannot be trusted, only where it can be
+    taken: resign refuses a scar that is not active."""
+    if scar.status != "active":
+        return ""
+    return f"; run scar resign --id {scar.id}"
+
+
 def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
                        next_id: int) -> list[tuple[str, Finding]]:
     """The downgrade guard (#392): structural, so CI runs it with no verifier.
@@ -339,13 +347,14 @@ def downgrade_findings(scars: list[tuple[str, Scar]], cfg: Config,
         except presence.MalformedAct as exc:
             out.append((rel, Finding(
                 "error", f"scar {scar.id} carries a promotion_act that cannot be read "
-                f"({exc.reason}); it cannot be compared with the record")))
+                f"({exc.reason}); it cannot be compared with the record"
+                f"{_resign_hint(scar)}")))
             continue
         if signed != record_hash(scar):
             out.append((rel, Finding(
                 "error", f"scar {scar.id} changed since it was signed: its promotion_act "
                 "was made for a different record (id, type, title, severity, promoted_from, "
-                "anchors or body), so it needs a new signature")))
+                f"anchors or body), so it needs a new signature{_resign_hint(scar)}")))
     if cfg.signed_from is not None:
         for rel, scar in scars:
             if (scar.status != "candidate" and scar.id is not None

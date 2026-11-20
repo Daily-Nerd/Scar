@@ -1236,6 +1236,72 @@ def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
     return 0
 
 
+def _resign_result(args, scar_id: int, message: str, *, touch_spent: bool = False,
+                   no_touch: bool = False) -> int:
+    """One refusal or failure of `scar resign`, through the three output
+    paths. `no_touch` adds the line that says nothing was asked of the person."""
+    data = {"signed": False, "id": scar_id, "reason": message, "touch_spent": touch_spent}
+
+    def plain():
+        print(message)
+        if no_touch:
+            print("nothing was signed: no touch was requested")
+
+    def tty():
+        output.say(output.fmt("[red]not signed:[/] {}", message))
+        if no_touch:
+            output.say(output.fmt("[dim]no touch was requested[/]"))
+
+    output.render(data=data, json_flag=args.json, tty=tty, plain=plain)
+    return 1
+
+
+def _cmd_resign(args) -> int:
+    """Sign the record of active scar N as it stands now (#425), replacing the
+    act and receipt it carries. Every refusal that can be made without a person
+    is made before the touch; the file is only ever written after the checker
+    accepted the act."""
+    store = _require_store()
+    if store is None:
+        return 1
+    try:
+        cfg = config.load(store.scars_dir)
+    except config.ConfigError as exc:
+        return _resign_result(args, args.id, f"refusing to resign: {exc}")
+    if cfg.org is None:
+        return _resign_result(
+            args, args.id, "refusing to resign: no org in .scars/config.json, so there "
+            "is nothing to sign for")
+    problem = config.signing_problem(cfg, store.next_id())
+    if problem:
+        return _resign_result(args, args.id, f"refusing to resign: {problem}")
+    try:
+        path, scar = signedpromote.resign_target(store, args.id)
+    except signedpromote.SignedPromoteError as exc:
+        return _resign_result(args, args.id, str(exc))
+    try:
+        original = signedpromote.resign_preflight(store, cfg.org, path, scar)
+    except signedpromote.SignedPromoteError as exc:
+        return _resign_result(args, args.id, f"cannot sign: {exc}", no_touch=True)
+    try:
+        signedpromote.resign_one(store, cfg.org, path, scar, original)
+    except signedpromote.SignedPromoteError as exc:
+        return _resign_result(args, args.id, str(exc), touch_spent=exc.touch_spent)
+    rel = path.relative_to(store.root).as_posix()
+    data = {"signed": True, "id": args.id, "path": rel}
+
+    def plain():
+        print(f"signed -> {rel}")
+        print("  a person's presence was proven")
+
+    def tty():
+        output.say(output.fmt("[green]signed[/] -> [bold]{}[/]", rel))
+        output.say(output.fmt("a person's presence was proven"))
+
+    output.render(data=data, json_flag=args.json, tty=tty, plain=plain)
+    return 0
+
+
 def _cmd_check(args) -> int:
     """CI gate for humans and CI (README). Accepts one or more paths, or a
     --diff (same union-of-changed-files discovery as `inject --diff`, #106).
@@ -3623,6 +3689,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reviewer", default="",
                    help="the human vouching for this scar, recorded as promoted_by "
                         "(default: git config user.name)")
+
+    p = _add(sub, "resign", _cmd_resign,
+             help="sign an active scar's record again (one touch)")
+    p.add_argument("--id", type=int, required=True, help="id of the active scar to sign")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     p = _add(sub, "check", _cmd_check, help="scars anchored to a path (CI gate with --exit-code)")
     p.add_argument("path", nargs="*", default=[], help="path(s) to check")

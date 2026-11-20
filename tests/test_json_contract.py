@@ -53,6 +53,7 @@ GUARANTEED: dict[str, set[str]] = {
            "fp_log"},
     "orphan": {"orphan_detected", "partial_rot"},
     "reanchor": {"proposals", "pattern_diagnostics"},
+    "resign": {"signed", "id"},
     # `message` is deliberately NOT here: it is added only on triggered: true
     # (see test_draft_check_message_is_conditional_on_triggered).
     "draft-check": {"triggered", "revert_language", "revert_commits",
@@ -72,6 +73,9 @@ ARGV: dict[str, list[str]] = {
     "orphan": ["orphan", "--json"],
     "reanchor": ["reanchor", "--json"],
     "draft-check": ["draft-check", "--json"],
+    # The fixture names no org, so this is the refusal shape; the keys below
+    # are on every run, signed or refused.
+    "resign": ["resign", "--id", "1", "--json"],
 }
 
 # SPEC §9.3, right-hand column: keys promised on each object inside a list.

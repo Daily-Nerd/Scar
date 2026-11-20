@@ -144,7 +144,7 @@ class SignedRecordWouldChange(ValueError):
             "(or its promotion_act) under a signed act, so nothing was written")
 
 
-def _act_matches_record(scar: Scar) -> bool | None:
+def act_matches_record(scar: Scar) -> bool | None:
     """True when the scar's act matches its record, False when it does not,
     None when there is no act to judge (none, no id, or unreadable)."""
     if not scar.promotion_act or scar.id is None:
@@ -172,11 +172,11 @@ def write_active_scar(path: Path, new_text: str) -> None:
         old = parse_scar_text(target.read_text(encoding="utf-8"))
     except ParseError:
         old = None
-    if old is not None and _act_matches_record(old):
+    if old is not None and act_matches_record(old):
         try:
             new = parse_scar_text(new_text)
             keeps = (new.promotion_act == old.promotion_act
-                     and _act_matches_record(new) is True)
+                     and act_matches_record(new) is True)
         except ParseError:
             keeps = False
         if not keeps:

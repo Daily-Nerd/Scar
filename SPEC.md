@@ -172,8 +172,8 @@ All harvest output is `candidates/`, never active. Precision over recall: a harv
 
 ## 9. Machine-readable output contract
 
-Ten subcommands accept `--json`: `lint`, `status`, `check`, `sweep`, `why`,
-`stats`, `gc`, `orphan`, `reanchor`, `draft-check`. Two more are machine-mode by
+Eleven subcommands accept `--json`: `lint`, `status`, `check`, `sweep`, `why`,
+`stats`, `gc`, `orphan`, `reanchor`, `draft-check`, `resign`. Two more are machine-mode by
 design: `scar inject` (hook JSON or silence) and `scar brief --compact`.
 
 Everything in this section is a **promise to external consumers**. It exists
@@ -235,6 +235,7 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines`, `path` (the state-dir log, #341), `legacy` (`null`, or `path` + `lines` of a leftover `.scars/candidates/fp-log.txt`) |
 | `orphan` | `orphan_detected`, `partial_rot` arrays | — |
 | `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
+| `resign` | `signed` bool, `id` int. `path` str **only when `signed` is true**; `reason` str and `touch_spent` bool **only when it is false** | — |
 | `draft-check` | `triggered` bool, `revert_language`, `revert_commits`, `reset_hard`, `churn` ints. `message` str **only when `triggered` is true** | — |
 
 `gc` mutates state. A consumer that only wants to observe MUST pass
