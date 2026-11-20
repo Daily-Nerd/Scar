@@ -128,8 +128,10 @@ def _is_redos_prone(pattern: str) -> bool:
 
 # #404: the reader takes regex fields verbatim (no YAML unescaping), so a
 # doubled backslash before a regex escape or metacharacter is a literal
-# backslash followed by that character. It compiles, it is not ReDoS-prone,
-# and it can never match the code it was written to protect.
+# backslash followed by that character. It compiles and is not ReDoS-prone.
+# Usually the author meant the escape, but a target that really holds a
+# backslash (regex source in a raw string) is matched by the doubled form, so
+# the check only claims what the spelling proves.
 _OVERESCAPE_NEXT = frozenset("()[]{}.*+?|^$bBsSwWdD")
 
 
@@ -180,18 +182,29 @@ def _overescape_runs(pattern: str) -> list[tuple[int, int]]:
     return runs
 
 
-def _overescape_hint(pattern: str) -> str | None:
-    """*pattern* with only the offending runs halved, or None when clean."""
+def _overescape_respellings(pattern: str) -> tuple[str, str] | None:
+    """(halved, class form) for an over-escaped *pattern*, or None when clean.
+
+    Both rewrite only the flagged runs. The halved form is for an author who
+    meant the escape. The class form puts each doubled pair in `[\\\\]`, for
+    an author who meant a real backslash: it matches the same text as the
+    original, and the class is the spelling the rule accepts.
+    """
     runs = _overescape_runs(pattern)
     if not runs:
         return None
-    out, last = [], 0
+    halved, classed, last = [], [], 0
     for start, length in runs:
-        out.append(pattern[last:start])
-        out.append("\\" * (length // 2))
+        gap = pattern[last:start]
+        halved.append(gap)
+        classed.append(gap)
+        halved.append("\\" * (length // 2))
+        classed.append("[\\\\]" * (length // 2))
         last = start + length
-    out.append(pattern[last:])
-    return "".join(out)
+    tail = pattern[last:]
+    halved.append(tail)
+    classed.append(tail)
+    return "".join(halved), "".join(classed)
 
 
 def _regex_field_findings(label: str, value: str) -> tuple[list[Finding], re.Pattern | None]:
@@ -204,14 +217,16 @@ def _regex_field_findings(label: str, value: str) -> tuple[list[Finding], re.Pat
     findings = []
     # Reported even when the regex does not compile: `NewConformance\\(` fails
     # with "missing )", which hides the real cause. Name both.
-    hint = _overescape_hint(value)
-    if hint is not None:
+    respelled = _overescape_respellings(value)
+    if respelled is not None:
+        halved, classed = respelled
         findings.append(Finding(
             "error", f"over-escaped {label} /{value}/: a doubled backslash "
-            "before a regex escape or metacharacter is a literal backslash, "
-            "so this can never match real code (the value is read verbatim, "
-            f"nothing un-escapes it); you probably meant /{hint}/. For a "
-            "literal backslash write it inside a character class, [\\\\]"))
+            "before a regex escape or metacharacter matches a literal "
+            "backslash followed by that character, not the regex escape (the "
+            "value is read verbatim, nothing un-escapes it). If you meant "
+            f"the escape, write /{halved}/. If the text really contains a "
+            f"backslash, write /{classed}/"))
     try:
         rx = re.compile(value)
     except re.error as exc:

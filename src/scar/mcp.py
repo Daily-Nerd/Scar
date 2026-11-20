@@ -187,8 +187,8 @@ TOOLS = [
             "Write a candidate scar to .scars/candidates/ for human promotion. "
             "Use for negative knowledge: deadend (tried+failed), fence (looks "
             "wrong but intentional), or landmine (touching A breaks B). Prefer a "
-            "path: anchor — pattern: regexes over-escape in YAML and silently "
-            "self-match. Writes only to candidates/ and lints before writing; a "
+            "path: anchor; pattern: regexes are read verbatim, and a doubled "
+            "backslash in one means a literal backslash. Writes only to candidates/ and lints before writing; a "
             "human promotes. See the scar-authoring skill (scar agent skill)."
         ),
         "inputSchema": {
