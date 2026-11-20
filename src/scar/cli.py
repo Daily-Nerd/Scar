@@ -51,7 +51,8 @@ from .reanchor import (
 )
 from .render import injection_context, label_line, rule_line
 from .renames import apply_anchor_rewrite, apply_rename_fix
-from .store import ScarStore, init_scars, sanitize_signal_text, slugify
+from .store import (ScarStore, SignedRecordWouldChange, init_scars, sanitize_signal_text,
+                    slugify)
 from .violation_evidence import is_violation_summary
 from . import clock, config, output, signedpromote
 
@@ -1423,13 +1424,21 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
     id_to_path = {s.id: f for f, s in store.parsed() if s.id is not None}
     fixed: list[tuple[int | None, dict[str, str]]] = []
     skipped: list[int | None] = []
+    # Refused by the write gate (#412): the scar carries a signed act that the
+    # rewrite would break. Reported per scar; the batch carries on.
+    refused: list[tuple[int | None, str]] = []
     for of in findings:
         path = id_to_path.get(of.scar_id)
         if not of.renamed or path is None:
             if of.dead_path_anchors:
                 skipped.append(of.scar_id)
             continue
-        if apply_rename_fix(path, of.renamed):
+        try:
+            changed = apply_rename_fix(path, of.renamed)
+        except SignedRecordWouldChange as exc:
+            refused.append((of.scar_id, str(exc)))
+            continue
+        if changed:
             fixed.append((of.scar_id, of.renamed))
         else:
             skipped.append(of.scar_id)
@@ -1437,7 +1446,9 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
     data = {
         "fixed": [{"scar_id": sid, "renamed": renamed} for sid, renamed in fixed],
         "skipped": [{"scar_id": sid} for sid in skipped],
+        "refused": [{"scar_id": sid, "reason": reason} for sid, reason in refused],
     }
+    refused_note = f", {len(refused)} refused" if refused else ""
 
     def plain():
         for sid, renamed in fixed:
@@ -1446,9 +1457,11 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
         for sid in skipped:
             print(f"not fixed [#{sid}] no unambiguous, currently-tracked "
                   "rename target — anchor left as-is")
-        if not fixed and not skipped:
+        for sid, reason in refused:
+            print(f"refused [#{sid}] {reason}")
+        if not fixed and not skipped and not refused:
             print("no orphan-detected scars with a dead path anchor to fix")
-        print(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed")
+        print(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed{refused_note}")
 
     def tty():
         console = output.console
@@ -1458,12 +1471,16 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
         for sid in skipped:
             console.print(f"[yellow]not fixed[/] [#{sid}] no unambiguous, "
                           "currently-tracked rename target")
-        if not fixed and not skipped:
+        for sid, reason in refused:
+            console.print(f"[red]refused[/] [#{sid}] {reason}")
+        if not fixed and not skipped and not refused:
             console.print("[green]no orphan-detected scars with a dead path anchor to fix[/]")
-        console.print(f"[bold]{len(fixed)}[/] scar(s) fixed, [bold]{len(skipped)}[/] left unfixed")
+        console.print(f"[bold]{len(fixed)}[/] scar(s) fixed, [bold]{len(skipped)}[/] left unfixed"
+                      f"{refused_note}")
 
     output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
-    return 0
+    # A batch with a refusal is not a clean success: a human has work to do.
+    return 1 if refused else 0
 
 
 def _cmd_orphan(args) -> int:
@@ -1697,19 +1714,27 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
         notes.append(format_reanchor_note(
             apply_date, kind, dead, only.proposed_anchor, only.confidence))
 
-    for kind, renamed in renamed_by_kind.items():
-        if renamed:
-            apply_anchor_rewrite(scar_file, kind, renamed)
-
-    # Evidence notes (#296): recorded AFTER the anchor rewrite lands, via a
-    # fresh parse of the (already-rewritten) file, so this never races the
-    # surgical rewrite above with a stale in-memory anchor value.
-    for note in notes:
-        store.append_evidence_note(args.id, note)
+    # The write gate (#412) refuses a rewrite that would leave a signed act
+    # not matching its record. Refusal raises before the first byte is
+    # written, so nothing below it runs: no anchor change and no note.
+    refusal: str | None = None
+    try:
+        for kind, renamed in renamed_by_kind.items():
+            if renamed:
+                apply_anchor_rewrite(scar_file, kind, renamed)
+        # Evidence notes (#296): recorded AFTER the anchor rewrite lands, via a
+        # fresh parse of the (already-rewritten) file, so this never races the
+        # surgical rewrite above with a stale in-memory anchor value.
+        for note in notes:
+            store.append_evidence_note(args.id, note)
+    except SignedRecordWouldChange as exc:
+        refusal = str(exc)
+        fixed = []
 
     data = {
         "fixed": [{"anchor_kind": k, "dead_anchor": d, "proposed_anchor": n} for k, d, n in fixed],
         "skipped": [{"anchor_kind": k, "dead_anchor": d, "reason": r} for k, d, r in skipped],
+        "refused": ([{"scar_id": args.id, "reason": refusal}] if refusal else []),
     }
 
     def plain():
@@ -1717,6 +1742,8 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
             print(f"fixed [#{args.id}] {k} {d} -> {n}")
         for k, d, r in skipped:
             print(f"not fixed [#{args.id}] {k} {d}: {r}")
+        if refusal:
+            print(f"refused [#{args.id}] {refusal}")
         print(f"{len(fixed)} anchor(s) fixed, {len(skipped)} left unfixed — status unchanged "
               "(anchors-live-again hint will surface on next `scar lint`)")
 
@@ -1726,10 +1753,12 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
             console.print(f"[green]fixed[/] [#{args.id}] {k} {d} -> {n}")
         for k, d, r in skipped:
             console.print(f"[yellow]not fixed[/] [#{args.id}] {k} {d}: {r}")
+        if refusal:
+            console.print(f"[red]refused[/] [#{args.id}] {refusal}")
         console.print(f"[bold]{len(fixed)}[/] anchor(s) fixed, [bold]{len(skipped)}[/] left unfixed")
 
     output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
-    return 0
+    return 1 if refusal else 0
 
 
 def _cmd_reanchor(args) -> int:
