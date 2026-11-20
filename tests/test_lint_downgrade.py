@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from scar import config, renames
+from scar import config
 from scar.cli import main
 from scar.model import parse_scar_text
 from scar.record import record_hash
@@ -215,9 +215,11 @@ def test_an_act_that_matches_its_record_is_clean_and_says_nothing(repo, capsys):
     assert "signature" not in out and "matches" not in out
 
 
-def test_an_anchor_rewrite_makes_the_act_stale(repo, capsys):
+def test_a_hand_edited_anchor_makes_the_act_stale(repo, capsys):
+    # The anchor writer refuses a signed scar now (#412), so the stale file
+    # is made the way it still can be: by editing it by hand.
     p = signed_repo(repo)
-    assert renames.apply_anchor_rewrite(p, "path", {"src/x.py": "src/y.py"})
+    p.write_text(p.read_text().replace("- path: src/x.py", "- path: src/y.py"))
     rc, out = lint(capsys)
     assert rc == 1
     assert "0001-s1.fence.md" in out and "scar 1" in out and "new signature" in out

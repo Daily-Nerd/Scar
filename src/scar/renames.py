@@ -14,8 +14,11 @@ scans that already have a dead anchor to investigate, never the edit-time hot
 path (#109 AC: "no git invocation added to match.py/hooks.py").
 
 Detection (build_rename_map / resolve_rename / RenameResolver) is READ-ONLY.
-apply_rename_fix is the ONE write path, and it is surgical: a single anchor
-line is text-replaced in place, never a parse+reserialize of the whole scar.
+apply_anchor_rewrite is this module's only write, and it is surgical: a single
+anchor line is text-replaced in place, never a parse+reserialize of the whole
+scar. The text it computes goes out through store.write_active_scar, the one
+gate every in-place rewrite of an active scar file passes through (#412), which
+refuses a rewrite that would leave a signed promotion act not matching its record.
 Landmine #4: promote's parse->Scar.to_text() roundtrip once silently dropped
 the expires/evidence blocks on a hand-authored file — reserializing loses
 whatever the model doesn't round-trip. A rename fix must not repeat that.
@@ -28,6 +31,7 @@ from pathlib import Path
 
 from .evidence import _git, _is_shallow
 from .model import _strip_inline_comment, _unquote
+from .store import write_active_scar
 
 # Directory anchors (trailing '/') and glob-shaped anchors are out of scope —
 # renames apply to concrete tracked files only (#109 design).
@@ -149,7 +153,7 @@ class RenameResolver:
 
 
 # ---------------------------------------------------------------------------
-# Write path — the ONLY place this module mutates a file on disk.
+# Write path: the only place this module mutates a file, via the store gate.
 # ---------------------------------------------------------------------------
 
 _PATH_ANCHOR_LINE_RE = re.compile(r"^\s*-\s*path:\s*(.+?)\s*$")
@@ -205,7 +209,7 @@ def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) 
         lines[i] = line[:abs_start] + new_val + line[abs_end:]
         changed = True
     if changed:
-        path.write_text("\n".join(lines), encoding="utf-8")
+        write_active_scar(path, "\n".join(lines))
     return changed
 
 
