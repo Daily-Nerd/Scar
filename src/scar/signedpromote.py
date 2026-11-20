@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import presence
 from .record import promoted_record, promotion_subject
+from .model import Scar
 from .store import PreparedPromotion, ScarStore
 
 
@@ -31,11 +32,11 @@ class SignedPromoteError(Exception):
         self.cancelled = cancelled
 
 
-def subject_for(store: ScarStore, prepared: PreparedPromotion) -> str:
-    subject = promotion_subject(store.root, prepared.scar.id)
+def subject_for(store: ScarStore, scar: Scar, name: str) -> str:
+    subject = promotion_subject(store.root, scar.id)
     if subject is None:
         raise SignedPromoteError(
-            f"{prepared.candidate.name}: repository root commit unavailable, so the "
+            f"{name}: repository root commit unavailable, so the "
             "promotion cannot be bound to this repository. Nothing was signed.")
     return subject
 
@@ -80,10 +81,15 @@ def preflight(store: ScarStore, org: str, targets: list[Path], reviewer: str,
                 f"{target.name}: the signer cannot show this record: {exc.reason}.") from None
 
 
-def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path:
-    name = prepared.candidate.name
-    record = promoted_record(prepared.scar)
-    subject = subject_for(store, prepared)
+def sign_record(store: ScarStore, scar: Scar, org: str, name: str) -> tuple[str, str]:
+    """Obtain an accepted act and receipt for `scar`'s record as it stands, or
+    raise SignedPromoteError. The one owner of the sequence: head, sign (the
+    touch), first-acceptance check. It writes nothing and assumes neither a
+    candidate nor a file being created, so promotion and any later re-signing
+    share it. `name` only labels errors. Preflight is not run here: a batch
+    runs `preflight` once for every target before the first touch."""
+    record = promoted_record(scar)
+    subject = subject_for(store, scar, name)
     try:
         head = presence.head(org)
     except presence.PresenceError as exc:
@@ -108,6 +114,12 @@ def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path
             f"the touch was spent, but the checker did not accept the act: {exc.reason}. "
             f"Nothing was written: {name} is unchanged and its id is not used up.",
             touch_spent=True) from None
+    return jws, receipt
+
+
+def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path:
+    name = prepared.candidate.name
+    jws, receipt = sign_record(store, prepared.scar, org, name)
     prepared.scar.promotion_act = jws
     prepared.scar.promotion_receipt = receipt
     try:
