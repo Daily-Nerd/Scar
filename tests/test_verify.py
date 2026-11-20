@@ -10,7 +10,7 @@ import pytest
 from scar import presence, verify
 from scar.cli import main
 from scar.model import parse_scar_text
-from scar.record import promoted_record, promotion_subject
+from scar.record import promoted_record, promotion_subject, record_hash
 from scar.store import ScarStore, init_scars
 
 SCAR = """---
@@ -46,10 +46,22 @@ def repo(tmp_path, monkeypatch):
     return tmp_path
 
 
-def write_scar(repo, act="JWS.A.B", body_extra=""):
-    line = f"promotion_act: {act}\n" if act else ""
+def matching_act(text):
+    """An act whose payload names the hash of this scar's record, so the
+    structural lint (#409) sees it as current. The signature is junk."""
+    payload = json.dumps({"inputs_hash": record_hash(parse_scar_text(text))}).encode()
+    return "h." + base64.urlsafe_b64encode(payload).decode().rstrip("=") + ".s"
+
+
+def write_scar(repo, act="current", body_extra=""):
     p = repo / ".scars" / "0001-keep.fence.md"
-    p.write_text(SCAR.format(act=line).rstrip("\n") + body_extra + "\n")
+
+    def render(line):
+        return SCAR.format(act=line).rstrip("\n") + body_extra + "\n"
+
+    if act == "current":
+        act = matching_act(render(""))
+    p.write_text(render(f"promotion_act: {act}\n" if act else ""))
     return p
 
 
@@ -93,7 +105,7 @@ def test_stdin_has_exactly_the_expected_keys_and_values(repo, fake):
                             "jws", "org", "subject"]
     assert sent["action"] == "promote" and sent["consumer"] == "scar"
     assert sent["expect_method"] == "local:handsal.decision"
-    assert sent["jws"] == "JWS.A.B"
+    assert sent["jws"] == scar.promotion_act != ""
     assert sent["org"] == "org-1"
     assert base64.b64decode(sent["decision_b64"]) == promoted_record(scar)
     assert sent["subject"] == promotion_subject(repo, 1)
@@ -187,7 +199,7 @@ def test_challenged_scar_with_act_is_checked(repo, fake):
     p = write_scar(repo)
     p.write_text(p.read_text().replace("status: active", "status: challenged"))
     assert states(repo) == ["verified"]
-    assert json.loads(out.read_text())["jws"] == "JWS.A.B"
+    assert json.loads(out.read_text())["jws"] == parse_scar_text(p.read_text()).promotion_act
 
 
 def test_challenged_scar_without_act_is_unverified(repo, fake):
@@ -228,8 +240,9 @@ def test_promotion_act_parsed_and_excluded_from_record():
 
 def test_promotion_act_survives_lifecycle_transition(repo):
     p = write_scar(repo)
+    act = parse_scar_text(p.read_text()).promotion_act
     ScarStore.discover(repo).transition(1, "challenged", "why", "2026-11-15")
-    assert parse_scar_text(p.read_text()).promotion_act == "JWS.A.B"
+    assert parse_scar_text(p.read_text()).promotion_act == act != ""
 
 
 def test_default_lint_unchanged(repo, fake, capsys):

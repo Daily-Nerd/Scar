@@ -10,6 +10,7 @@ from presence_fakes import FakeBinary
 from scar import presence
 from scar.cli import main
 from scar.model import parse_scar_text
+from scar.record import record_hash
 from scar.store import ScarStore, init_scars
 
 ORG = "uEiARDVf_JDy-0rOjSM1lEH6YMSEdD2RQiuviL-AsSVLq4A"
@@ -42,7 +43,9 @@ def accepted(n):
 
 
 def signed(n):
-    return {"jws": f"jws.{n}.sig", "receipt_id": f"uEiRcpt{n:040d}"}
+    # The fake signer adds the act itself, from the record it is handed.
+    return {"out": json.dumps({"receipt_id": f"uEiRcpt{n:040d}"}), "code": 0,
+            "act_from_decision": True}
 
 
 @pytest.fixture
@@ -70,7 +73,7 @@ def fakes(tmp_path_factory, monkeypatch):
     signer.reply("pubkey", ({"kid": "KID43", "class": "apple-se-bio",
                              "agree": {"x": "a", "y": "b"}, "sign": {"x": "c", "y": "d"}}, 0))
     signer.reply("render", ({"first_line": "l", "text": "t"}, 0))
-    signer.reply("sign", *[(signed(i), 0) for i in range(1, 12)])
+    signer.reply("sign", *[signed(i) for i in range(1, 12)])
     return signer, checker
 
 
@@ -98,7 +101,7 @@ def test_a_batch_is_signed_one_scar_at_a_time_with_a_fresh_head_each(repo, fakes
     for i in (1, 2, 3):
         scar = parse_scar_text(next((repo / ".scars").glob(f"000{i}-*.md")).read_text())
         assert scar.id == i
-        assert scar.promotion_act == f"jws.{i}.sig"
+        assert presence.act_inputs_hash(scar.promotion_act) == record_hash(scar)
         assert scar.promotion_receipt == f"uEiRcpt{i:040d}"
     heads_used = [c["stdin_json"]["draft"]["head"]["id"] for c in signer.calls("sign")]
     # head call 1 is the preflight's; each scar then takes its own.
@@ -120,7 +123,7 @@ def test_receipts_accumulate_into_seen_within_the_batch(repo, fakes):
 
 def test_a_cancel_at_the_second_scar_keeps_the_first_and_leaves_the_rest(repo, fakes, capsys):
     signer, checker = fakes
-    signer.reply("sign", (signed(1), 0), ({"error": "user_cancel"}, 1))
+    signer.reply("sign", signed(1), ({"error": "user_cancel"}, 1))
     names = make(repo, 3)
     originals = {n: (repo / ".scars" / "candidates" / n).read_bytes() for n in names}
     assert run(*names) == 1
@@ -151,7 +154,7 @@ def test_a_checker_refusal_at_the_third_scar_is_reported_with_the_count(repo, fa
 
 def test_the_rest_can_be_promoted_afterwards_and_ids_continue(repo, fakes):
     signer, checker = fakes
-    signer.reply("sign", (signed(1), 0), ({"error": "user_cancel"}, 1), (signed(3), 0))
+    signer.reply("sign", signed(1), ({"error": "user_cancel"}, 1), signed(3))
     names = make(repo, 2)
     assert run(*names) == 1
     assert run(names[1]) == 0

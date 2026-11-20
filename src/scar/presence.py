@@ -48,6 +48,10 @@ class PresenceError(Exception):
         self.reason = reason
 
 
+class MalformedAct(PresenceError):
+    """A stored act whose payload cannot be read. `reason` says which part."""
+
+
 class Unavailable(PresenceError):
     """No usable answer: the program is missing, crashed, timed out, or said
     something that is not its documented output. Nothing is assumed."""
@@ -59,6 +63,31 @@ class Refused(PresenceError):
 
 class Cancelled(PresenceError):
     """The person declined the touch (signer exit 1)."""
+
+
+def act_inputs_hash(jws: str) -> str:
+    """The `inputs_hash` in a stored act's payload. Decodes only: the
+    signature is not looked at, so a result proves nothing about the act being
+    genuine (that is the checker's job). Raises MalformedAct when the act is not
+    three segments, the payload is not base64url JSON object, or it carries no
+    non-empty string `inputs_hash`."""
+    parts = jws.split(".") if isinstance(jws, str) else []
+    if len(parts) != 3:
+        raise MalformedAct("not a compact JWS of three segments")
+    segment = parts[1]
+    try:
+        raw = base64.b64decode(
+            segment.replace("-", "+").replace("_", "/") + "=" * (-len(segment) % 4),
+            validate=True)
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise MalformedAct("payload is not base64url-encoded JSON") from None
+    if not isinstance(payload, dict):
+        raise MalformedAct("payload is not a JSON object")
+    value = payload.get("inputs_hash")
+    if not isinstance(value, str) or not value:
+        raise MalformedAct("payload has no inputs_hash")
+    return value
 
 
 def _canonical(payload: dict) -> str:

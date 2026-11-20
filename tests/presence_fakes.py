@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 _SCRIPT = """#!{python}
-import json, sys, time
+import base64, hashlib, json, sys, time
 from pathlib import Path
 here = Path(__file__).parent
 name = Path(__file__).name
@@ -29,6 +29,18 @@ with open(here / (name + ".calls.jsonl"), "a") as fh:
 replies = cfg.get(cmd) or cfg.get("*") or [{{"out": "{{\\"error\\":\\"unsupported_command\\"}}", "code": 2}}]
 r = replies[min(n, len(replies) - 1)]
 time.sleep(r.get("sleep", 0))
+if r.get("act_from_decision"):
+    # Like the real signer, bind the act to the record it was handed: inputs_hash
+    # is "u" + b64url(0x12 0x20 + sha256(decision bytes)), worked out here with
+    # hashlib alone so a test proves the bytes promote sends are the bytes Scar
+    # hashes later.
+    record = base64.b64decode(json.loads(stdin)["attachments"]["decision_b64"])
+    digest = b"\\x12\\x20" + hashlib.sha256(record).digest()
+    claims = {{"inputs_hash": "u" + base64.urlsafe_b64encode(digest).decode().rstrip("=")}}
+    seg = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+    body = json.loads(r["out"])
+    body["jws"] = seg(b'{{"alg":"fake"}}') + "." + seg(json.dumps(claims).encode()) + "." + seg(b"sig")
+    r = {{**r, "out": json.dumps(body, sort_keys=True)}}
 sys.stdout.write(r["out"] + "\\n")
 sys.exit(r.get("code", 0))
 """

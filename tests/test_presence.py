@@ -1,5 +1,7 @@
 """presence.py owns the fixed paths and the words (consumer, action, method).
 Slice 3 of the presence proof (#392)."""
+import pytest
+
 from scar import presence
 
 
@@ -25,3 +27,21 @@ def test_the_validity_window_is_a_decimal_string_constant():
     assert presence.EXPIRES_IN_S == "3600"
     assert isinstance(presence.EXPIRES_IN_S, str)
 
+
+
+def _jws(payload_bytes):
+    import base64
+    return "h." + base64.urlsafe_b64encode(payload_bytes).decode().rstrip("=") + ".s"
+
+
+def test_act_inputs_hash_reads_the_payload_without_verifying_anything():
+    assert presence.act_inputs_hash(_jws(b'{"inputs_hash": "uEiabc", "x": 1}')) == "uEiabc"
+
+
+@pytest.mark.parametrize("bad", [
+    "", "a.b", "a.b.c.d", "h.!!.s", _jws(b"nope"), _jws(b"[]"), _jws(b"{}"),
+    _jws(b'{"inputs_hash": 5}'), _jws(b'{"inputs_hash": ""}'), _jws(b"\xff\xfe"),
+])
+def test_act_inputs_hash_raises_on_anything_malformed(bad):
+    with pytest.raises(presence.MalformedAct):
+        presence.act_inputs_hash(bad)
