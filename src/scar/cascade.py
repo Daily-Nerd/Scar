@@ -38,6 +38,7 @@ from .hooks import (
     _extract_edit_content,
     _log_firing,
     _log_violation_firing,
+    record_hook_failure,
     _matched_by_of,
     _read_payload,
     _state_dir,
@@ -286,7 +287,9 @@ def cascade_hook() -> int:
         return 0
     try:
         return handler(payload)
-    except Exception:
+    except Exception as exc:
         # Same contract as hooks.py, with more at stake: an unexpected failure
-        # must never block the user's edit or command. Fail OPEN.
+        # must never block the user's edit or command. Fail OPEN. Recorded,
+        # never discarded (#420).
+        record_hook_failure("cascade-hook", exc)
         return 0

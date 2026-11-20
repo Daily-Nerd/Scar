@@ -267,7 +267,8 @@ def _agent_doctor_rich(lines) -> None:
     for i, line in enumerate(lines):
         if i:
             body.append("\n")
-        bad = "missing" in line or "not found" in line or "no-op" in line
+        bad = ("missing" in line or "not found" in line or "no-op" in line
+               or "internal failure" in line)
         body.append(line, style="yellow" if bad else "")
     output.show(output.panel(body, title="scar agent doctor", border_style="cyan"))
 
@@ -2889,7 +2890,7 @@ def _cmd_draft_check(args) -> int:
     hook can't gate a commit that already landed, and a direct human
     invocation should never fail a shell script that chains it."""
     from . import draftcheck
-    from .hooks import _state_dir
+    from .hooks import _state_dir, hook_failures_path, record_hook_failure
 
     try:
         state_dir = _state_dir()
@@ -2927,11 +2928,18 @@ def _cmd_draft_check(args) -> int:
         if args.from_hook:
             draftcheck.touch_throttle(state_dir, repo)
         return 0
-    except Exception:
+    except Exception as exc:
         # Contract (issue #117): advisory only, ALWAYS exit 0. A hook can't
         # gate a commit that already landed, and no internal failure here
         # (bad SCAR_STATE_DIR, git surprises, whatever) may propagate — same
-        # fail-open posture as hooks.py's precheck (#91).
+        # fail-open posture as hooks.py's precheck (#91). Recorded, never
+        # discarded (#420); a human at a terminal also gets one stderr line,
+        # the hook gets none so it never pollutes a commit.
+        record_hook_failure("draft-check", exc)
+        if not args.from_hook:
+            print(f"scar draft-check: internal error ({type(exc).__name__}: "
+                  f"{str(exc)[:200]}), recorded in {hook_failures_path()}; "
+                  "exit code stays 0", file=sys.stderr)
         return 0
 
 

@@ -26,6 +26,7 @@ from .hooks import (
     _read_payload,
     _recently_fired,
     _session_notice_payload,
+    record_hook_failure,
     _zero_hit_logging,
 )
 from .match import (
@@ -230,7 +231,8 @@ def pretool() -> int:
                             matched=census.get(str(target.relative_to(store.root))),
                             edit_id=edit_id, context_bytes=ctx,
                             anchor_kind="edit")
-    except Exception:
+    except Exception as exc:
+        record_hook_failure("codex-pretool", exc)
         return 0
     return 0
 
@@ -293,7 +295,8 @@ def posttool() -> int:
                 store, str((store.root / path).resolve()), scoped,
                 runtime=RUNTIME, edit_id=edit_id,
                 armed_ids=armed.get(path, []))
-    except Exception:
+    except Exception as exc:
+        record_hook_failure("codex-posttool", exc)
         return 0
     return 0
 
@@ -304,7 +307,8 @@ def session_notice() -> int:
         return 0
     try:
         return _session_notice_payload(payload, verify_claude_hook=False)
-    except Exception:
+    except Exception as exc:
+        record_hook_failure("codex-session-notice", exc)
         return 0
 
 

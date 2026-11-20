@@ -152,6 +152,11 @@ def doctor(repo: Path) -> list[str]:
     findings.append("Codex hook trust: host-owned — run /hooks to confirm the "
                     "Scar plugin hooks are enabled and trusted")
     findings.append("MCP command: scar mcp")
+    # Internal hook failures (#420): hooks fail open, so this is the only place
+    # a hook that crashes on every run shows up. Nothing is added when none
+    # were recorded.
+    from .hooks import hook_failure_summary
+    findings.extend(hook_failure_summary())
     return findings
 
 

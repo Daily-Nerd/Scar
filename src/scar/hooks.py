@@ -142,6 +142,89 @@ def firing_log_path() -> Path:
     return _state_dir() / "firing-log.jsonl"
 
 
+HOOK_FAILURE_MESSAGE_MAX = 300
+# Simple size cap, not a retention policy (#420): past this, the oldest half is
+# dropped. 64 KiB holds a few hundred rows, far more than doctor shows.
+HOOK_FAILURE_LOG_MAX_BYTES = 64 * 1024
+
+
+def hook_failures_path() -> Path:
+    """Where internal hook failures are recorded (#420): same state dir and
+    SCAR_STATE_DIR override as every other piece of hook state."""
+    return _state_dir() / "hook-failures.jsonl"
+
+
+def record_hook_failure(hook: str, exc: BaseException,
+                        repo: Path | str | None = None) -> None:
+    """THE one place an internal hook failure is recorded (#420).
+
+    Hooks fail open: an unexpected error exits 0 so the user's edit or commit
+    is never blocked. That is right, but discarding the error too made a hook
+    that crashes on every run look identical to a hook with nothing to say.
+    Every fail-open handler calls this before it returns 0; exit codes do not
+    change. Appends one JSON line: local timestamp, hook name, exception type,
+    truncated message, repo (the working directory when the caller has none).
+
+    NEVER raises. An unwritable state dir drops the failure, which is today's
+    behaviour, never a new way to break the hook. The blanket catch below is
+    the one place in the package where swallowing is the whole point: this
+    function runs inside handlers that are already handling a failure."""
+    try:
+        try:
+            message = str(exc)
+        except Exception:
+            message = "<unprintable exception>"
+        row = {"ts": clock.now(), "hook": hook, "exc_type": type(exc).__name__,
+               "message": message[:HOOK_FAILURE_MESSAGE_MAX],
+               "repo": str(repo) if repo is not None else os.getcwd()}
+        path = hook_failures_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+        if path.stat().st_size > HOOK_FAILURE_LOG_MAX_BYTES:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text("\n".join(lines[len(lines) // 2:]) + "\n",
+                           encoding="utf-8")
+            os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _read_hook_failures() -> list[dict]:
+    """Recorded failures, oldest first. Blanket per line (scar 12): a reader
+    that escapes on one bad row would hide every failure after it."""
+    try:
+        text = hook_failures_path().read_text(encoding="utf-8")
+    except Exception:
+        return []
+    rows = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if (isinstance(row, dict) and isinstance(row.get("hook"), str)
+                and isinstance(row.get("exc_type"), str)):
+            rows.append(row)
+    return rows
+
+
+def hook_failure_summary() -> list[str]:
+    """One line per hook that has recorded failures: count, last time, last
+    exception type and message. Empty when nothing was recorded."""
+    by_hook: dict[str, list[dict]] = {}
+    for row in _read_hook_failures():
+        by_hook.setdefault(row["hook"], []).append(row)
+    lines = []
+    for hook, rows in sorted(by_hook.items()):
+        last = rows[-1]
+        lines.append(f"{hook}: {len(rows)} internal failure(s), last "
+                     f"{last.get('ts', '?')} {last['exc_type']}: "
+                     f"{last.get('message', '')}")
+    return lines
+
+
 COOLDOWN_SECONDS = 4 * 3600  # fixed constant — deliberately not a config knob
 
 
@@ -343,8 +426,8 @@ def _log_firing(store: ScarStore, target: str, hits: list,
             record["matched_by"] = {str(k): list(v) for k, v in matched_by.items()}
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
-    except Exception:
-        pass
+    except Exception as exc:
+        record_hook_failure("firing-log", exc)
 
 
 def _log_violation_firing(store: ScarStore, target: str, violations: list,
@@ -393,8 +476,8 @@ def _log_violation_firing(store: ScarStore, target: str, violations: list,
             record["edit_id"] = edit_id
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
-    except Exception:
-        pass
+    except Exception as exc:
+        record_hook_failure("violation-log", exc)
 
 
 def posttool() -> int:
@@ -434,10 +517,11 @@ def posttool() -> int:
         vid = payload.get("tool_use_id")
         _log_violation_firing(store, target, violations, armed_ids=armed,
                               edit_id=vid if isinstance(vid, str) else None)
-    except Exception:
+    except Exception as exc:
         # Contract (module docstring): a hook must NEVER fail or delay the
         # user's action. Fail OPEN on any unexpected error — emit nothing
-        # rather than raise.
+        # rather than raise. Recorded, never discarded (#420).
+        record_hook_failure("posttool", exc)
         return 0
     return 0
 
@@ -486,10 +570,12 @@ def precheck() -> int:
                         # retrieval denominator, so it has to carry the kind
                         # or the denominator lands in kind-unknown with it.
                         anchor_kind="edit")
-    except Exception:
+    except Exception as exc:
         # Contract (module docstring): a hook must NEVER fail or delay the user's
         # edit. Fail OPEN on any unexpected error — inject nothing rather than
         # raise (#91). Scoped to the ranking/render path, not the whole handler.
+        # Recorded, never discarded (#420).
+        record_hook_failure("precheck", exc)
         return 0
     return 0
 
@@ -529,9 +615,11 @@ def _precheck_command_payload(payload: dict,
                     matched_by=_matched_by_of(matches),
                     edit_id=edit_id if isinstance(edit_id, str) else None,
                     anchor_kind="command")
-    except Exception:
+    except Exception as exc:
         # Contract (module docstring): a hook must NEVER fail or delay the
-        # user's command. Fail OPEN on any unexpected error.
+        # user's command. Fail OPEN on any unexpected error. Recorded, never
+        # discarded (#420).
+        record_hook_failure("precheck-command", exc)
         return 0
     return 0
 

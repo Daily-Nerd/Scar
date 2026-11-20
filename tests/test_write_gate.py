@@ -222,7 +222,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "scar"
 #   cli.py       init example seed, a log append, candidate write
 #   mcp.py       candidate write (scar_draft)
 #   gc / cascade atomic log and state replace (fdopen + os.replace each)
-#   hooks.py     log appends
+#   hooks.py     log appends, and the hook failure record with its size cap (#420)
 #   installer.py hook and settings files
 # renames.py is absent on purpose: it writes only through the gate. If this
 # test fails, the new write either targets an active scar file, in which case
@@ -232,7 +232,7 @@ ALLOWED_WRITE_SITES = {
     "cascade.py": 2,
     "cli.py": 3,
     "gc.py": 2,
-    "hooks.py": 3,
+    "hooks.py": 6,
     "installer.py": 8,
     "mcp.py": 1,
     "store.py": 6,
