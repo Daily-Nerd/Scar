@@ -250,3 +250,11 @@ def test_scar_draft_refuses_role_word_authors(tmp_path, monkeypatch):
     init_scars(tmp_path)
     with pytest.raises(ValueError, match="authors"):
         _handle("tools/call", _draft_args(tmp_path, authors=["agent"]))
+
+
+def test_scar_draft_description_does_not_blame_yaml_for_backslashes():
+    # Values are read verbatim, so nothing "over-escapes in YAML" (#407).
+    desc = next(t for t in TOOLS if t["name"] == "scar_draft")["description"]
+    assert "YAML" not in desc
+    assert "path:" in desc
+    assert "literal backslash" in desc

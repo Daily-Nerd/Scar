@@ -51,3 +51,20 @@ def test_skill_states_anchors_pass_through_verbatim():
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     anti = text.split("## Anti-Over-Escape")[1].split("##")[0]
     assert "verbatim" in anti.lower()
+
+
+def test_skill_names_the_literal_backslash_case_and_both_respellings():
+    """The lint error cannot know whether the author meant the escape or a
+    real backslash, so the skill must say both readings exist (#407)."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    anti = text.split("## Anti-Over-Escape")[1].split("\n## ")[0]
+    anti = " ".join(anti.split())
+    assert "never match" not in anti
+    assert "regex source" in anti
+    assert "halved" in anti and "[\\\\]" in anti
+
+
+def test_plugin_skill_copy_is_identical_to_bundled_skill():
+    bundled = (SKILL / "SKILL.md").read_bytes()
+    plugin = (ROOT / "plugin" / "skills" / "scar-authoring" / "SKILL.md").read_bytes()
+    assert plugin == bundled

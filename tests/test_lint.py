@@ -623,3 +623,94 @@ def test_leading_bracket_in_class_does_not_close_it_early():
     # backslash after it is still inside the class and is the clean hatch.
     assert _overescaped(lint_text(_with("violation", r"x[]\\(]"))) == []
     assert _overescaped(lint_text(_with("violation", r"x[^]\\(]"))) == []
+
+
+# --- truthful over-escape message (#407) ---
+#
+# The rule only reads spelling, so it can claim just that the value matches a
+# literal backslash plus the next character. A target that really holds a
+# backslash before a metacharacter (regex source in a raw string) is matched
+# by the as-written value, so the message must offer both respellings.
+
+RAW_STRING_VALUE = r"\[\\w-\]\*\(\?:"
+RAW_STRING_HALVED = r"\[\w-\]\*\(\?:"
+RAW_STRING_CLASS = r"\[[\\]w-\]\*\(\?:"
+RAW_STRING_SAMPLE = 'PAT = re.compile(r"[\\w-]*(?:api|key)")'
+
+
+def _overescape_message(field_text):
+    found = _overescaped(lint_text(field_text))
+    assert len(found) == 1
+    return found[0].message
+
+
+def test_message_claims_only_what_the_check_proves():
+    msg = _overescape_message(_with("violation", RAW_STRING_VALUE))
+    assert "can never match" not in msg
+    assert "literal backslash" in msg
+
+
+def test_message_offers_halved_form_for_the_escape_meaning():
+    msg = _overescape_message(_with("violation", OVER_VIOLATION))
+    assert r"func \(\w+ Snapshot\) MarshalJSON" in msg
+
+
+def test_message_offers_both_respellings_for_raw_string_case():
+    msg = _overescape_message(_with("violation", RAW_STRING_VALUE))
+    assert RAW_STRING_HALVED in msg
+    assert RAW_STRING_CLASS in msg
+
+
+def test_class_form_passes_lint_and_matches_what_the_original_matches():
+    import re
+
+    assert _overescaped(lint_text(_with("violation", RAW_STRING_CLASS))) == []
+    assert len(re.findall(RAW_STRING_VALUE, RAW_STRING_SAMPLE)) == 1
+    assert len(re.findall(RAW_STRING_CLASS, RAW_STRING_SAMPLE)) == 1
+    assert re.findall(RAW_STRING_HALVED, RAW_STRING_SAMPLE) == []
+
+
+def test_pattern_anchor_gets_the_same_message_through_the_shared_path():
+    msg = _overescape_message(_anchored(RAW_STRING_VALUE))
+    assert "can never match" not in msg
+    assert RAW_STRING_HALVED in msg and RAW_STRING_CLASS in msg
+
+
+def test_every_flagged_value_has_a_class_form_that_is_clean_and_equivalent():
+    import re
+
+    from scar.lint import _overescape_respellings
+
+    # (value, sample the as-written value really matches)
+    cases = [
+        (RAW_STRING_VALUE, RAW_STRING_SAMPLE),
+        ("a" + "\\" * 4 + "(b)", "a" + "\\" * 2 + "b"),
+        ("x\\\\.y\\\\.z", "x\\ay\\bz"),
+        ("a\\\\(b\\\\)", "a\\b\\"),
+    ]
+    for value, sample in cases:
+        halved, class_form = _overescape_respellings(value)
+        assert re.compile(class_form), value
+        assert _overescaped(lint_text(_with("violation", class_form))) == [], value
+        assert _overescape_respellings(class_form) is None, value
+        if "\\" * 4 not in value:
+            # halving four leaves a live pair, which is flagged again by design
+            assert _overescape_respellings(halved) is None, value
+        original = [m.group() for m in re.finditer(value, sample)]
+        assert original, value
+        assert [m.group() for m in re.finditer(class_form, sample)] == original, value
+
+
+def test_longer_run_class_form_uses_one_class_per_pair():
+    from scar.lint import _overescape_respellings
+
+    halved, class_form = _overescape_respellings("a" + "\\" * 4 + "(b")
+    assert halved == "a" + "\\" * 2 + "(b"
+    assert class_form == "a[\\\\][\\\\](b"
+
+
+def test_clean_values_have_no_respellings():
+    from scar.lint import _overescape_respellings
+
+    for ok in (r"[\\]b", r"x[^a\\]+\\", r"\\n", r"a\\", r"\\\("):
+        assert _overescape_respellings(ok) is None, ok
