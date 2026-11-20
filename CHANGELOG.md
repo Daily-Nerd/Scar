@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.31.0](https://github.com/Daily-Nerd/Scar/compare/v0.30.0...v0.31.0) (2026-11-20)
+
+
+### Features
+
+* **store:** one write gate for active scar files that keeps a signed act matching ([#413](https://github.com/Daily-Nerd/Scar/issues/413)) ([7f4c6d0](https://github.com/Daily-Nerd/Scar/commit/7f4c6d0d7fdd445913b29fdf09baeface7c26085))
+
+
+### Bug Fixes
+
+* **cli:** print values in a terminal as data, never as rich markup ([#416](https://github.com/Daily-Nerd/Scar/issues/416)) ([cbcd006](https://github.com/Daily-Nerd/Scar/commit/cbcd0066ad488dae300a88714e393f120934e0c7)), closes [#414](https://github.com/Daily-Nerd/Scar/issues/414)
+
 ## [0.30.0](https://github.com/Daily-Nerd/Scar/compare/v0.29.1...v0.30.0) (2026-11-20)
 
 
