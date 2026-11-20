@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.32.0](https://github.com/Daily-Nerd/Scar/compare/v0.31.0...v0.32.0) (2026-11-20)
+
+
+### Features
+
+* **lint:** warn when a candidate's record will not fit the signer's limits ([#422](https://github.com/Daily-Nerd/Scar/issues/422)) ([9b0c722](https://github.com/Daily-Nerd/Scar/commit/9b0c7229547db6d3a522f775a9025f8a17f058cc))
+
+
+### Bug Fixes
+
+* **hooks:** record internal hook failures instead of discarding them ([#423](https://github.com/Daily-Nerd/Scar/issues/423)) ([89d639c](https://github.com/Daily-Nerd/Scar/commit/89d639c3fe9328f206faae75fed87876971df9f6)), closes [#420](https://github.com/Daily-Nerd/Scar/issues/420)
+
 ## [0.31.0](https://github.com/Daily-Nerd/Scar/compare/v0.30.0...v0.31.0) (2026-11-20)
 
 
