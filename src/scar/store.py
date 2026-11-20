@@ -189,10 +189,7 @@ def write_active_scar(path: Path, new_text: str) -> None:
         shutil.copymode(target, tmp_name)
         os.replace(tmp_name, target)
     except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
+        Path(tmp_name).unlink(missing_ok=True)
         raise
 
 

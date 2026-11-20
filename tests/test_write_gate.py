@@ -171,6 +171,35 @@ def test_the_write_is_atomic_and_keeps_the_file_mode(repo):
     assert [f.name for f in p.parent.iterdir() if f.name.startswith(".")] == []
 
 
+def test_an_unparseable_file_on_disk_is_overwritten_with_the_new_text(repo):
+    p = write_scar(repo, 1)
+    new_text = write_scar(repo, 2, act=None).read_text()
+    p.write_text("not a scar, no frontmatter at all\n")
+    before = sorted(f.name for f in p.parent.iterdir())
+    write_active_scar(p, new_text)
+    assert p.read_text() == new_text
+    assert sorted(f.name for f in p.parent.iterdir()) == before
+
+
+@pytest.mark.parametrize("failing", ["os.replace", "shutil.copymode"])
+def test_a_failed_write_raises_as_is_and_leaves_file_and_directory_alone(
+        repo, monkeypatch, failing):
+    p = write_scar(repo, 1, act=None)
+    original = p.read_bytes()
+    before = sorted(f.name for f in p.parent.iterdir())
+    boom = OSError("disk says no")
+
+    def fail(*args, **kwargs):
+        raise boom
+
+    monkeypatch.setattr(f"scar.store.{failing}", fail)
+    with pytest.raises(OSError) as excinfo:
+        write_active_scar(p, original.decode().replace("confidence: 0.5", "confidence: 0.9"))
+    assert excinfo.value is boom
+    assert p.read_bytes() == original
+    assert sorted(f.name for f in p.parent.iterdir()) == before
+
+
 def test_a_symlinked_scar_file_stays_a_symlink(repo, tmp_path_factory):
     target = tmp_path_factory.mktemp("elsewhere") / "real.md"
     p = write_scar(repo, 1, act=None)
