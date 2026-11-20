@@ -194,72 +194,74 @@ def _symbol_drift_reason(finding) -> str:
 _TYPE_STYLE = {"deadend": "red", "fence": "yellow", "landmine": "magenta"}
 
 
-def _type_label(t: str) -> str:
-    return f"[{_TYPE_STYLE.get(t, 'white')}]{t}[/]"
+def _type_label(t: str):
+    return output.styled(_TYPE_STYLE.get(t, "white"), t)
 
 
 def _init_rich(data: dict) -> None:
-    from rich.panel import Panel
-    lines = [f"initialized [bold]{data['scars']}[/] (README.md, template.md, candidates/)",
-             "convention: new scars -> [bold]candidates/[/], humans promote via `scar promote`"]
+    fmt = output.fmt
+    lines = [fmt("initialized [bold]{}[/] (README.md, template.md, candidates/)",
+                 data["scars"]),
+             fmt("convention: new scars -> [bold]candidates/[/], humans promote via "
+                 "`scar promote`")]
     if data["seeded"]:
-        lines.append(f"seeded a worked example: [bold]candidates/{data['example']}[/] "
-                     "(read once, delete anytime; --no-seed skips)")
+        lines.append(fmt("seeded a worked example: [bold]candidates/{}[/] "
+                         "(read once, delete anytime; --no-seed skips)", data["example"]))
     if data["has_history"]:
-        lines += ["", "[bold]next steps[/] (this repo has minable history):",
-                  "  preview candidates:  [cyan]scar harvest --top-k 10[/]",
-                  "  write top drafts:    [cyan]scar harvest --write 5[/]  "
-                  "(-> .scars/candidates/, review + promote)",
-                  "  wire your agent:     [cyan]scar hook install[/]        (Claude Code)",
-                  "                       [cyan]scar hook install --git[/]  (any agent, git-native)"]
-    output.console.print(Panel("\n".join(lines), title="scar init", border_style="green"))
+        lines += ["", fmt("[bold]next steps[/] (this repo has minable history):"),
+                  fmt("  preview candidates:  [cyan]scar harvest --top-k 10[/]"),
+                  fmt("  write top drafts:    [cyan]scar harvest --write 5[/]  "
+                      "(-> .scars/candidates/, review + promote)"),
+                  fmt("  wire your agent:     [cyan]scar hook install[/]        (Claude Code)"),
+                  fmt("                       [cyan]scar hook install --git[/]  (any agent, "
+                      "git-native)")]
+    output.show(output.panel(output.block(lines), title="scar init", border_style="green"))
 
 
 def _promote_rich(data: dict) -> None:
-    from rich.panel import Panel
-    lines = [f"[green]promoted[/] -> [bold]{data['promoted']}[/]"]
-    lines.append("signed: a person's presence was proven" if data.get("signed")
-                 else "[yellow]not signed:[/] no org in .scars/config.json")
+    fmt = output.fmt
+    lines = [fmt("[green]promoted[/] -> [bold]{}[/]", data["promoted"])]
+    lines.append(fmt("signed: a person's presence was proven") if data.get("signed")
+                 else fmt("[yellow]not signed:[/] no org in .scars/config.json"))
     if data["reviewer_from_git"]:
-        lines.append(f"reviewer: {data['reviewer']} [dim](from git config)[/]")
+        lines.append(fmt("reviewer: {} [dim](from git config)[/]", data["reviewer"]))
     if data["born_orphan"]:
-        lines.append("[yellow]advisory:[/] this scar's anchors resolve to nothing in the "
-                     "current tree (born orphan-detected) — confirm the anchors are right")
+        lines.append(fmt("[yellow]advisory:[/] this scar's anchors resolve to nothing in the "
+                         "current tree (born orphan-detected) \u2014 confirm the anchors are right"))
     if data.get("reviewer_case_warning"):
-        lines.append("[yellow]warning:[/] --reviewer differs from git user.name only "
-                     "by case — pick one spelling or author identity drifts (#182)")
-    output.console.print(Panel("\n".join(lines), title="scar promote", border_style="green"))
+        lines.append(fmt("[yellow]warning:[/] --reviewer differs from git user.name only "
+                         "by case \u2014 pick one spelling or author identity drifts (#182)"))
+    output.show(output.panel(output.block(lines), title="scar promote",
+                             border_style="green"))
 
 
 def _harvest_rich(repo_name: str, total: int, result: dict) -> None:
     # Text (not markup) for candidate lines — they carry literal [brackets]
     # that rich markup would eat (same trap the recall lines hit in daimon).
-    from rich.panel import Panel
     from rich.text import Text
-    console = output.console
-    console.print(Panel(f"{total} raw candidate(s) — curation required, "
-                        "expect ~13% precision",
-                        title=f"scar harvest — {repo_name}", border_style="cyan"))
+    fmt = output.fmt
+    output.show(output.panel(
+        fmt("{} raw candidate(s) \u2014 curation required, expect ~13% precision", total),
+        title=fmt("scar harvest \u2014 {}", repo_name), border_style="cyan"))
     for key, title, _fmt in _HARVEST_SECTIONS:
-        console.print(f"[bold]{title}[/] ({len(result[key])})")
+        output.say(fmt("[bold]{}[/] ({})", title, len(result[key])))
         for c in result[key]:
-            console.print(Text(_harvest_line(key, c)))
-        console.print("")
+            output.show(Text(_harvest_line(key, c)))
+        output.say(fmt(""))
 
 
 def _harvest_top_rich(repo_name: str, total: int, top) -> None:
-    from rich.panel import Panel
     from rich.text import Text
-    console = output.console
-    console.print(Panel(f"top {len(top)} of {total} raw, cross-section by raw score — "
-                        "curation required, expect ~13% precision",
-                        title=f"scar harvest — {repo_name}", border_style="cyan"))
+    fmt = output.fmt
+    output.show(output.panel(
+        fmt("top {} of {} raw, cross-section by raw score \u2014 "
+            "curation required, expect ~13% precision", len(top), total),
+        title=fmt("scar harvest \u2014 {}", repo_name), border_style="cyan"))
     for key, c in top:
-        console.print(Text(_harvest_line(key, c)))
+        output.show(Text(_harvest_line(key, c)))
 
 
 def _agent_doctor_rich(lines) -> None:
-    from rich.panel import Panel
     from rich.text import Text
     body = Text()
     for i, line in enumerate(lines):
@@ -267,227 +269,212 @@ def _agent_doctor_rich(lines) -> None:
             body.append("\n")
         bad = "missing" in line or "not found" in line or "no-op" in line
         body.append(line, style="yellow" if bad else "")
-    output.console.print(Panel(body, title="scar agent doctor", border_style="cyan"))
+    output.show(output.panel(body, title="scar agent doctor", border_style="cyan"))
 
 
 def _status_rich(data: dict) -> None:
-    from rich.panel import Panel
-    from rich.table import Table
-
-    console = output.console
+    fmt, ref = output.fmt, output.ref
     c = data["counts"]
-    console.print(Panel.fit(
-        f"[bold]{data['scars_dir']}[/]\n"
-        f"{c['active']} active · {c['candidates']} candidate(s) pending review",
-        title="scar status"))
+    output.show(output.panel(
+        fmt("[bold]{}[/]\n{} active · {} candidate(s) pending review",
+            data["scars_dir"], c["active"], c["candidates"]),
+        title="scar status", fit=True))
 
     if data["active"]:
-        t = Table(title="Active scars", show_edge=False, expand=False)
-        t.add_column("type")
-        t.add_column("id", justify="right")
-        t.add_column("severity")
-        t.add_column("title")
-        for s in data["active"]:
-            t.add_row(_type_label(s["type"]), f"#{s['id']}", s["severity"], s["title"])
-        console.print(t)
+        output.show(output.table(
+            "Active scars", ["type", ("id", {"justify": "right"}), "severity", "title"],
+            [[_type_label(s["type"]), fmt("#{}", s["id"]), s["severity"], s["title"]]
+             for s in data["active"]],
+            show_edge=False, expand=False))
     for s in data["challenged"]:
-        console.print(f"  [dim]challenged[/] {_type_label(s['type'])} #{s['id']} {s['title']}")
+        output.say(fmt("  [dim]challenged[/] {} #{} {}",
+                       _type_label(s["type"]), s["id"], s["title"]))
     for name in data["candidates"]:
-        console.print(f"  [cyan]candidate:[/] {name}")
+        output.say(fmt("  [cyan]candidate:[/] {}", name))
     for s in data["review_due"]:
-        console.print(f"  [yellow]REVIEW DUE[/] {_type_label(s['type'])} #{s['id']} "
-                      f"review_after {s['review_after']}")
+        output.say(fmt("  [yellow]REVIEW DUE[/] {} #{} review_after {}",
+                       _type_label(s["type"]), s["id"], s["review_after"]))
 
     for r in data["firing_review"]:
-        console.print(f"  [yellow]REVIEW DUE[/] {_type_label(r['type'])} #{r['id']} "
-                      f"{r['reason']}")
+        output.say(fmt("  [yellow]REVIEW DUE[/] {} #{} {}",
+                       _type_label(r["type"]), r["id"], r["reason"]))
 
-    console.print(f"  [bold]{c['orphan_detected']}[/] orphan-detected · "
-                  f"[bold]{c['orphaned']}[/] orphaned (persisted) · "
-                  f"[bold]{c['partial_rot']}[/] partial-rot")
+    output.say(fmt("  [bold]{}[/] orphan-detected · [bold]{}[/] orphaned (persisted) · "
+                   "[bold]{}[/] partial-rot",
+                   c["orphan_detected"], c["orphaned"], c["partial_rot"]))
     for o in data["orphan_detected"]:
-        console.print(f"    [red]orphan-detected[/] [#{o['scar_id']}] {o['reason']}")
+        output.say(fmt("    [red]orphan-detected[/] {} {}", ref(o["scar_id"]), o["reason"]))
     for s in data["orphaned"]:
-        console.print(f"    [dim]orphaned[/] {_type_label(s['type'])} #{s['id']} {s['title']}")
+        output.say(fmt("    [dim]orphaned[/] {} #{} {}",
+                       _type_label(s["type"]), s["id"], s["title"]))
     for pr in data["partial_rot"]:
-        console.print(f"    [yellow]partial-rot[/] [#{pr['scar_id']}] {pr['reason']}")
+        output.say(fmt("    [yellow]partial-rot[/] {} {}", ref(pr["scar_id"]), pr["reason"]))
     if data["broken"]:
-        console.print(f"  [bold red]WARNING:[/] {len(data['broken'])} unparseable "
-                      f"(can NEVER fire): " + ", ".join(data["broken"]))
+        output.say(fmt("  [bold red]WARNING:[/] {} unparseable (can NEVER fire): {}",
+                       len(data["broken"]), ", ".join(data["broken"])))
 
 
 def _lint_rich(data: dict) -> None:
-    from rich.table import Table
-
-    console = output.console
+    fmt = output.fmt
     if data["findings"]:
-        t = Table(title="Lint findings", show_edge=False)
-        t.add_column("file")
-        t.add_column("level")
-        t.add_column("message")
+        rows = []
         for f in data["findings"]:
             style = "red" if f["level"] == "error" else "yellow"
-            t.add_row(f["file"], f"[{style}]{f['level']}[/]", f["message"])
-        console.print(t)
+            rows.append([f["file"], output.styled(style, f["level"]), f["message"]])
+        output.show(output.table("Lint findings", ["file", "level", "message"], rows,
+                                 show_edge=False))
     for o in data["orphans"]:
-        console.print(f"[yellow]WARNING orphan-detected:[/] scar #{o['scar_id']} — {o['reason']}")
+        output.say(fmt("[yellow]WARNING orphan-detected:[/] scar #{} \u2014 {}",
+                       o["scar_id"], o["reason"]))
     for pr in data["partial_rot"]:
-        console.print(f"[cyan]HINT partial-rot:[/] scar #{pr['scar_id']} — {pr['reason']}")
+        output.say(fmt("[cyan]HINT partial-rot:[/] scar #{} \u2014 {}", pr["scar_id"], pr["reason"]))
     for d in data["symbol_drift"]:
-        console.print(f"[magenta]HINT symbol-drift:[/] scar #{d['scar_id']} — "
-                      f"{d['symbol']} ~{round(d['similarity'] * 100)}% similar since {d['sha'][:7]}")
+        output.say(fmt("[magenta]HINT symbol-drift:[/] scar #{} \u2014 {} ~{}% similar since {}",
+                       d["scar_id"], d["symbol"], round(d["similarity"] * 100), d["sha"][:7]))
     for h in data["reverse_hints"]:
-        console.print(f"[cyan]HINT:[/] scar #{h['id']} marked orphaned but anchors live again")
+        output.say(fmt("[cyan]HINT:[/] scar #{} marked orphaned but anchors live again",
+                       h["id"]))
     if data["symbols_unchecked"]:
-        console.print("[cyan]HINT symbols-unchecked:[/] "
-                      + _symbols_unchecked_text(data["symbols_unchecked"]))
+        output.say(fmt("[cyan]HINT symbols-unchecked:[/] {}",
+                       _symbols_unchecked_text(data["symbols_unchecked"])))
     for r in data["firing_review"]:
-        console.print(f"[yellow]WARNING firing-review:[/] scar #{r['scar_id']} — "
-                      f"{r['reason']}")
+        output.say(fmt("[yellow]WARNING firing-review:[/] scar #{} \u2014 {}",
+                       r["scar_id"], r["reason"]))
     if data["shallow_clone"]:
-        console.print("[dim]note: shallow clone — evidence-reachability check skipped[/]")
+        output.say(fmt("[dim]note: shallow clone \u2014 evidence-reachability check skipped[/]"))
     for ue in data["unreachable_evidence"]:
-        console.print(f"[yellow]WARNING evidence-unreachable:[/] scar #{ue['scar_id']} — "
-                      f"commit {ue['sha']} {ue['reason']}")
+        output.say(fmt("[yellow]WARNING evidence-unreachable:[/] scar #{} \u2014 commit {} {}",
+                       ue["scar_id"], ue["sha"], ue["reason"]))
     for row in data.get("promotion", []):
         verified = row["state"] == "verified"
-        console.print(f"[{'green' if verified else 'yellow'}]promotion:[/] "
-                      f"scar #{row['scar_id']}: {row['state']}")
+        output.say(fmt("{} scar #{}: {}", output.styled("green" if verified else "yellow",
+                                                         "promotion:"),
+                       row["scar_id"], row["state"]))
     style = "red" if data["failed"] else "green"
-    console.print(f"[{style}]lint:[/] {data['files']} file(s), {data['failed']} with errors, "
-                  f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
-                  f"{len(data['unreachable_evidence'])} unreachable-evidence, "
-                  f"{len(data['firing_review'])} firing-review")
+    output.say(fmt("{} {} file(s), {} with errors, {} orphan(s), "
+                   "{} partial-rot, {} unreachable-evidence, {} firing-review",
+                   output.styled(style, "lint:"), data["files"], data["failed"], len(data["orphans"]),
+                   len(data["partial_rot"]), len(data["unreachable_evidence"]),
+                   len(data["firing_review"])))
 
 
 def _check_rich(label: str, hits, violations=()) -> None:
-    from rich.panel import Panel
-
-    console = output.console
+    fmt = output.fmt
     if not hits:
-        console.print(f"[green]no scars anchored to[/] {label}")
+        output.say(fmt("[green]no scars anchored to[/] {}", label))
     else:
         for s in hits:
-            title = (f"{_type_label(s.type)} #{s.id} · severity: {s.severity} · "
-                     f"confidence: {s.confidence}")
-            console.print(Panel(s.body[:200].strip(), title=title,
-                                subtitle=f"[bold]{s.title}[/]", title_align="left"))
+            title = fmt("{} #{} · severity: {} · confidence: {}",
+                        _type_label(s.type), s.id, s.severity, s.confidence)
+            output.show(output.panel(s.body[:200].strip(), title=title,
+                                     subtitle=fmt("[bold]{}[/]", s.title),
+                                     title_align="left"))
     for v in violations:
-        console.print(f"[red]VIOLATION[/] scar #{v.scar.id} on {v.path}: {v.scar.title}")
+        output.say(fmt("[red]VIOLATION[/] scar #{} on {}: {}", v.scar.id, v.path, v.scar.title))
 
 
 def _why_rich(rel: str, records) -> None:
-    from rich.panel import Panel
-
-    console = output.console
+    fmt = output.fmt
     if not records:
-        console.print(f"[green]no recorded pain for[/] {rel}")
+        output.say(fmt("[green]no recorded pain for[/] {}", rel))
         return
-    console.print(f"[bold]History of pain for[/] {rel}")
+    output.say(fmt("[bold]History of pain for[/] {}", rel))
     for f, s in records:
-        title = f"[{s.status}] {_type_label(s.type)} #{s.id} — {s.title}"
-        console.print(Panel(s.body[:300].strip(), title=title, subtitle=f"[dim]{f.name}[/]",
-                            title_align="left"))
+        title = fmt("{} {} #{} \u2014 {}", output.bracketed(s.status), _type_label(s.type),
+                    s.id, s.title)
+        output.show(output.panel(s.body[:300].strip(), title=title,
+                                 subtitle=fmt("[dim]{}[/]", f.name), title_align="left"))
 
 
 def _stats_rich(data: dict) -> None:
-    from rich.panel import Panel
-    from rich.table import Table
-
-    console = output.console
-    console.print(Panel.fit(
-        f"{data['total_firings']} firing(s) recorded — {data['repo']}\n"
-        f"most-fired: {'#' + str(data['most_fired']) if data['most_fired'] is not None else '(none yet)'} · "
-        f"last fired: {data['last_fired'] or '(never)'}",
-        title="scar stats"))
+    fmt = output.fmt
+    most = "#" + str(data["most_fired"]) if data["most_fired"] is not None else "(none yet)"
+    output.show(output.panel(
+        fmt("{} firing(s) recorded \u2014 {}\nmost-fired: {} · last fired: {}",
+            data["total_firings"], data["repo"], most, data["last_fired"] or "(never)"),
+        title="scar stats", fit=True))
     if data["per_scar"]:
-        t = Table(title="Per-scar firing counts", show_edge=False, expand=False)
-        t.add_column("id", justify="right")
-        t.add_column("firings", justify="right")
+        rows = []
         for e in data["per_scar"]:
-            row = f"#{e['id']}", str(e["count"])
+            row = [fmt("#{}", e["id"]), str(e["count"])]
             if e.get("violations", 0) > 0:
-                row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
-            t.add_row(*row)
-        console.print(t)
+                row[1] = fmt("{} (violations: x{})", e["count"], e["violations"])
+            rows.append(row)
+        output.show(output.table(
+            "Per-scar firing counts",
+            [("id", {"justify": "right"}), ("firings", {"justify": "right"})],
+            rows, show_edge=False, expand=False))
     if data["never_fired"]:
-        console.print("[yellow]never fired:[/] "
-                      + ", ".join(f"#{i}" for i in data["never_fired"]))
+        output.say(fmt("[yellow]never fired:[/] {}",
+                       ", ".join(f"#{i}" for i in data["never_fired"])))
     # Health first (#237): if the instrument is disconnected the stages below
     # cannot be believed, so the reader must meet that before the numbers.
     for line in _health_lines(data):
-        console.print(f"[red]{line}[/]" if data["instrument_disconnected"] else line)
+        output.say(fmt("[red]{}[/]", line) if data["instrument_disconnected"]
+                   else output.plain(line))
     # The three measurement stages (#214). These must stay in step with the
     # plain renderer — shipping them to one branch only is how #225 happened.
     for line in _stage_lines(data, data["per_scar"], data["total_firings"]):
-        console.print(line)
+        output.say(output.plain(line))
     for adv in data.get("advisories", []):
-        console.print(f"[red]advisory:[/] scar #{adv['id']} accounts for "
-                      f"{int(adv['share'] * 100)}% of firings — {adv['note']}")
-    console.print(f"[dim]{RETRIEVAL_FLOOR_NOTE}[/]")
-    console.print("[dim]note: firing + violation counts — whether the agent honored an "
-                  "injected scar is unobservable from inside the hook[/]")
+        output.say(fmt("[red]advisory:[/] scar #{} accounts for {}% of firings \u2014 {}",
+                       adv["id"], int(adv["share"] * 100), adv["note"]))
+    output.say(fmt("[dim]{}[/]", RETRIEVAL_FLOOR_NOTE))
+    output.say(fmt("[dim]note: firing + violation counts \u2014 whether the agent honored an "
+                   "injected scar is unobservable from inside the hook[/]"))
 
 
 def _stats_all_repos_rich(data: dict, log_path: Path) -> None:
-    from rich.panel import Panel
-    from rich.table import Table
-
-    console = output.console
-    console.print(Panel.fit(
-        f"{len(data['repos'])} repo(s) recorded in {log_path}",
-        title="scar stats --all-repos"))
+    fmt = output.fmt
+    output.show(output.panel(
+        fmt("{} repo(s) recorded in {}", len(data["repos"]), log_path),
+        title="scar stats --all-repos", fit=True))
     for g in data["repos"]:
-        t = Table(title=f"{g['repo']} — {g['total_firings']} firing(s)",
-                  show_edge=False, expand=False)
-        t.add_column("id", justify="right")
-        t.add_column("firings", justify="right")
+        rows = []
         for e in g["per_scar"]:
-            row = f"#{e['id']}", str(e["count"])
+            row = [fmt("#{}", e["id"]), str(e["count"])]
             if e.get("violations", 0) > 0:
-                row = (f"#{e['id']}", f"{e['count']} (violations: x{e['violations']})")
-            t.add_row(*row)
-        console.print(t)
+                row[1] = fmt("{} (violations: x{})", e["count"], e["violations"])
+            rows.append(row)
+        output.show(output.table(
+            fmt("{} \u2014 {} firing(s)", g["repo"], g["total_firings"]),
+            [("id", {"justify": "right"}), ("firings", {"justify": "right"})],
+            rows, show_edge=False, expand=False))
         for line in _health_lines(g):
-            console.print(f"  [red]{line}[/]" if g["instrument_disconnected"]
-                          else f"  {line}")
+            output.say(fmt("  [red]{}[/]", line) if g["instrument_disconnected"]
+                       else fmt("  {}", line))
         for line in _stage_lines(g, g["per_scar"], g["total_firings"]):
-            console.print(f"  {line}")
-    console.print("[dim]note: ids are per-repo — the same number in two repos "
-                  "is two different scars[/]")
-    console.print(f"[dim]{RETRIEVAL_FLOOR_NOTE}[/]")
+            output.say(fmt("  {}", line))
+    output.say(fmt("[dim]note: ids are per-repo \u2014 the same number in two repos "
+                   "is two different scars[/]"))
+    output.say(fmt("[dim]{}[/]", RETRIEVAL_FLOOR_NOTE))
 
 
 def _gc_rich(data: dict, *, days: int, max_firings: int, state_dir: Path) -> None:
-    from rich.panel import Panel
-    from rich.table import Table
-
-    console = output.console
+    fmt = output.fmt
     verb, fverb = ("would remove", "would drop") if data["dry_run"] else ("removed", "dropped")
-    console.print(Panel.fit(
-        f"{verb} {data['removed_markers']} stale marker(s) (older than {days}d)\n"
-        f"{fverb} {data['dropped_firings']} firing-log line(s) (kept newest {max_firings})\n"
-        f"[dim]{state_dir}[/]",
-        title="scar gc" + (" (dry-run)" if data["dry_run"] else "")))
+    output.show(output.panel(
+        fmt("{} {} stale marker(s) (older than {}d)\n"
+            "{} {} firing-log line(s) (kept newest {})\n"
+            "[dim]{}[/]",
+            verb, data["removed_markers"], days,
+            fverb, data["dropped_firings"], max_firings, state_dir),
+        title="scar gc (dry-run)" if data["dry_run"] else "scar gc", fit=True))
 
     candidates = data["candidates"]
     if candidates:
-        t = Table(title="Candidates pending review (oldest first)",
-                  show_edge=False, expand=False)
-        t.add_column("name")
-        t.add_column("age (days)", justify="right")
-        for c in candidates:
-            t.add_row(c["name"], str(c["age_days"]))
-        console.print(t)
-        console.print("[dim]review with `scar promote <path>` or delete rejected files[/]")
+        output.show(output.table(
+            "Candidates pending review (oldest first)",
+            ["name", ("age (days)", {"justify": "right"})],
+            [[c["name"], str(c["age_days"])] for c in candidates],
+            show_edge=False, expand=False))
+        output.say(fmt("[dim]review with `scar promote <path>` or delete rejected files[/]"))
     else:
-        console.print("[dim]0 candidates pending review[/]")
-
-    from rich.markup import escape
+        output.say(fmt("[dim]0 candidates pending review[/]"))
 
     for line in _fp_log_lines(data["fp_log"]):
         # soft_wrap: the path and the mv hint must stay copy-pasteable.
-        console.print(f"[dim]{escape(line)}[/]", soft_wrap=True)
+        output.say(fmt("[dim]{}[/]", line), soft_wrap=True)
 
 
 def _fp_log_lines(fp_log: dict) -> list[str]:
@@ -512,19 +499,23 @@ def _fp_log_lines(fp_log: dict) -> list[str]:
 
 
 def _orphan_rich(findings, partial) -> None:
-    console = output.console
+    fmt, ref = output.fmt, output.ref
     if not findings:
-        console.print("[green]no orphan-detected scars[/]")
+        output.say(fmt("[green]no orphan-detected scars[/]"))
     else:
         for of in findings:
-            console.print(f"[red]orphan-detected[/] [#{of.scar_id}] {_orphan_reason(of)}")
-        console.print(f"[bold]{len(findings)}[/] orphan(s) detected — review, then "
-                      "`scar orphan --apply --id N --reason ...` to persist")
+            output.say(fmt("[red]orphan-detected[/] {} {}", ref(of.scar_id),
+                           _orphan_reason(of)))
+        output.say(fmt("[bold]{}[/] orphan(s) detected \u2014 review, then "
+                       "`scar orphan --apply --id N --reason ...` to persist",
+                       len(findings)))
     for pr in partial:
-        console.print(f"[yellow]partial-rot[/] [#{pr.scar_id}] {_partial_rot_reason(pr)}")
+        output.say(fmt("[yellow]partial-rot[/] {} {}", ref(pr.scar_id),
+                       _partial_rot_reason(pr)))
     if partial:
-        console.print(f"[bold]{len(partial)}[/] partial-rot — advisory; re-anchor the dead "
-                      "anchor(s). Not an orphan (still firing on survivors).")
+        output.say(fmt("[bold]{}[/] partial-rot \u2014 advisory; re-anchor the dead "
+                       "anchor(s). Not an orphan (still firing on survivors).",
+                       len(partial)))
 
 
 def _repo_context(store):
@@ -1302,14 +1293,12 @@ def _cmd_check(args) -> int:
 
 
 def _sweep_rich(hits, summary: str) -> None:
-    from rich.markup import escape
-
-    console = output.console
+    fmt = output.fmt
     for h in hits:
-        console.print(f"{escape(h['path'])}:{h['line']}: [red]scar #{h['id']}[/] "
-                      f"({h['type']}): {escape(h['title'])}")
-        console.print(f"  {escape(h['excerpt'].strip())}", style="dim")
-    console.print(summary)
+        output.say(fmt("{}:{}: [red]scar #{}[/] ({}): {}",
+                       h["path"], h["line"], h["id"], h["type"], h["title"]))
+        output.say(fmt("  {}", h["excerpt"].strip()), style="dim")
+    output.say(summary)
 
 
 def _cmd_sweep(args) -> int:
@@ -1464,19 +1453,19 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
         print(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed{refused_note}")
 
     def tty():
-        console = output.console
+        fmt, ref = output.fmt, output.ref
         for sid, renamed in fixed:
             for old, new in renamed.items():
-                console.print(f"[green]fixed[/] [#{sid}] renamed anchor {old} -> {new}")
+                output.say(fmt("[green]fixed[/] {} renamed anchor {} -> {}", ref(sid), old, new))
         for sid in skipped:
-            console.print(f"[yellow]not fixed[/] [#{sid}] no unambiguous, "
-                          "currently-tracked rename target")
+            output.say(fmt("[yellow]not fixed[/] {} no unambiguous, "
+                           "currently-tracked rename target", ref(sid)))
         for sid, reason in refused:
-            console.print(f"[red]refused[/] [#{sid}] {reason}")
+            output.say(fmt("[red]refused[/] {} {}", ref(sid), reason))
         if not fixed and not skipped and not refused:
-            console.print("[green]no orphan-detected scars with a dead path anchor to fix[/]")
-        console.print(f"[bold]{len(fixed)}[/] scar(s) fixed, [bold]{len(skipped)}[/] left unfixed"
-                      f"{refused_note}")
+            output.say(fmt("[green]no orphan-detected scars with a dead path anchor to fix[/]"))
+        output.say(fmt("[bold]{}[/] scar(s) fixed, [bold]{}[/] left unfixed{}",
+                       len(fixed), len(skipped), refused_note))
 
     output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
     # A batch with a refusal is not a clean success: a human has work to do.
@@ -1638,18 +1627,20 @@ def _reanchor_plain(proposals, pattern_diag) -> None:
 
 
 def _reanchor_rich(proposals, pattern_diag) -> None:
-    console = output.console
+    fmt, ref = output.fmt, output.ref
     if not proposals and not pattern_diag:
-        console.print("[green]no reanchor proposals[/]")
+        output.say(fmt("[green]no reanchor proposals[/]"))
         return
     for p in proposals:
         style = "green" if p.confidence == "high" else "yellow"
-        console.print(f"[{style}]reanchor[/] [#{p.scar_id}] {p.anchor_kind} {p.dead_anchor} -> "
-                      f"{p.proposed_anchor} ({p.confidence})")
+        output.say(fmt("{} {} {} {} -> {} ({})", output.styled(style, "reanchor"),
+                       ref(p.scar_id), p.anchor_kind, p.dead_anchor, p.proposed_anchor,
+                       p.confidence))
     for d in pattern_diag:
-        console.print(f"[dim]pattern[/] [#{d['scar_id']}] {d['dead_anchor']}: {d['diagnostic']}")
-    console.print(f"[bold]{len(proposals)}[/] proposal(s), "
-                  f"[bold]{len(pattern_diag)}[/] pattern diagnostic(s)")
+        output.say(fmt("[dim]pattern[/] {} {}: {}", ref(d["scar_id"]), d["dead_anchor"],
+                       d["diagnostic"]))
+    output.say(fmt("[bold]{}[/] proposal(s), [bold]{}[/] pattern diagnostic(s)",
+                   len(proposals), len(pattern_diag)))
 
 
 def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
@@ -1748,14 +1739,15 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
               "(anchors-live-again hint will surface on next `scar lint`)")
 
     def tty():
-        console = output.console
+        fmt, ref = output.fmt, output.ref
         for k, d, n in fixed:
-            console.print(f"[green]fixed[/] [#{args.id}] {k} {d} -> {n}")
+            output.say(fmt("[green]fixed[/] {} {} {} -> {}", ref(args.id), k, d, n))
         for k, d, r in skipped:
-            console.print(f"[yellow]not fixed[/] [#{args.id}] {k} {d}: {r}")
+            output.say(fmt("[yellow]not fixed[/] {} {} {}: {}", ref(args.id), k, d, r))
         if refusal:
-            console.print(f"[red]refused[/] [#{args.id}] {refusal}")
-        console.print(f"[bold]{len(fixed)}[/] anchor(s) fixed, [bold]{len(skipped)}[/] left unfixed")
+            output.say(fmt("[red]refused[/] {} {}", ref(args.id), refusal))
+        output.say(fmt("[bold]{}[/] anchor(s) fixed, [bold]{}[/] left unfixed",
+                       len(fixed), len(skipped)))
 
     output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
     return 1 if refusal else 0
@@ -2928,8 +2920,7 @@ def _cmd_draft_check(args) -> int:
             print(text)
 
         def tty():
-            from rich.panel import Panel
-            output.console.print(Panel(text, title="scar draft-check", border_style="yellow"))
+            output.show(output.panel(text, title="scar draft-check", border_style="yellow"))
 
         output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
 
