@@ -199,7 +199,7 @@ Before the first prompt, promote checks that both programs exist, that the repos
 
 If the checker refuses an act after the person has touched the key, nothing is written. The candidate stays byte for byte, the id is not used up, and the output says the touch was spent and gives the checker's reason as it came. The window an act stays acceptable is fixed at one hour in the code. An organization that allows less answers `validity_too_long` there; the fix is a deliberate change to that constant, not a setting. The receipts of every scar, archived ones included, are passed to the checker, so one act cannot be reused for a second scar.
 
-A config that exists but cannot be read is an error, never "no org". `scar lint` also refuses the two ways of turning signing off by editing files, with no verifier needed: a scar that carries a `promotion_act` while the config names no org, and a scar at or after `signed_from` that carries no act. After `scar reanchor --apply` or a rename fix changes a scar's anchors, its act no longer matches the record. Re-signing is not part of promote yet.
+A config that exists but cannot be read is an error, never "no org". `scar lint` also refuses the two ways of turning signing off by editing files, with no verifier needed: a scar that carries a `promotion_act` while the config names no org, and a scar at or after `signed_from` that carries no act. After `scar reanchor --apply` or a rename fix changes a scar's anchors, its act no longer matches the record. To sign the record again, run `scar resign --id N`: one touch, and only the act and receipt lines of the file change.
 
 ### Verifying promotions
 
