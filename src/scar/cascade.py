@@ -30,10 +30,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
+from .atomic import atomic_write_text
 from .hooks import (
     _extract_edit_content,
     _log_firing,
@@ -92,9 +92,8 @@ def _remember_fired(keys: list[str]) -> bool:
     the caller blocks ONLY on True, because an unrecordable fire means the
     retry would bounce again, and again, with no way out for the user.
 
-    Written to a temp file in the same directory and swapped in with
-    os.replace, mirroring gc.truncate_firing_log: a concurrent hook run can
-    never observe a half-written state file.
+    Written through atomic_write_text, as gc.truncate_firing_log is: a
+    concurrent hook run can never observe a half-written state file.
     """
     now = time.time()
     state = _load_fire_state()
@@ -105,18 +104,7 @@ def _remember_fired(keys: list[str]) -> bool:
     path = fire_state_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent),
-                                        prefix=path.name + ".", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(state, fh)
-            os.replace(tmp_name, path)
-        except Exception:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(path, json.dumps(state))
     except Exception:
         return False
     return True
