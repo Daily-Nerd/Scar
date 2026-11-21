@@ -161,8 +161,13 @@ def write_active_scar(path: Path, new_text: str) -> None:
     Rule: no Scar command turns an act that matches its record into one that
     does not. An act that already mismatched or cannot be read is left to
     lint, and the file is written, so such a scar stays archivable. When the
-    old act matched, the new text must keep the same act and the same record;
-    anything else (record changed, act dropped, act altered, text that no
+    old act matched, the new text is accepted in exactly two cases: it keeps
+    the same act over the same record, or it changes the record and carries a
+    different act whose inputs_hash is the hash of the new record (#434: a tool
+    that signed the new bytes). The gate does no crypto, so the second case
+    proves the act was made for these bytes, not that it is genuine; the
+    checker stays the authority. Anything else (record changed with the old
+    act kept, act dropped, act altered over an unchanged record, text that no
     longer parses) raises SignedRecordWouldChange and the file is untouched.
     The write goes through atomic_write_text, keeping the file's mode and
     following a symlink."""
@@ -174,8 +179,12 @@ def write_active_scar(path: Path, new_text: str) -> None:
     if old is not None and act_matches_record(old):
         try:
             new = parse_scar_text(new_text)
-            keeps = (new.promotion_act == old.promotion_act
-                     and act_matches_record(new) is True)
+            # A matching act that is unchanged proves the record is unchanged
+            # too. A different matching act is only legitimate over a record
+            # that changed: over the same record it is an altered act line.
+            keeps = act_matches_record(new) is True and (
+                new.promotion_act == old.promotion_act
+                or record_hash(new) != record_hash(old))
         except ParseError:
             keeps = False
         if not keeps:
