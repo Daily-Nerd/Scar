@@ -456,6 +456,17 @@ def test_spec_says_signing_refuses_when_a_scar_file_cannot_be_read(tmp_path):
         ScarStore.discover(tmp_path).seen_receipts()
 
 
+def test_spec_says_the_act_line_is_read_at_column_zero():
+    where = _section("Where the act lives")
+    assert "Both are read at column 0 only." in where
+    assert "`ACT_LINE_RE` in `model.py`" in where
+    from scar import model
+    assert model.ACT_LINE_RE.pattern.startswith("^promotion_(act|receipt):")
+    front = "type: fence\n  promotion_act: DECOY\npromotion_act: REAL\n"
+    text = f"---\n{front}---\nbody\n"
+    assert parse_scar_text(text).promotion_act == "REAL"
+
+
 def test_every_command_in_the_signing_paragraphs_is_in_the_command_table():
     table_names = {t.split()[1] for row in _commands_rows() for t in _ticks(row[0])}
     for token in _ticks(_signing_paragraphs()):

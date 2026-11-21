@@ -16,6 +16,14 @@ SEVERITIES = ("low", "medium", "high", "critical")
 STATUSES = ("candidate", "active", "challenged", "archived", "orphaned", "template")
 
 _FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", re.DOTALL)
+
+# The ONE definition of the two lines a machine writes (#439): promotion_act and
+# promotion_receipt, at column 0 and nowhere else. The parser reads them through
+# it and signedpromote.with_act removes them through it, so what is read is
+# exactly what is replaced. Every other key keeps _field's tolerance for leading
+# whitespace; these two do not, because only a machine writes them (always at
+# column 0) and an indented line of that name belongs to whatever block holds it.
+ACT_LINE_RE = re.compile(r"^promotion_(act|receipt):[ \t]*(.*?)[ \t\r]*$", re.MULTILINE)
 _URL_RE = re.compile(r"^https?://")
 
 
@@ -243,6 +251,16 @@ def _flow_list(front: str, name: str, unreadable: list[str]) -> list[str]:
     return items
 
 
+def _act_scalar(front: str, name: str) -> str:
+    """The value of the first column-0 `promotion_act` / `promotion_receipt`
+    line, read through ACT_LINE_RE and given the same comment strip and unquote
+    every scalar gets. Empty when there is none or the value is empty."""
+    for m in ACT_LINE_RE.finditer(front):
+        if f"promotion_{m.group(1)}" == name:
+            return _unquote(_strip_inline_comment(m.group(2)))
+    return ""
+
+
 def _int_or_none(raw: str) -> int | None:
     """A non-negative int, or None when absent/unparseable. An unparseable
     value must NOT become 0: 0 means "never escalate", so coercing garbage to
@@ -296,8 +314,8 @@ def parse_scar_text(text: str) -> Scar:
         unreadable_fields=unreadable,
         promoted_by=_scalar(front, "promoted_by"),
         promoted_by_source=_scalar(front, "promoted_by_source") or None,
-        promotion_act=_scalar(front, "promotion_act"),
-        promotion_receipt=_scalar(front, "promotion_receipt"),
+        promotion_act=_act_scalar(front, "promotion_act"),
+        promotion_receipt=_act_scalar(front, "promotion_receipt"),
         promoted_from=_scalar(front, "promoted_from"),
         path_anchors=[_unquote(_strip_inline_comment(p))
                       for p in re.findall(r"^\s*-\s*path:\s*(.+?)\s*$", front, re.MULTILINE)],

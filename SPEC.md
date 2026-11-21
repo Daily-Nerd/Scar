@@ -735,8 +735,14 @@ is a deliberate change to the constant.
 Two frontmatter lines: `promotion_act` (the compact signed act) and
 `promotion_receipt` (the receipt id the checker returned).
 
+Both are read at column 0 only. The parser and `with_act` share one definition
+of the line, `ACT_LINE_RE` in `model.py` (`^promotion_(act|receipt):`). An
+indented line that starts with one of the two names belongs to whatever block it
+sits in: it is neither read as the act nor removed by `with_act`. No other key is
+narrowed this way.
+
 `with_act` in `signedpromote.py` sets them with a text edit of the frontmatter
-and nothing else. Every existing line of either key is removed, and the pair
+and nothing else. Every existing column-0 line of either key is removed, and the pair
 goes where the first one was. With none, it goes before `anchors:`, else at the
 end of the frontmatter. The body is never read as frontmatter. The file's line
 ending is kept.

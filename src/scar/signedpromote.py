@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import config, presence
 from .record import promoted_record, promotion_subject, record_hash
-from .model import _FRONTMATTER_RE, ParseError, Scar, parse_scar_text
+from .model import _FRONTMATTER_RE, ACT_LINE_RE, ParseError, Scar, parse_scar_text
 from .store import (PreparedPromotion, ScarStore, UnreadableScars, act_matches_record,
                     read_scar_text, write_active_scar)
 
@@ -173,7 +173,6 @@ def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path
             f"written: {name} is unchanged.", touch_spent=True) from None
 
 
-_ACT_LINE_RE = re.compile(r"^\s*promotion_(?:act|receipt):")
 _ANCHORS_LINE_RE = re.compile(r"^anchors:")
 
 
@@ -182,7 +181,9 @@ def with_act(text: str, act: str, receipt: str) -> str:
     every other byte as it was. A surgical edit of the frontmatter, never a
     parse and reserialize (that would reorder and requote lines, and the record
     the person saw would no longer be the record on disk). Existing lines of
-    either key are removed and the pair goes where the first one was; with none,
+    either key are removed (a line is one only at column 0, by the model's one
+    definition of it, so an indented line of that name is left alone) and the
+    pair goes where the first one was; with none,
     before `anchors:` (where Scar.to_text writes them), else at the end of the
     frontmatter. The body is never read as frontmatter. The line ending of the
     file is kept."""
@@ -191,12 +192,12 @@ def with_act(text: str, act: str, receipt: str) -> str:
         raise ValueError("no frontmatter to put the act in")
     eol = "\r" if text.startswith("---\r\n") else ""
     lines = text[m.start(1):m.end(1)].split("\n")
-    first = next((i for i, line in enumerate(lines) if _ACT_LINE_RE.match(line)), None)
+    first = next((i for i, line in enumerate(lines) if ACT_LINE_RE.match(line)), None)
     if first is None:
         first = next((i for i, line in enumerate(lines) if _ANCHORS_LINE_RE.match(line)),
                      len(lines))
-    kept_before = sum(1 for line in lines[:first] if not _ACT_LINE_RE.match(line))
-    lines = [line for line in lines if not _ACT_LINE_RE.match(line)]
+    kept_before = sum(1 for line in lines[:first] if not ACT_LINE_RE.match(line))
+    lines = [line for line in lines if not ACT_LINE_RE.match(line)]
     lines[kept_before:kept_before] = [f"promotion_act: {act}{eol}",
                                       f"promotion_receipt: {receipt}{eol}"]
     return text[:m.start(1)] + "\n".join(lines) + text[m.end(1):]
