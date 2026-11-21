@@ -503,13 +503,6 @@ emptied, when a writer has no match objects in hand, and a MISSING `matched_by`
 means the row predates the field, never "no kinds". Readers must not treat its
 absence as a value.
 
-### 9.4 Enforcement
-
-`tests/test_json_contract.py` asserts every guaranteed key above against live
-command output, and asserts the nullable semantics of §9.2. A guarantee no
-test enforces is an untestable assertion, and untestable assertions are the
-ones that reach `main` wrong.
-
 ### 9.10 Install detection
 
 `scar hook install` and `scar skill install` without `--runtime` detect hosts (claude, codex, windsurf, cursor, opencode) by config directory or binary on PATH, and resolve for each the channel that already serves it: `settings` (Scar's own entries in the host's hook file), `plugin` (the scar marketplace plugin installed and not disabled), or `none`. windsurf is repo-scoped: its hooks file is written into the working repo, so the binary on PATH counts only when that repo is inside a git repository. On a terminal, one question per present, wirable, unserved host, default no. Without a terminal, exactly one such host is installed; zero or several means the commands are printed and nothing is written. Zero detected hosts says so, rather than naming the plugin. `--all` wires every such host. `--runtime claude` on a Claude Code already served by the plugin refuses unless `--force`. `--all` and `--force` apply to `install` only, and `--force` applies to `--runtime claude` only. A missing or unreadable plugin registry never counts as `plugin`.
@@ -613,3 +606,301 @@ are never averaged. `--all-repos` carries one `compliance` block per repo group.
 **`injection_rate` is coverage, not a retrieval rate.** It is the share of
 observed edits where any scar fired. It does not say whether the right scar was
 shown, and it must not be given a retrieval threshold.
+
+### 9.13 Enforcement
+
+`tests/test_json_contract.py` asserts every guaranteed key above against live
+command output, and asserts the nullable semantics of §9.2. A guarantee no
+test enforces is an untestable assertion, and untestable assertions are the
+ones that reach `main` wrong.
+
+## 10. Signed promotion
+
+Signing is optional and per repository. An `org` in `.scars/config.json` turns
+it on. With it on, promoting a scar needs a person's touch on a signing key, and
+the proof is stored in the scar file as an act. This section states the rules
+that decide whether an act still belongs to a scar, and which commands may write
+a scar that carries one.
+
+The code is the source of truth. `tests/test_signing_contract.py` rebuilds the
+constants, the worked example, the lint states, the verify states and the
+command list from the code, and fails when this section disagrees. Scar's own
+side is specified here: what it sends to the signer and the checker, and what it
+relies on in their answers. What those programs do beyond that is not.
+
+### 10.1 What is signed
+
+The signed bytes are the output of `promoted_record` in `record.py`. Nothing
+else rebuilds them. They are UTF-8 with LF line endings and one trailing LF,
+in this order:
+
+- `id: <n>`
+- `type: <type>`
+- `title: <title>`
+- `severity: <severity>`
+- `promoted_from: <path>`, only when the field is set
+- `anchors:`
+- one line `  - <kind>: <value>` per anchor, kinds in the order path, pattern,
+  symbol, command, values in file order
+- `---`
+- the body, with CRLF and CR turned into LF and trailing whitespace removed
+
+The record is built from parsed values, so quoting, key order and line endings
+in the file cannot change the bytes. The parser has already removed leading and
+trailing whitespace from the body.
+
+Status, evidence, authors, `promoted_by`, confidence, expiry, review dates, the
+act and the receipt are not in the record. So archiving, challenging, orphaning
+and adding an evidence note never invalidate an act. Anchors are in the record
+on purpose: moving one changes where the scar fires.
+
+The block below is the record of a scar whose file quotes its title, lists its
+anchors in the order command, symbol, pattern, path, uses CRLF line endings, and
+carries status, evidence and an act. None of those show up in it.
+
+```text
+id: 7
+type: fence
+title: Retry loop is deliberate
+severity: high
+promoted_from: candidates/retry-loop.md
+anchors:
+  - path: src/net.py
+  - path: src/util.py
+  - pattern: retry\(
+  - symbol: retry_with_backoff
+  - command: git push --force
+---
+The backoff is slow on purpose.
+Do not remove it.
+```
+
+Hash of the block above: `uEiC7uY8ZT_WOnAUSVgOFNb4GHGIRAZlZBdDrIHebxr0lag`
+
+### 10.2 The hash
+
+An act stores `inputs_hash`: the letter `u` followed by the unpadded base64url
+of the bytes `0x12 0x20` and the SHA-256 of the record. `record_hash` computes
+it. Scar computes it from the file every time and never stores it.
+
+`act_inputs_hash` in `presence.py` reads `inputs_hash` out of an act without
+looking at the signature. A match proves the act was made for these bytes. It
+does not prove the act is genuine. Only the checker says that.
+
+### 10.3 The subject
+
+The subject ties an act to one scar in one repository: the scar id, a hyphen,
+and the first 16 hex characters of the first-parent root commit
+(`promotion_subject`).
+
+Pattern: `^[0-9]+-[0-9a-f]{16}$`
+
+An anchor rewrite does not change the subject. If git cannot name exactly one
+root commit (not a repository, no commits, more than one root), there is no
+subject, and every signing path refuses (`subject_for`, `machine_checks`).
+
+### 10.4 The act's words
+
+The consumer is `scar` and the action is `promote`. The action stays `promote`
+for every signature, including re-signing and signing in place. The consumer
+must never change: it is part of what is signed, and a new one would make every
+stored act fail its recheck. The method is a fixed string in `presence.py`,
+which the contract test pins. The validity window is one hour. It is a
+constant, not configuration.
+
+The signer and the checker are run only from the fixed absolute paths in
+`presence.py`, never through `PATH`, with no variable or flag to move them.
+
+| Name | Value | Meaning |
+|---|---|---|
+| `MAX_RECORD_BYTES` | `2048` | Largest record the signer will show |
+| `MAX_RECORD_LINES` | `32` | Most block lines the signer will show |
+| `WRAP_WIDTH` | `96` | Characters per block line before it wraps (private in `record.py`, measured by the test) |
+| `CONSUMER` | `scar` | The consumer in every act |
+| `ACTION` | `promote` | The action in every act |
+| `METHOD` | fixed string in presence.py | The method in every act |
+| `EXPIRES_IN_S` | `3600` | Seconds a fresh act stays acceptable, as a decimal string |
+| `CHECKER_TIMEOUT_S` | `10` | Seconds Scar waits for the checker and for quick signer calls |
+| `SIGNER_TIMEOUT_S` | `300` | Seconds Scar waits for a person at the signer's prompt |
+| `CONFIG_NAME` | `config.json` | The config file inside `.scars/` |
+| `SIGNER` | fixed absolute path in presence.py | The signer program |
+| `CHECKER` | fixed absolute path in presence.py | The checker program |
+
+An org that allows a shorter window than `EXPIRES_IN_S` answers
+`validity_too_long` at the first-acceptance check, after the touch. The remedy
+is a deliberate change to the constant.
+
+### 10.5 Where the act lives
+
+Two frontmatter lines: `promotion_act` (the compact signed act) and
+`promotion_receipt` (the receipt id the checker returned).
+
+`with_act` in `signedpromote.py` sets them with a text edit of the frontmatter
+and nothing else. Every existing line of either key is removed, and the pair
+goes where the first one was. With none, it goes before `anchors:`, else at the
+end of the frontmatter. The body is never read as frontmatter. The file's line
+ending is kept.
+
+A candidate never keeps an act or a receipt: `prepare_promotion` clears both.
+
+### 10.6 Config
+
+`.scars/config.json` is read only by `config.load`.
+
+- `org`: a non-empty string. It turns signing on.
+- `signed_from`: a whole number of 1 or more. It is the first scar id that must
+  carry an act.
+
+A file that exists and cannot be read, or has a bad `org` or `signed_from`, is
+an error. It is never read as "no org". `signing_problem` refuses an org
+without `signed_from`, and a `signed_from` past the next free id. Promote and
+resign refuse a config that lint would refuse.
+
+### 10.7 No org, no signing
+
+With no org, promote behaves as it always did and prints `not signed`.
+`scar resign` refuses with "no org". No flag signs, and no flag skips signing.
+
+### 10.8 The write gate
+
+The only in-place write of a numbered scar is `write_active_scar` in `store.py`.
+It protects a scar whose act matches its record, whatever its status. When the
+old file's act matches, the new text is written in exactly two cases:
+
+- the same act over the same record;
+- a changed record with a different act whose `inputs_hash` is the hash of the
+  new record.
+
+Anything else raises `SignedRecordWouldChange` and leaves the file untouched:
+a changed record with the old act kept, a dropped act, an altered act over an
+unchanged record, text that no longer parses. An act that already mismatched or
+cannot be read is not protected. The write goes through and lint reports it.
+
+The gate does no cryptography. The second case proves the act was made for
+these bytes, not that it is genuine.
+
+So a tool that rewrites a signed scar has two outcomes: it signs the new
+record, or it refuses. An act that matches its record is never left stale by a
+tool.
+
+The limit: a tool signs only a scar whose act matches its record. A scar with a
+stale act, or with no act at or after `signed_from`, is written with no touch by
+`scar reanchor --apply` and `scar orphan --fix-renames`, and lint reports it.
+
+### 10.9 Sizes
+
+The signer shows the whole record or refuses. A record over `MAX_RECORD_BYTES`
+bytes or `MAX_RECORD_LINES` lines cannot be signed. Lines are counted as the
+signer wraps them (`render_fit`): a printable ASCII byte is one character, any
+other byte is four, an escape is never split, and a line wraps at `WRAP_WIDTH`.
+
+Refusal happens before any touch (`render_check`, `preflight`,
+`new_record_checks`). Lint warns about a candidate over either limit
+(`render_fit_findings`). It never errors.
+
+### 10.10 Order of a signature
+
+1. Machine checks (`machine_checks`): both programs exist at their fixed paths,
+   git can name the root commit, the checker has a head, and this machine's key
+   is still enrolled.
+2. Render check: the signer shows the record without signing it, or refuses.
+3. The head is fetched again.
+4. Sign. This is the touch.
+5. First-acceptance check (`ingest`). The `seen` list holds the receipts of
+   every scar that parses, archived and orphaned ones included, sorted and
+   unique.
+6. One write.
+
+Promote runs steps 1 and 2 for the whole batch before the first touch, then
+steps 3 to 6 for each scar in turn. Resign and the tools that sign in place run
+steps 1 and 2 on the new text, and before step 6 they read the file again and
+refuse if it changed since it was judged. Promote creates the active file with
+an exclusive create. The others write through the gate.
+
+Nothing reaches disk unless the checker answered `valid: true` with reason `ok`
+for these exact bytes, this subject and the consumer `scar`. A refusal after
+the touch says the touch was spent and leaves the file as it was.
+
+### 10.11 Which scars are signed
+
+A scar is signed when it is active and its act matches its record (`is_signed`).
+Only an active scar is ever signed (`check_signable_status`, `resign_target`).
+
+| Status | Signed | Why |
+|---|---|---|
+| `candidate` | no | Promotion signs it as it becomes active |
+| `active` | yes | |
+| `challenged` | no | Refused: only an active scar is signed |
+| `orphaned` | no | Refused: only an active scar is signed |
+| `archived` | no | Refused, and archived is terminal |
+| `template` | no | Not a scar |
+
+A scar outside `active` that lint reports for a stale or missing act has no
+command that signs it. For a challenged or orphaned scar, edit `status:` back to
+`active` by hand (status is not in the record, so the act is unaffected), then
+run the command. For an archived scar there is no way back: archived is
+terminal, and the knowledge returns as a new candidate.
+
+### 10.12 What each command does
+
+| Command | Effect | Code | Pinned by |
+|---|---|---|---|
+| `scar promote` (org set) | One touch per candidate, written only after acceptance. A batch is a queue: a failure at k leaves 1 to k-1 promoted | `promote_one`, `_promote_one`, `preflight` | `tests/test_promote_signed.py` |
+| `scar resign --id N` | Signs the record as it stands and swaps only the act and receipt lines. Refused when the act already matches | `resign_target`, `resign_one`, `_cmd_resign` | `tests/test_resign.py` |
+| `scar reanchor --apply` | One touch. Anchors, notes and act in one write. Refuses otherwise | `_reanchor_apply`, `_sign_in_place` | `tests/test_sign_in_place.py` |
+| `scar orphan --fix-renames` | Unsigned scars first with no touch, then signed scars in id order, one touch each. A cancel stops the asking | `_orphan_fix_renames`, `_sign_in_place` | `tests/test_sign_in_place.py` |
+| `scar orphan --apply`, `scar challenge`, `scar archive`, evidence notes | Status and notes only. The record is unchanged, so the act still matches | `transition`, `append_evidence_note`, `write_active_scar` | `tests/test_write_gate.py` |
+| hand edit of the record | The act goes stale and lint errors. `scar resign` is the remedy for an active scar | `downgrade_findings` | `tests/test_resign.py` |
+| `scar lint` | Never signs. Reports the states of 10.13, and with `--verify-promotion` those of 10.14 | `downgrade_findings`, `verify_store` | `tests/test_signing_contract.py` |
+
+### 10.13 Lint states
+
+`downgrade_findings` is structural and needs no verifier, so CI runs it. Every
+state is an error:
+
+| Kind | When | Message contains |
+|---|---|---|
+| `act-without-org` | A scar has an act and the config names no org | `names no org` |
+| `act-unreadable` | The act is not three segments, its payload is not base64url JSON, or it has no `inputs_hash` | `cannot be read` |
+| `act-stale` | The act's `inputs_hash` is not the hash of the current record | `changed since it was signed` |
+| `act-missing` | A scar that is not a candidate, at or after `signed_from`, has no act | `carries no promotion_act` |
+| `config-no-signed-from` | The config names an org without `signed_from` | `names an org but not signed_from` |
+| `config-past-next-id` | `signed_from` is past the next free id | `is beyond the next id` |
+
+For `act-unreadable`, `act-stale` and `act-missing` the message ends with
+`scar resign --id N` only when the scar is active (`_resign_hint`), because
+resign refuses every other status.
+
+### 10.14 Verify states
+
+`scar lint --verify-promotion` checks the act of each scar that still injects
+(active or challenged) and prints one state per scar. States are reported and
+never lint errors. Only `rechecked: true` from the checker is `verified`.
+
+| State | Meaning |
+|---|---|
+| `verified` | The checker answered `rechecked: true` |
+| `unverified` | The scar has no act |
+| `not proven: <reason>` | The checker answered anything else. Its reason is shown as it came |
+| `not verified: verifier not installed` | Nothing at the checker's fixed path |
+| `not verified: no org in .scars/config.json` | File missing, invalid, or `org` absent or empty |
+| `not verified: repository root commit unavailable` | git cannot name the root commit |
+| `not verified: verifier failed` | Nonzero exit, timeout, or output that is not the expected JSON |
+
+### 10.15 What this section does not claim
+
+- `seen` holds the receipts of every scar that parses. A scar file that does not
+  parse is skipped, and its receipt is not in the list.
+- Nothing proves that a title or body can never make `promoted_record` differ
+  between parse and reserialize. `new_record_checks` guards the in-place case by
+  comparing hashes with placeholder act and receipt lines, and refuses before
+  any touch when they differ. That is a guard, not a guarantee.
+- The signer's and the checker's own protocol is out of scope: what the touch
+  shows, and what the recheck accepts.
+
+### 10.16 Tests that pin this section
+
+`tests/test_signing_contract.py` ties this section to the code. The gate rule is
+pinned by `tests/test_write_gate.py` and the size boundaries by
+`tests/test_render_fit.py`. The contract test only checks that the constants and
+the outcomes stated here match them.
