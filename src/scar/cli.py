@@ -51,9 +51,9 @@ from .reanchor import (
     propose_symbol_reanchors_for_scar,
 )
 from .render import injection_context, label_line, rule_line
-from .renames import apply_anchor_rewrite, apply_rename_fix
+from .renames import anchor_rewrite_text, apply_anchor_rewrite, apply_rename_fix
 from .store import (ScarStore, SignedRecordWouldChange, init_scars, sanitize_signal_text,
-                    slugify)
+                    slugify, with_evidence_note)
 from .violation_evidence import is_violation_summary
 from . import clock, config, output, signedpromote
 
@@ -1324,26 +1324,19 @@ def _cmd_resign(args) -> int:
     if store is None:
         return 1
     try:
-        cfg = config.load(store.scars_dir)
-    except config.ConfigError as exc:
+        org = signedpromote.signing_org(store)
+    except signedpromote.SignedPromoteError as exc:
         return _resign_result(args, args.id, f"refusing to resign: {exc}")
-    if cfg.org is None:
-        return _resign_result(
-            args, args.id, "refusing to resign: no org in .scars/config.json, so there "
-            "is nothing to sign for")
-    problem = config.signing_problem(cfg, store.next_id())
-    if problem:
-        return _resign_result(args, args.id, f"refusing to resign: {problem}")
     try:
         path, scar = signedpromote.resign_target(store, args.id)
     except signedpromote.SignedPromoteError as exc:
         return _resign_result(args, args.id, str(exc))
     try:
-        original = signedpromote.resign_preflight(store, cfg.org, path, scar)
+        original = signedpromote.resign_preflight(store, org, path, scar)
     except signedpromote.SignedPromoteError as exc:
         return _resign_result(args, args.id, f"cannot sign: {exc}", no_touch=True)
     try:
-        signedpromote.resign_one(store, cfg.org, path, scar, original)
+        signedpromote.resign_one(store, org, path, original, original)
     except signedpromote.SignedPromoteError as exc:
         return _resign_result(args, args.id, str(exc), touch_spent=exc.touch_spent)
     rel = path.relative_to(store.root).as_posix()
@@ -1536,6 +1529,112 @@ def _cmd_transition(args, new_status: str) -> int:
     return 0
 
 
+@dataclass(frozen=True)
+class _SignTarget:
+    """One signed scar a rewriting tool wants to sign in place (#434): the scar
+    as it stands (for its status), its file, the text judged when the plan was
+    made and the text it is to become, built in memory and not yet written."""
+    scar: object
+    path: Path
+    original: str
+    new_text: str
+
+
+def _not_signed_reason(scar_id, exc: signedpromote.SignedPromoteError) -> str:
+    """Why a signed scar was left as it was when nothing had been asked of the
+    person: the cause, and that no touch was requested."""
+    return (f"scar #{scar_id} is signed and was not signed in place, no touch "
+            f"was requested: {exc}")
+
+
+def _sign_in_place(store: ScarStore, targets: list[_SignTarget]):
+    """Sign each of `targets` in place, in the order given, and write each
+    once, last. Returns (signed ids, refused as (id, reason, touch_spent)).
+    The sequence itself belongs to signedpromote; this only orders it. Every
+    refusal that needs no person is made before the first touch: the config,
+    each scar's status, the machine checks, then the render check of every new
+    record. A cancelled touch ends the asking: that scar and each one after it
+    are refused. Any other failure refuses that scar and the run goes on."""
+    signed: list = []
+    refused: list = []
+    try:
+        org = signedpromote.signing_org(store)
+    except signedpromote.SignedPromoteError as exc:
+        return signed, [(t.scar.id, _not_signed_reason(t.scar.id, exc), False)
+                        for t in targets]
+    ready = []
+    for t in targets:
+        try:
+            signedpromote.check_signable_status(t.scar)
+        except signedpromote.SignedPromoteError as exc:
+            refused.append((t.scar.id, _not_signed_reason(t.scar.id, exc), False))
+        else:
+            ready.append(t)
+    if not ready:
+        return signed, refused
+    try:
+        head = signedpromote.machine_checks(store, org, ready[0].scar.id)
+    except signedpromote.SignedPromoteError as exc:
+        return signed, refused + [(t.scar.id, _not_signed_reason(t.scar.id, exc), False)
+                                  for t in ready]
+    checked = []
+    for t in ready:
+        try:
+            signedpromote.new_record_checks(store, org, t.path, t.new_text, head)
+        except signedpromote.SignedPromoteError as exc:
+            refused.append((t.scar.id, _not_signed_reason(t.scar.id, exc), False))
+        else:
+            checked.append(t)
+    asking = True
+    for t in checked:
+        if not asking:
+            refused.append((t.scar.id, f"scar #{t.scar.id} was not attempted: an earlier "
+                            "touch was cancelled, so nothing more was asked", False))
+            continue
+        try:
+            signedpromote.resign_one(store, org, t.path, t.original, t.new_text)
+        except signedpromote.SignedPromoteError as exc:
+            refused.append((t.scar.id, str(exc), exc.touch_spent))
+            asking = not exc.cancelled
+        else:
+            signed.append(t.scar.id)
+    return signed, refused
+
+
+_ORPHAN_FIX_STYLES = (("no orphan-detected", "green"), ("not fixed", "yellow"),
+                      ("fixed", "green"), ("refused", "red"))
+
+
+def _orphan_fix_report(data: dict) -> _Report:
+    """The lines `scar orphan --fix-renames` reports, from its data. Plain and
+    terminal both read this list, so a line cannot reach one and miss the
+    other (#429)."""
+    fixed, skipped, refused = data["fixed"], data["skipped"], data["refused"]
+    lines = []
+    for f in fixed:
+        label = "fixed (signed)" if f["signed"] else "fixed"
+        lines += [f"{label} [#{f['scar_id']}] renamed anchor {old} -> {new}"
+                  for old, new in f["renamed"].items()]
+    lines += [f"not fixed [#{k['scar_id']}] no unambiguous, currently-tracked "
+              "rename target \u2014 anchor left as-is" for k in skipped]
+    lines += [f"refused [#{r['scar_id']}] {r['reason']}" for r in refused]
+    if not fixed and not skipped and not refused:
+        lines.append("no orphan-detected scars with a dead path anchor to fix")
+    refused_note = f", {len(refused)} refused" if refused else ""
+    lines.append(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed{refused_note}")
+    return _Report(before=tuple(lines))
+
+
+def _orphan_fix_plain(data: dict) -> None:
+    for line in _orphan_fix_report(data).plain_lines():
+        print(line)
+
+
+def _orphan_fix_rich(data: dict) -> None:
+    for line in _orphan_fix_report(data).before:
+        output.say(_styled_line(line, _ORPHAN_FIX_STYLES))
+
+
 def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
     """`scar orphan --fix-renames`: surgically rewrite the anchor line for
     every dead path anchor that resolved to an unambiguous, currently-tracked
@@ -1547,65 +1646,60 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
     Each rewrite is a single-line text replace (renames.apply_rename_fix) —
     never a parse+reserialize (landmine #4: promote's roundtrip once silently
     dropped expires/evidence on a hand-authored file).
+
+    A scar whose act matches its record is signed (#434): its new text is built
+    in memory, shown to the person and written once with a new act. Unsigned
+    scars are fixed first with no touch, so a cancelled touch never costs
+    their fixes; the signed ones follow in id order.
     """
     id_to_path = {s.id: f for f, s in store.parsed() if s.id is not None}
-    fixed: list[tuple[int | None, dict[str, str]]] = []
+    id_to_scar = {s.id: s for _f, s in store.parsed() if s.id is not None}
+    fixed: list[tuple[int | None, dict[str, str], bool]] = []
     skipped: list[int | None] = []
-    # Refused by the write gate (#412): the scar carries a signed act that the
-    # rewrite would break. Reported per scar; the batch carries on.
-    refused: list[tuple[int | None, str]] = []
+    # Refused: by the write gate (#412), or because a signed scar could not be
+    # signed in place (#434). Reported per scar; the batch carries on.
+    refused: list[tuple[int | None, str, bool]] = []
+    signed_targets: dict[int, _SignTarget] = {}
+    renamed_of: dict[int, dict[str, str]] = {}
     for of in findings:
         path = id_to_path.get(of.scar_id)
         if not of.renamed or path is None:
             if of.dead_path_anchors:
                 skipped.append(of.scar_id)
             continue
+        scar = id_to_scar[of.scar_id]
+        if signedpromote.is_signed(scar):
+            original = path.read_bytes().decode("utf-8")
+            new_text = anchor_rewrite_text(original, "path", of.renamed)
+            if new_text == original:
+                skipped.append(of.scar_id)
+            else:
+                signed_targets[of.scar_id] = _SignTarget(scar, path, original, new_text)
+                renamed_of[of.scar_id] = of.renamed
+            continue
         try:
             changed = apply_rename_fix(path, of.renamed)
         except SignedRecordWouldChange as exc:
-            refused.append((of.scar_id, str(exc)))
+            refused.append((of.scar_id, str(exc), False))
             continue
         if changed:
-            fixed.append((of.scar_id, of.renamed))
+            fixed.append((of.scar_id, of.renamed, False))
         else:
             skipped.append(of.scar_id)
+    ordered = [signed_targets[sid] for sid in sorted(signed_targets)]
+    signed_ids, signed_refused = _sign_in_place(store, ordered) if ordered else ([], [])
+    fixed += [(sid, renamed_of[sid], True) for sid in signed_ids]
+    refused += signed_refused
 
     data = {
-        "fixed": [{"scar_id": sid, "renamed": renamed} for sid, renamed in fixed],
+        "fixed": [{"scar_id": sid, "renamed": renamed, "signed": is_signed}
+                  for sid, renamed, is_signed in fixed],
         "skipped": [{"scar_id": sid} for sid in skipped],
-        "refused": [{"scar_id": sid, "reason": reason} for sid, reason in refused],
+        "refused": [{"scar_id": sid, "reason": reason, "touch_spent": spent}
+                    for sid, reason, spent in refused],
     }
-    refused_note = f", {len(refused)} refused" if refused else ""
-
-    def plain():
-        for sid, renamed in fixed:
-            for old, new in renamed.items():
-                print(f"fixed [#{sid}] renamed anchor {old} -> {new}")
-        for sid in skipped:
-            print(f"not fixed [#{sid}] no unambiguous, currently-tracked "
-                  "rename target — anchor left as-is")
-        for sid, reason in refused:
-            print(f"refused [#{sid}] {reason}")
-        if not fixed and not skipped and not refused:
-            print("no orphan-detected scars with a dead path anchor to fix")
-        print(f"{len(fixed)} scar(s) fixed, {len(skipped)} left unfixed{refused_note}")
-
-    def tty():
-        fmt, ref = output.fmt, output.ref
-        for sid, renamed in fixed:
-            for old, new in renamed.items():
-                output.say(fmt("[green]fixed[/] {} renamed anchor {} -> {}", ref(sid), old, new))
-        for sid in skipped:
-            output.say(fmt("[yellow]not fixed[/] {} no unambiguous, "
-                           "currently-tracked rename target", ref(sid)))
-        for sid, reason in refused:
-            output.say(fmt("[red]refused[/] {} {}", ref(sid), reason))
-        if not fixed and not skipped and not refused:
-            output.say(fmt("[green]no orphan-detected scars with a dead path anchor to fix[/]"))
-        output.say(fmt("[bold]{}[/] scar(s) fixed, [bold]{}[/] left unfixed{}",
-                       len(fixed), len(skipped), refused_note))
-
-    output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _orphan_fix_rich(data), plain=lambda: _orphan_fix_plain(data))
     # A batch with a refusal is not a clean success: a human has work to do.
     return 1 if refused else 0
 
@@ -1791,8 +1885,9 @@ def _reanchor_rich(data: dict) -> None:
 def _reanchor_apply_report(data: dict, scar_id: int) -> _Report:
     """The lines `scar reanchor --apply` reports, from its data (#429)."""
     fixed, skipped = data["fixed"], data["skipped"]
-    lines = [f"fixed [#{scar_id}] {f['anchor_kind']} {f['dead_anchor']} -> "
-             f"{f['proposed_anchor']}" for f in fixed]
+    lines = [f"{'fixed (signed)' if f['signed'] else 'fixed'} [#{scar_id}] "
+             f"{f['anchor_kind']} {f['dead_anchor']} -> {f['proposed_anchor']}"
+             for f in fixed]
     lines += [f"not fixed [#{scar_id}] {k['anchor_kind']} {k['dead_anchor']}: {k['reason']}"
               for k in skipped]
     lines += [f"refused [#{scar_id}] {r['reason']}" for r in data["refused"]]
@@ -1875,27 +1970,47 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
         notes.append(format_reanchor_note(
             apply_date, kind, dead, only.proposed_anchor, only.confidence))
 
-    # The write gate (#412) refuses a rewrite that would leave a signed act
-    # not matching its record. Refusal raises before the first byte is
-    # written, so nothing below it runs: no anchor change and no note.
+    # A scar whose act matches its record is signed (#434): its new text, anchors
+    # then notes, is built in memory, shown to the person and written once with a
+    # new act. An unsigned scar is written as it always was. Either way a refusal
+    # happens before the first byte is written, so no anchor change and no note
+    # is left behind.
     refusal: str | None = None
-    try:
+    touch_spent = False
+    signed = False
+    if fixed and signedpromote.is_signed(scar):
+        original = scar_file.read_bytes().decode("utf-8")
+        new_text = original
         for kind, renamed in renamed_by_kind.items():
-            if renamed:
-                apply_anchor_rewrite(scar_file, kind, renamed)
-        # Evidence notes (#296): recorded AFTER the anchor rewrite lands, via a
-        # fresh parse of the (already-rewritten) file, so this never races the
-        # surgical rewrite above with a stale in-memory anchor value.
+            new_text = anchor_rewrite_text(new_text, kind, renamed)
         for note in notes:
-            store.append_evidence_note(args.id, note)
-    except SignedRecordWouldChange as exc:
-        refusal = str(exc)
-        fixed = []
+            new_text = with_evidence_note(new_text, note)
+        signed_ids, signed_refused = _sign_in_place(
+            store, [_SignTarget(scar, scar_file, original, new_text)])
+        signed = bool(signed_ids)
+        if signed_refused:
+            (_sid, refusal, touch_spent), = signed_refused
+            fixed = []
+    else:
+        try:
+            for kind, renamed in renamed_by_kind.items():
+                if renamed:
+                    apply_anchor_rewrite(scar_file, kind, renamed)
+            # Evidence notes (#296): recorded AFTER the anchor rewrite lands, via a
+            # fresh parse of the (already-rewritten) file, so this never races the
+            # surgical rewrite above with a stale in-memory anchor value.
+            for note in notes:
+                store.append_evidence_note(args.id, note)
+        except SignedRecordWouldChange as exc:
+            refusal = str(exc)
+            fixed = []
 
     data = {
-        "fixed": [{"anchor_kind": k, "dead_anchor": d, "proposed_anchor": n} for k, d, n in fixed],
+        "fixed": [{"anchor_kind": k, "dead_anchor": d, "proposed_anchor": n, "signed": signed}
+                  for k, d, n in fixed],
         "skipped": [{"anchor_kind": k, "dead_anchor": d, "reason": r} for k, d, r in skipped],
-        "refused": ([{"scar_id": args.id, "reason": refusal}] if refusal else []),
+        "refused": ([{"scar_id": args.id, "reason": refusal, "touch_spent": touch_spent}]
+                    if refusal else []),
     }
 
     output.render(data=data, json_flag=getattr(args, "json", False),

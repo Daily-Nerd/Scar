@@ -128,10 +128,12 @@ def test_reanchor_list_empty_parity(capsys, term):
 
 
 APPLY_DATA = {
-    "fixed": [{"anchor_kind": "path", "dead_anchor": "a/", "proposed_anchor": "b/"}],
+    "fixed": [{"anchor_kind": "path", "dead_anchor": "a/", "proposed_anchor": "b/",
+               "signed": False}],
     "skipped": [{"anchor_kind": "symbol", "dead_anchor": "x.py::g",
                  "reason": "no candidate found"}],
-    "refused": [{"scar_id": 7, "reason": "would break the signed record"}],
+    "refused": [{"scar_id": 7, "reason": "would break the signed record",
+                 "touch_spent": False}],
 }
 
 
@@ -148,6 +150,61 @@ def test_reanchor_apply_plain_is_unchanged(capsys):
 def test_reanchor_apply_terminal_shows_every_plain_line(term):
     cli._reanchor_apply_rich(APPLY_DATA, 7)
     _assert_parity(cli._reanchor_apply_report(APPLY_DATA, 7), term())
+
+
+SIGNED_APPLY_DATA = {
+    "fixed": [{"anchor_kind": "path", "dead_anchor": "a/", "proposed_anchor": "b/",
+               "signed": True}],
+    "skipped": [],
+    "refused": [],
+}
+
+
+def test_reanchor_apply_signed_line_in_plain_and_terminal(capsys, term):
+    assert _plain_lines(capsys, cli._reanchor_apply_plain, SIGNED_APPLY_DATA, 7)[0] == (
+        "fixed (signed) [#7] path a/ -> b/")
+    cli._reanchor_apply_rich(SIGNED_APPLY_DATA, 7)
+    _assert_parity(cli._reanchor_apply_report(SIGNED_APPLY_DATA, 7), term())
+
+
+# --- orphan --fix-renames ---------------------------------------------------
+
+
+FIX_DATA = {
+    "fixed": [{"scar_id": 9, "renamed": {"src/a.py": "src/b.py"}, "signed": False},
+              {"scar_id": 10, "renamed": {"src/c.py": "src/d.py"}, "signed": True}],
+    "skipped": [{"scar_id": 5}],
+    "refused": [{"scar_id": 11, "reason": "cancelled at x.md: nothing was written",
+                 "touch_spent": False},
+                {"scar_id": 12, "reason": "the touch was spent, but the checker said no",
+                 "touch_spent": True}],
+}
+
+
+def test_orphan_fix_plain_is_pinned(capsys):
+    assert _plain_lines(capsys, cli._orphan_fix_plain, FIX_DATA) == [
+        "fixed [#9] renamed anchor src/a.py -> src/b.py",
+        "fixed (signed) [#10] renamed anchor src/c.py -> src/d.py",
+        f"not fixed [#5] no unambiguous, currently-tracked rename target {EM} anchor "
+        "left as-is",
+        "refused [#11] cancelled at x.md: nothing was written",
+        "refused [#12] the touch was spent, but the checker said no",
+        "2 scar(s) fixed, 1 left unfixed, 2 refused",
+    ]
+
+
+def test_orphan_fix_terminal_shows_every_plain_line(term):
+    cli._orphan_fix_rich(FIX_DATA)
+    _assert_parity(cli._orphan_fix_report(FIX_DATA), term())
+
+
+def test_orphan_fix_nothing_to_fix_parity(capsys, term):
+    empty = {"fixed": [], "skipped": [], "refused": []}
+    assert _plain_lines(capsys, cli._orphan_fix_plain, empty) == [
+        "no orphan-detected scars with a dead path anchor to fix",
+        "0 scar(s) fixed, 0 left unfixed"]
+    cli._orphan_fix_rich(empty)
+    _assert_parity(cli._orphan_fix_report(empty), term())
 
 
 # --- lint -------------------------------------------------------------------

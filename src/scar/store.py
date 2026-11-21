@@ -155,6 +155,18 @@ def act_matches_record(scar: Scar) -> bool | None:
     return signed == record_hash(scar)
 
 
+def with_evidence_note(text: str, note: str) -> str:
+    """`text` with *note* appended as a new evidence entry, built in memory
+    and written nowhere (#434). The one owner of how a note is added: parse,
+    append, reserialize through Scar.to_text(), so an existing evidence: list
+    keeps its entries and a scar with none gets one. append_evidence_note
+    writes this text; a tool that signs the scar builds it first and writes
+    once, last. Raises ParseError for text that is not a scar."""
+    scar = parse_scar_text(text)
+    scar.evidence.append(note)
+    return scar.to_text()
+
+
 def write_active_scar(path: Path, new_text: str) -> None:
     """The one in-place write of an active scar file (#412).
 
@@ -507,8 +519,7 @@ class ScarStore:
         rendering (nothing here special-cases either shape)."""
         for f, s in self.parsed():
             if s.id == scar_id:
-                s.evidence.append(note)
-                write_active_scar(f, s.to_text())
+                write_active_scar(f, with_evidence_note(f.read_text(encoding="utf-8"), note))
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 

@@ -1,4 +1,9 @@
-"""The commands that rewrite active scar files report a refused rewrite (#412)."""
+"""The commands that rewrite active scar files report a refused rewrite (#412).
+
+These repos have no org in .scars/config.json, so there is nothing to sign a
+changed record for (#434): a signed scar is refused with that reason, the
+file is byte-identical and no touch is requested. test_sign_in_place covers
+the repos that can sign."""
 import json
 
 from scar.cli import main
@@ -40,7 +45,9 @@ def test_fix_renames_fixes_the_unsigned_and_lists_the_signed_as_refused(
     assert rc == 1
     assert "fixed [#9]" in out
     assert "refused [#10]" in out and "refused [#11]" in out
-    assert "signed" in out
+    assert "scar #10 is signed" in out and "scar #11 is signed" in out
+    assert out.count("no org in .scars/config.json") == 2
+    assert "no touch was requested" in out
     assert "1 scar(s) fixed, 0 left unfixed, 2 refused" in out
     assert "src/new_home.py" in (tmp_path / ".scars" / "0009-renamed.deadend.md").read_text()
     for p, data in before.items():
@@ -58,7 +65,9 @@ def test_fix_renames_json_lists_refused_scars_with_the_reason(tmp_path, monkeypa
     assert rc == 1
     assert [f["scar_id"] for f in data["fixed"]] == [9]
     assert [r["scar_id"] for r in data["refused"]] == [10, 11]
-    assert all("signed" in r["reason"] for r in data["refused"])
+    assert all("no org in .scars/config.json" in r["reason"] for r in data["refused"])
+    assert [r["touch_spent"] for r in data["refused"]] == [False, False]
+    assert all(f["signed"] is False for f in data["fixed"])
 
 
 def test_fix_renames_with_nothing_refused_still_exits_zero(tmp_path, monkeypatch, capsys):
@@ -96,7 +105,8 @@ def test_reanchor_apply_on_a_signed_scar_is_refused_with_no_note(tmp_path, monke
     rc = main(["reanchor", "--apply", "--id", "24"])
     out = capsys.readouterr().out
     assert rc == 1
-    assert "refused [#24]" in out and "signed" in out
+    assert "refused [#24]" in out and "scar #24 is signed" in out
+    assert "no org in .scars/config.json" in out
     assert f.read_bytes() == before  # neither the anchor nor an evidence note
 
 
@@ -109,7 +119,9 @@ def test_reanchor_apply_json_reports_the_refusal(tmp_path, monkeypatch, capsys):
     data = json.loads(capsys.readouterr().out)
     assert rc == 1
     assert data["fixed"] == []
-    assert data["refused"][0]["scar_id"] == 24 and "signed" in data["refused"][0]["reason"]
+    assert data["refused"][0]["scar_id"] == 24
+    assert "no org in .scars/config.json" in data["refused"][0]["reason"]
+    assert data["refused"][0]["touch_spent"] is False
     assert f.read_bytes() == before
 
 

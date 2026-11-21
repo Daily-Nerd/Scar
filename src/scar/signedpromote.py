@@ -20,9 +20,9 @@ import os
 import re
 from pathlib import Path
 
-from . import presence
+from . import config, presence
 from .record import promoted_record, promotion_subject, record_hash
-from .model import _FRONTMATTER_RE, Scar, parse_scar_text
+from .model import _FRONTMATTER_RE, ParseError, Scar, parse_scar_text
 from .store import PreparedPromotion, ScarStore, act_matches_record, write_active_scar
 
 
@@ -196,35 +196,87 @@ def resign_target(store: ScarStore, scar_id: int) -> tuple[Path, Scar]:
     return path, scar
 
 
-def resign_preflight(store: ScarStore, org: str, path: Path, scar: Scar) -> str:
-    """Everything that can be refused before the touch when re-signing: the
-    machine checks, the signer's render check, and the text to be written. The
-    record holds neither the act nor the receipt, so that text is built with
-    placeholders: if those lines would change what parses as the record, the
-    touch is never asked for. Returns the file text the checks were made on."""
-    original = path.read_bytes().decode("utf-8")
-    head = machine_checks(store, org, scar.id)
+def signing_org(store: ScarStore) -> str:
+    """The org this repository signs under, or a refusal that names why it
+    cannot: an unreadable config, no org, or a config lint would refuse. One
+    owner for `scar resign` and the tools that sign in place, so none of them
+    reads `.scars/config.json` its own way."""
+    try:
+        cfg = config.load(store.scars_dir)
+    except config.ConfigError as exc:
+        raise SignedPromoteError(str(exc)) from None
+    if cfg.org is None:
+        raise SignedPromoteError(
+            "no org in .scars/config.json, so there is nothing to sign for")
+    problem = config.signing_problem(cfg, store.next_id())
+    if problem:
+        raise SignedPromoteError(problem)
+    return cfg.org
+
+
+def is_signed(scar: Scar) -> bool:
+    """True when `scar` carries an act that matches its record: the scars the
+    write gate protects, and the only ones a rewriting tool signs in place. An
+    act that is stale or cannot be read is not signed in this sense (`scar
+    resign` is its remedy), and neither is a scar with no act."""
+    return act_matches_record(scar) is True
+
+
+def check_signable_status(scar: Scar) -> None:
+    """Raise unless `scar` is active, the rule `scar resign` applies: a signed
+    scar that is challenged (or orphaned) is not signed again by a rewrite."""
+    if scar.status != "active":
+        raise SignedPromoteError(
+            f"scar #{scar.id} is {scar.status}: only an active scar is signed")
+
+
+def new_record_checks(store: ScarStore, org: str, path: Path, new_text: str,
+                      head: dict) -> Scar:
+    """What can be refused about the record `new_text` would sign, without a
+    person: the record is built from the parse of the text, so the bytes the
+    signer shows are the bytes that get written; the signer's render check on
+    it; and the text to be written. The record holds neither the act nor the
+    receipt, so that text is built with placeholders: if those lines would
+    change what parses as the record, the touch is never asked for. Returns the
+    scar parsed from `new_text`. Touches no file and asks for no signature."""
+    try:
+        scar = parse_scar_text(new_text)
+    except ParseError as exc:
+        raise SignedPromoteError(f"{path.name}: the new text does not parse: {exc}") from None
     render_check(store, org, scar, head, path.name)
-    if record_hash(parse_scar_text(with_act(original, "-", "-"))) != record_hash(scar):
+    if record_hash(parse_scar_text(with_act(new_text, "-", "-"))) != record_hash(scar):
         raise SignedPromoteError(
             f"{path.name}: putting the act in the file would change its record.")
+    return scar
+
+
+def resign_preflight(store: ScarStore, org: str, path: Path, scar: Scar) -> str:
+    """Everything that can be refused before the touch when re-signing: the
+    machine checks, then `new_record_checks` on the file as it stands. Returns
+    the file text the checks were made on."""
+    original = path.read_bytes().decode("utf-8")
+    head = machine_checks(store, org, scar.id)
+    new_record_checks(store, org, path, original, head)
     return original
 
 
-def resign_one(store: ScarStore, org: str, path: Path, scar: Scar, original: str) -> None:
-    """Sign `scar`'s record and store the new act and receipt in its file:
-    head, sign, first-acceptance check, write. `original` is the text
-    `resign_preflight` judged. The file is read again before the write, and one
-    that changed during the touch is left alone."""
+def resign_one(store: ScarStore, org: str, path: Path, original: str, new_text: str) -> None:
+    """Sign the record `new_text` holds and store the act and receipt in it:
+    head, sign, first-acceptance check, then one write of the text with the
+    act in it. `original` is the file as it was judged and `new_text` is what
+    it is to become before the act goes in. `scar resign` is the case where the
+    two are equal; a tool that rewrites anchors passes the rewritten text. The
+    file is read again before the write, and one that changed during the touch
+    is left alone."""
     name = path.name
-    jws, receipt = sign_record(store, scar, org, name)
+    jws, receipt = sign_record(store, parse_scar_text(new_text), org, name)
     if path.read_bytes().decode("utf-8") != original:
         raise SignedPromoteError(
             f"the touch was spent and the act was accepted, but {name} changed while it "
             f"was being signed. Nothing was written: {name} is as the other change left it.",
             touch_spent=True)
     try:
-        write_active_scar(path, with_act(original, jws, receipt))
+        write_active_scar(path, with_act(new_text, jws, receipt))
     except ValueError as exc:
         raise SignedPromoteError(
             f"the touch was spent and the act was accepted, but {exc}. Nothing was "

@@ -299,3 +299,43 @@ def test_sweep_hit_item_keys_are_present(repo, capsys):
     assert data["hits"], "fixture should produce a hit"
     missing = ITEM_KEYS[("sweep", "hits")] - set(data["hits"][0])
     assert not missing, f"sweep.hits[] dropped promised keys: {sorted(missing)}"
+
+
+def test_orphan_fix_renames_item_keys_and_types(tmp_path, monkeypatch, capsys):
+    """SPEC §9.3: `fixed[]` carries `signed`, `refused[]` carries `touch_spent`
+    (#434). The repo has no org, so its signed scar is the refused entry."""
+    from test_cli import _git_repo_with_renamed_anchor
+    from test_write_gate_cli import extra_renamed_scar
+    _git_repo_with_renamed_anchor(tmp_path)
+    extra_renamed_scar(tmp_path, 10, signed=True)
+    monkeypatch.chdir(tmp_path)
+    assert main(["orphan", "--fix-renames", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert {"fixed", "skipped", "refused"} <= set(data)
+    (fixed,) = data["fixed"]
+    assert {"scar_id", "renamed", "signed"} <= set(fixed)
+    assert isinstance(fixed["scar_id"], int) and isinstance(fixed["renamed"], dict)
+    assert fixed["signed"] is False
+    (refused,) = data["refused"]
+    assert {"scar_id", "reason", "touch_spent"} <= set(refused)
+    assert isinstance(refused["reason"], str) and refused["touch_spent"] is False
+
+
+def test_reanchor_apply_item_keys_and_types(tmp_path, monkeypatch, capsys):
+    from test_write_gate_cli import _moved_module_repo
+    _moved_module_repo(tmp_path, 24, signed=False)
+    monkeypatch.chdir(tmp_path)
+    assert main(["reanchor", "--apply", "--id", "24", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {"fixed", "skipped", "refused"} <= set(data)
+    (fixed,) = data["fixed"]
+    assert {"anchor_kind", "dead_anchor", "proposed_anchor", "signed"} <= set(fixed)
+    assert fixed["signed"] is False
+    signed_repo = tmp_path / "again"
+    signed_repo.mkdir()
+    _moved_module_repo(signed_repo, 24, signed=True)
+    monkeypatch.chdir(signed_repo)
+    assert main(["reanchor", "--apply", "--id", "24", "--json"]) == 1
+    (refused,) = json.loads(capsys.readouterr().out)["refused"]
+    assert {"scar_id", "reason", "touch_spent"} <= set(refused)
+    assert isinstance(refused["scar_id"], int) and refused["touch_spent"] is False
