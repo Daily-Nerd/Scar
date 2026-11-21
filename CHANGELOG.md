@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.33.0](https://github.com/Daily-Nerd/Scar/compare/v0.32.0...v0.33.0) (2026-11-21)
+
+
+### Features
+
+* **promote:** scar resign signs an active scar's record again ([#426](https://github.com/Daily-Nerd/Scar/issues/426)) ([5f5e130](https://github.com/Daily-Nerd/Scar/commit/5f5e1308573f60a3e73a68212f4a3a825828af3d))
+
+
+### Bug Fixes
+
+* **cli:** terminal output shows every line the plain output shows ([#433](https://github.com/Daily-Nerd/Scar/issues/433)) ([d49ae51](https://github.com/Daily-Nerd/Scar/commit/d49ae51826be0570f9ade8965ef775aed64782e2))
+* **hooks:** fail open at the dispatcher and show the age of recorded failures ([#431](https://github.com/Daily-Nerd/Scar/issues/431)) ([086f454](https://github.com/Daily-Nerd/Scar/commit/086f4543336b38e2b26007d9f4b2349909864e42)), closes [#428](https://github.com/Daily-Nerd/Scar/issues/428)
+
 ## [0.32.0](https://github.com/Daily-Nerd/Scar/compare/v0.31.0...v0.32.0) (2026-11-20)
 
 
