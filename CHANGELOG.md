@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.34.0](https://github.com/Daily-Nerd/Scar/compare/v0.33.0...v0.34.0) (2026-11-21)
+
+
+### Features
+
+* **promote:** reanchor --apply and orphan --fix-renames sign in place when the scar is signed ([#435](https://github.com/Daily-Nerd/Scar/issues/435)) ([fb31b06](https://github.com/Daily-Nerd/Scar/commit/fb31b0610e7c445d6bac9d9d89f0ae45b1d2a443)), closes [#434](https://github.com/Daily-Nerd/Scar/issues/434)
+
+
+### Bug Fixes
+
+* **promote:** refuse to sign over unreadable scar files and share one definition of the act line ([#440](https://github.com/Daily-Nerd/Scar/issues/440)) ([0ae1694](https://github.com/Daily-Nerd/Scar/commit/0ae16940f5030faca60e0715dd0d15bc722e857e))
+
+
+### Documentation
+
+* **spec:** specify signed promotion and correct the re-signing guidance ([#438](https://github.com/Daily-Nerd/Scar/issues/438)) ([4b59449](https://github.com/Daily-Nerd/Scar/commit/4b594493d948e4d979c6e94f91f1b4447c53f562)), closes [#437](https://github.com/Daily-Nerd/Scar/issues/437)
+
 ## [0.33.0](https://github.com/Daily-Nerd/Scar/compare/v0.32.0...v0.33.0) (2026-11-21)
 
 
