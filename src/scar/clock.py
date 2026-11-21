@@ -12,6 +12,7 @@ Stdlib-only and cheap to import: hooks.py loads this on the hot path.
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 
 def today() -> str:
@@ -28,3 +29,19 @@ def month_index() -> int:
     """Current year*12+month in local time, derived from today()."""
     year, month, _day = today().split("-")
     return int(year) * 12 + int(month)
+
+
+def age_in_days(ts: str | None) -> int | None:
+    """Whole days between a log timestamp and now, or None if it can't be
+    read. scar 0012: log readers need blanket guards, a corrupt ts must never
+    raise out of a reporting command."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        when = datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+    try:
+        return max(0, (datetime.now(tz=when.tzinfo) - when).days)
+    except (OverflowError, OSError, ValueError):
+        return None
