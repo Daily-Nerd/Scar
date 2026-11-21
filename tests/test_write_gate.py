@@ -192,7 +192,7 @@ def test_a_failed_write_raises_as_is_and_leaves_file_and_directory_alone(
     def fail(*args, **kwargs):
         raise boom
 
-    monkeypatch.setattr(f"scar.store.{failing}", fail)
+    monkeypatch.setattr(f"scar.atomic.{failing}", fail)
     with pytest.raises(OSError) as excinfo:
         write_active_scar(p, original.decode().replace("confidence: 0.5", "confidence: 0.9"))
     assert excinfo.value is boom
@@ -217,25 +217,28 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "scar"
 
 # Every file-writing call site under src/scar, counted per module. Each entry
 # is a write to something other than an active scar file, or the gate itself:
-#   store.py     gate (fdopen + os.replace), init README/keep, candidate write,
-#                the exclusive create in commit_promotion (the signing path)
+#   atomic.py    THE atomic replace (fdopen + os.replace), owned once (#430); the
+#                gate, gc, cascade and the hook failure size cap all call it
+#   store.py     init README/keep, candidate write, the exclusive create in
+#                commit_promotion (the signing path); the gate's own write is
+#                now a call to atomic.py, so 6 -> 4
 #   cli.py       init example seed, a log append, candidate write
 #   mcp.py       candidate write (scar_draft)
-#   gc / cascade atomic log and state replace (fdopen + os.replace each)
-#   hooks.py     log appends, and the hook failure record with its size cap (#420)
+#   gc / cascade absent: their atomic replace moved to atomic.py (2 -> 0 each)
+#   hooks.py     log appends, and the hook failure record's append (#420); its
+#                size-cap rewrite moved to atomic.py, so 6 -> 4
 #   installer.py hook and settings files
 # renames.py is absent on purpose: it writes only through the gate. If this
 # test fails, the new write either targets an active scar file, in which case
 # it must go through store.write_active_scar, or it targets something else and
 # the table below gets one more line saying what.
 ALLOWED_WRITE_SITES = {
-    "cascade.py": 2,
+    "atomic.py": 2,
     "cli.py": 3,
-    "gc.py": 2,
-    "hooks.py": 6,
+    "hooks.py": 4,
     "installer.py": 8,
     "mcp.py": 1,
-    "store.py": 6,
+    "store.py": 4,
 }
 
 _WRITE_ATTRS = {"write_text", "write_bytes"}

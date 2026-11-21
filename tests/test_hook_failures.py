@@ -234,6 +234,116 @@ def test_doctor_exit_code_does_not_change(repo, capsys):
     assert main(["agent", "doctor"]) == 0
 
 
+def test_doctor_shows_the_age_of_the_last_failure(repo, capsys):
+    hooks.record_hook_failure("precheck", RuntimeError("fresh"))
+    assert main(["agent", "doctor"]) == 0
+    assert "last 0 day(s) ago" in capsys.readouterr().out
+
+
+def test_doctor_age_counts_days_from_the_last_row(repo):
+    from datetime import datetime, timedelta
+    from scar.agent import doctor
+    old = (datetime.now() - timedelta(days=3, hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    hooks.hook_failures_path().write_text(json.dumps(
+        {"ts": old, "hook": "posttool", "exc_type": "KeyError", "message": "m"}) + "\n")
+    (line,) = [ln for ln in doctor(repo) if "internal failure" in ln]
+    assert "last 3 day(s) ago" in line
+    assert "internal failure(s)" in line  # wording the doctor colouring matches
+
+
+def test_doctor_without_a_readable_timestamp_still_lists_the_failure(repo):
+    from scar.agent import doctor
+    hooks.hook_failures_path().write_text(json.dumps(
+        {"ts": "garbage", "hook": "posttool", "exc_type": "KeyError", "message": "m"}) + "\n")
+    (line,) = [ln for ln in doctor(repo) if "internal failure" in ln]
+    assert "day(s) ago" not in line
+    assert "KeyError" in line
+
+
+# ---------------------------------------------------------------------------
+# The dispatcher fails open for every kind (#428)
+# ---------------------------------------------------------------------------
+
+def _all_kinds():
+    return ([(k, hooks.HANDLERS) for k in hooks.HANDLERS]
+            + [(k, codex.HANDLERS) for k in codex.HANDLERS])
+
+
+KINDS = _all_kinds()
+
+
+@pytest.mark.parametrize("kind,table", KINDS, ids=[k for k, _ in KINDS])
+def test_dispatcher_converts_an_internal_error_to_exit_zero(
+        kind, table, repo, monkeypatch, capsys):
+    monkeypatch.setitem(table, kind, boom)
+    assert main(["hook", kind]) == 0
+    (row,) = _failures()
+    assert row["hook"] == kind
+    assert row["exc_type"] == "RuntimeError"
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("kind,table", KINDS, ids=[k for k, _ in KINDS])
+@pytest.mark.parametrize("payload", [[1, 2], "text", 7],
+                         ids=["list", "string", "number"])
+def test_a_non_object_payload_exits_zero_and_records_one_line_for_every_kind(
+        kind, table, payload, repo, monkeypatch):
+    _stdin(monkeypatch, payload)
+    assert main(["hook", kind]) == 0
+    assert [r["hook"] for r in _failures()] == [kind]
+
+
+def test_a_non_string_cwd_exits_zero_and_is_recorded(repo, monkeypatch):
+    _stdin(monkeypatch, {"cwd": 12})
+    assert main(["hook", "session-notice"]) == 0
+    assert [r["hook"] for r in _failures()] == ["session-notice"]
+
+
+def test_a_scar_file_with_invalid_utf8_does_not_break_session_start(
+        repo, monkeypatch, capsys):
+    (repo / ".scars" / "0001-bad.md").write_bytes(b"---\ntitle: \xff\xfe\n---\n")
+    _stdin(monkeypatch, {"cwd": str(repo)})
+    assert main(["hook", "session-notice"]) == 0
+    assert [r["hook"] for r in _failures()] == ["session-notice"]
+
+
+def test_a_transcript_line_that_is_a_json_scalar_does_not_break_stop_drafter(
+        repo, monkeypatch):
+    transcript = repo / "t.jsonl"
+    transcript.write_text("7\n[1]\n")
+    _stdin(monkeypatch, {"cwd": str(repo), "session_id": "s1",
+                         "transcript_path": str(transcript)})
+    assert main(["hook", "stop-drafter"]) == 0
+
+
+def test_an_unwritable_state_dir_does_not_break_stop_drafter(
+        tmp_path, repo, monkeypatch):
+    blocker = tmp_path / "file"
+    blocker.write_text("not a dir")
+    monkeypatch.setenv("SCAR_STATE_DIR", str(blocker / "sub"))
+    transcript = repo / "t.jsonl"
+    transcript.write_text(json.dumps({"type": "assistant", "message": {
+        "content": "I'll revert that, it did not work"}}) + "\n")
+    _stdin(monkeypatch, {"cwd": str(repo), "session_id": "s2",
+                         "transcript_path": str(transcript)})
+    assert main(["hook", "stop-drafter"]) == 0
+
+
+def test_a_deliberate_nonzero_exit_is_not_turned_into_zero(repo, monkeypatch):
+    monkeypatch.setitem(hooks.HANDLERS, "precheck", lambda: 2)
+    assert main(["hook", "precheck"]) == 2
+    assert _failures() == []
+
+
+def test_the_dispatcher_does_not_swallow_keyboard_interrupt(repo, monkeypatch):
+    def interrupted():
+        raise KeyboardInterrupt
+    monkeypatch.setitem(hooks.HANDLERS, "precheck", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        main(["hook", "precheck"])
+    assert _failures() == []
+
+
 # ---------------------------------------------------------------------------
 # draft-check by hand speaks on stderr; from the hook it stays silent
 # ---------------------------------------------------------------------------
@@ -267,6 +377,7 @@ def test_draft_check_from_hook_prints_nothing(repo, monkeypatch, capsys):
 # non-hook helper. Pinned by (module, function) so a NEW silent handler fails
 # this test until someone classifies it on purpose.
 OUT_OF_SCOPE = {
+    ("atomic.py", "atomic_write_text"),   # cleans the temp file, then re-raises
     ("cascade.py", "_remember_fired"),    # block-once state write, returns False
     ("cli.py", "_firing_reviews"),        # status/lint helper, "nothing to escalate"
     ("cli.py", "_stdin_is_a_terminal"),   # capability probe
@@ -274,7 +385,6 @@ OUT_OF_SCOPE = {
     ("cli.py", "_parse_window_bound"),    # bad date text -> None
     ("cli.py", "_filter_window"),         # undated rows are counted, not lost
     ("firing_log.py", "read_firing_log_records"),  # blanket per-line reader (scar 12)
-    ("gc.py", "truncate_firing_log"),     # cleans the temp file, then re-raises
     ("hooks.py", "_context_bytes"),       # optional field, omitted when unknown
     ("hooks.py", "repo_key"),             # path fallback when resolve fails
     ("hooks.py", "_recently_fired"),      # blanket per-line reader
@@ -286,7 +396,6 @@ OUT_OF_SCOPE = {
     ("orphan.py", "detect_orphans"),
     ("orphan.py", "detect_partial_rot"),
     ("orphan.py", "detect_symbol_drift"),
-    ("store.py", "write_active_scar"),    # cleans the temp file, then re-raises
     ("symbols.py", "_language"),         # optional dependency probe
 }
 

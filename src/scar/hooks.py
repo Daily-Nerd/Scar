@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from . import clock
+from .atomic import atomic_write_text
 from .firing_log import read_firing_log_records
 from .match import (MatchCensus, armed_scar_ids, find_violations, has_content_signal,
                     rank_and_census_for_edit)
@@ -183,10 +184,7 @@ def record_hook_failure(hook: str, exc: BaseException,
             fh.write(json.dumps(row) + "\n")
         if path.stat().st_size > HOOK_FAILURE_LOG_MAX_BYTES:
             lines = path.read_text(encoding="utf-8").splitlines()
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text("\n".join(lines[len(lines) // 2:]) + "\n",
-                           encoding="utf-8")
-            os.replace(tmp, path)
+            atomic_write_text(path, "\n".join(lines[len(lines) // 2:]) + "\n")
     except Exception:
         pass
 
@@ -219,8 +217,11 @@ def hook_failure_summary() -> list[str]:
     lines = []
     for hook, rows in sorted(by_hook.items()):
         last = rows[-1]
+        ts = last.get("ts", "?")
+        age = clock.age_in_days(ts)
+        when = f"{age} day(s) ago, {ts}" if age is not None else ts
         lines.append(f"{hook}: {len(rows)} internal failure(s), last "
-                     f"{last.get('ts', '?')} {last['exc_type']}: "
+                     f"{when} {last['exc_type']}: "
                      f"{last.get('message', '')}")
     return lines
 

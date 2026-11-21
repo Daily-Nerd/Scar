@@ -18,11 +18,10 @@ module has no opinion on where state lives, only on what to do with it.
 
 from __future__ import annotations
 
-import os
-import tempfile
 import time
 from pathlib import Path
 
+from .atomic import atomic_write_text
 from .store import ScarStore
 
 MARKER_GLOB = "drafted-*"
@@ -64,11 +63,10 @@ def truncate_firing_log(path: Path, max_entries: int, *, dry_run: bool = False) 
     Tail-by-line, not tail-by-record: lines are never JSON-parsed here, so a
     malformed line still counts toward the total and truncation still works.
 
-    Atomic: the replacement content is written to a temp file in the SAME
-    directory as ``path``, then swapped in with ``os.replace`` — a
-    concurrent precheck append (hooks.py's fail-open ``_log_firing``) can
-    never observe, or cause, a partially-written log. The temp file is
-    removed on any failure so it never lingers next to the real log.
+    Atomic: the replacement goes through ``atomic_write_text`` (temp file in
+    the same directory, then ``os.replace``), so a concurrent precheck append
+    (hooks.py's fail-open ``_log_firing``) can never observe, or cause, a
+    partially-written log, and no temp file lingers next to the real log.
     """
     if not path.exists():
         return 0
@@ -80,19 +78,7 @@ def truncate_firing_log(path: Path, max_entries: int, *, dry_run: bool = False) 
         return dropped
 
     keep = lines[-max_entries:] if max_entries > 0 else []
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            if keep:
-                fh.write("\n".join(keep) + "\n")
-        os.replace(tmp_name, path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(path, "\n".join(keep) + "\n" if keep else "")
     return dropped
 
 
