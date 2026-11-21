@@ -275,3 +275,33 @@ def test_flag_json_carries_promotion(repo, fake, capsys):
 def test_json_without_flag_has_no_promotion_key(repo, capsys):
     assert main(["lint", "--json"]) == 0
     assert "promotion" not in json.loads(capsys.readouterr().out)
+
+
+# ---- a plausible neighbouring key is not the key (#439) ----------------------
+
+@pytest.mark.parametrize("reply", [
+    '{"verified":true,"reason":"ok"}',
+    '{"valid":true,"reason":"ok"}',
+    '{"result":"rechecked","reason":"ok"}',
+])
+def test_verify_reads_rechecked_and_no_neighbour(repo, fake, reply):
+    fake(reply)
+    write_scar(repo)
+    assert states(repo) == [verify.FAILED]
+
+
+def test_lint_reports_changed_since_signed_when_only_a_decoy_key_matches(repo, capsys):
+    mine = record_hash(parse_scar_text(SCAR.format(act="")))
+    payload = json.dumps({"inputs_hash": "uEiSomeOtherRecord", "record_hash": mine,
+                          "input_hash": mine, "claims": {"inputs_hash": mine}}).encode()
+    act = "h." + base64.urlsafe_b64encode(payload).decode().rstrip("=") + ".s"
+    write_scar(repo, act=act)
+    assert main(["lint", "--json"]) == 1
+    messages = [f["message"] for f in json.loads(capsys.readouterr().out)["findings"]]
+    assert any("changed since it was signed" in m for m in messages)
+
+
+def test_verify_takes_the_reason_from_reason_and_not_from_a_neighbour(repo, fake):
+    fake('{"rechecked":false,"why":"decoy","message":"decoy","reason":"real_reason"}')
+    write_scar(repo)
+    assert states(repo) == ["not proven: real_reason"]

@@ -57,3 +57,16 @@ def test_a_slow_checker_is_unavailable_not_a_hang(checker, monkeypatch):
     monkeypatch.setattr(presence, "CHECKER_TIMEOUT_S", 0.5)
     with pytest.raises(presence.Unavailable):
         presence.head(ORG)
+
+
+# ---- a plausible neighbouring key is not the key (#439) ----------------------
+
+@pytest.mark.parametrize("reply", [
+    '{"chain_head":{"id":"x","kind":"chain"},"reason":"ok"}',
+    '{"head":{"id":"x","kind":"chain"},"status":"ok"}',
+    '{"head":{"id":"x","kind":"chain"},"message":"ok"}',
+])
+def test_head_reads_head_and_reason_and_no_neighbour(checker, reply):
+    checker.reply("head", (reply, 0))
+    with pytest.raises(presence.Unavailable):
+        presence.head(ORG)

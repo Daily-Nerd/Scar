@@ -227,3 +227,49 @@ def test_only_valid_true_with_ok_and_a_receipt_is_accepted(checker, reply, code)
     checker.reply("check-act", (reply, code))
     with pytest.raises(presence.PresenceError):
         presence.ingest(ORG, SUBJECT, RECORD, "a.b.c", [])
+
+
+# ---- a plausible neighbouring key is not the key (#439) ----------------------
+# Each reply carries the right VALUE under a wrong KEY, with no right key at all,
+# so an adapter that read the neighbour would accept it.
+
+@pytest.mark.parametrize("reply", [
+    '{"class":"x","reason":"ok","valid":true,"receipt":"uEiR"}',
+    '{"class":"x","reason":"ok","valid":true,"id":"uEiR"}',
+    '{"class":"x","reason":"ok","accepted":true,"receipt_id":"uEiR"}',
+    '{"class":"x","message":"ok","valid":true,"receipt_id":"uEiR"}',
+])
+def test_ingest_reads_valid_reason_and_receipt_id_and_no_neighbour(checker, reply):
+    checker.reply("check-act", (reply, 0))
+    with pytest.raises(presence.Unavailable):
+        presence.ingest(ORG, SUBJECT, RECORD, "a.b.c", [])
+
+
+@pytest.mark.parametrize("reply", [
+    '{"signature":"a.b.c","receipt_id":"uEiR"}',
+    '{"jws":"a.b.c","receipt":"uEiR"}',
+    '{"act":"a.b.c","id":"uEiR"}',
+])
+def test_sign_reads_jws_and_receipt_id_and_no_neighbour(signer, reply):
+    signer.reply("sign", (reply, 0))
+    with pytest.raises(presence.Unavailable):
+        presence.sign(presence.decision_input(ORG, SUBJECT, RECORD, HEAD))
+
+
+@pytest.mark.parametrize("reply", ['{"id":"KID43"}', '{"key_id":"KID43"}', '{"device_kid":"KID43"}'])
+def test_local_kid_reads_kid_and_no_neighbour(signer, reply):
+    signer.reply("pubkey", (reply, 0))
+    with pytest.raises(presence.Unavailable):
+        presence.local_kid()
+
+
+@pytest.mark.parametrize("reply", [
+    '{"is_enrolled":true,"reason":"ok"}',
+    '{"active":true,"reason":"ok"}',
+    '{"enrolled":false,"message":"local_key_unknown"}',
+    '{"enrolled":false,"error_reason":"local_key_unknown"}',
+])
+def test_enrolled_reads_enrolled_and_reason_and_no_neighbour(checker, reply):
+    checker.reply("enrolled", (reply, 0))
+    with pytest.raises(presence.Unavailable):
+        presence.enrolled(ORG, "KID43")
