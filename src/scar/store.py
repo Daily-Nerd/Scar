@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
-import tempfile
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import presence
+from .atomic import atomic_write_text
 from .lint import lint_text
 from .model import TYPES, ParseError, Scar, parse_scar_text
 from .record import record_hash
@@ -165,8 +164,8 @@ def write_active_scar(path: Path, new_text: str) -> None:
     old act matched, the new text must keep the same act and the same record;
     anything else (record changed, act dropped, act altered, text that no
     longer parses) raises SignedRecordWouldChange and the file is untouched.
-    The write is a temp file in the same directory swapped in with
-    os.replace, keeping the file's mode and following a symlink."""
+    The write goes through atomic_write_text, keeping the file's mode and
+    following a symlink."""
     target = Path(os.path.realpath(path))
     try:
         old = parse_scar_text(target.read_text(encoding="utf-8"))
@@ -181,16 +180,7 @@ def write_active_scar(path: Path, new_text: str) -> None:
             keeps = False
         if not keeps:
             raise SignedRecordWouldChange(old.id)
-    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.",
-                                    suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
-            fh.write(new_text)
-        shutil.copymode(target, tmp_name)
-        os.replace(tmp_name, target)
-    except BaseException:
-        Path(tmp_name).unlink(missing_ok=True)
-        raise
+    atomic_write_text(target, new_text, copymode_from=target)
 
 
 README = """\

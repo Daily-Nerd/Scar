@@ -377,6 +377,7 @@ def test_draft_check_from_hook_prints_nothing(repo, monkeypatch, capsys):
 # non-hook helper. Pinned by (module, function) so a NEW silent handler fails
 # this test until someone classifies it on purpose.
 OUT_OF_SCOPE = {
+    ("atomic.py", "atomic_write_text"),   # cleans the temp file, then re-raises
     ("cascade.py", "_remember_fired"),    # block-once state write, returns False
     ("cli.py", "_firing_reviews"),        # status/lint helper, "nothing to escalate"
     ("cli.py", "_stdin_is_a_terminal"),   # capability probe
@@ -384,7 +385,6 @@ OUT_OF_SCOPE = {
     ("cli.py", "_parse_window_bound"),    # bad date text -> None
     ("cli.py", "_filter_window"),         # undated rows are counted, not lost
     ("firing_log.py", "read_firing_log_records"),  # blanket per-line reader (scar 12)
-    ("gc.py", "truncate_firing_log"),     # cleans the temp file, then re-raises
     ("hooks.py", "_context_bytes"),       # optional field, omitted when unknown
     ("hooks.py", "repo_key"),             # path fallback when resolve fails
     ("hooks.py", "_recently_fired"),      # blanket per-line reader
@@ -396,7 +396,6 @@ OUT_OF_SCOPE = {
     ("orphan.py", "detect_orphans"),
     ("orphan.py", "detect_partial_rot"),
     ("orphan.py", "detect_symbol_drift"),
-    ("store.py", "write_active_scar"),    # cleans the temp file, then re-raises
     ("symbols.py", "_language"),         # optional dependency probe
 }
 
