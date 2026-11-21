@@ -233,8 +233,8 @@ Top-level keys, and the keys of each object inside the listed arrays.
 | `why` | `path` str, `records` array | `records[]`: `id`, `type`, `status`, `title`, `file`, `body` |
 | `stats` | `repo` str, `total_firings` int, `per_scar` array, `most_fired` int, `last_fired` str, `never_fired` array of int, `demotions` int, `demotions_path_only` int, `demotions_cooldown` int, `demotions_reason_unknown` int, `census_known` int, `census_unknown` int, `cofires_per_edit` float **or null**, `edits_multi_fire` int, `path_only_ratio` float **or null**, `edits_observed` int, `injection_rate` float **or null**, `retrieval_misses` int **or null**, `instrument_disconnected` bool, `posttool_silent` bool, `last_fired_age_days` int, `armed_firings` int, `armed_unknown` int, `verdicts_expected` int, `verdicts_observed` int, `verdicts_unresolved` int, `verdicts_unplaceable` int, `firings_block_capable` int, `firings_advisory` int, `firings_block_unknown` int, `all_firings_advisory` bool, `firings_context_known` int, `firings_context_unknown` int, `command_firings` int, `firings_kind_unknown` int, `advisories` array, `compliance` object (§9.12). `window` object **only when `--since`/`--until` is given** | `per_scar[]`: `id`, `count`, `violations`. `window`: `since`, `until`, `excluded_undated`. `compliance`: `F`, `V`, `rate`, `violations_unmatched`, `verdicts_expected`, `verdicts_observed`, `verdicts_resolved`, `verdict_completeness`, `top_scar` (`repo`, `id`, `share`, `F`, `V`, `rate`) |
 | `gc` | `removed_markers` int, `dropped_firings` int, `dry_run` bool, `candidates` array, `fp_log` object | `candidates[]`: `name`, `age_days`. `fp_log`: `present`, `size`, `lines`, `path` (the state-dir log, #341), `legacy` (`null`, or `path` + `lines` of a leftover `.scars/candidates/fp-log.txt`) |
-| `orphan` | `orphan_detected`, `partial_rot` arrays | — |
-| `reanchor` | `proposals`, `pattern_diagnostics` arrays | — |
+| `orphan` | `orphan_detected`, `partial_rot` arrays (list mode). `--apply`: `orphaned` bool, `scar_id` int, `path` str, `reason` str. `--fix-renames`: `fixed`, `skipped`, `refused` arrays | none |
+| `reanchor` | `proposals`, `pattern_diagnostics` arrays (list mode). `--apply`: `fixed`, `skipped`, `refused` arrays | none |
 | `resign` | `signed` bool, `id` int. `path` str **only when `signed` is true**; `reason` str and `touch_spent` bool **only when it is false** | none |
 | `draft-check` | `triggered` bool, `revert_language`, `revert_commits`, `reset_hard`, `churn` ints. `message` str **only when `triggered` is true** | — |
 
@@ -380,8 +380,17 @@ directory is not a usable git repo. A consumer must treat empty stdout as "no
 verdict", never as a parse error. When it does emit, `message` is present only
 on `triggered: true`; there is no message to carry otherwise.
 
-`reanchor --json` is **propose-only**. `--apply` is human-review-only, never
-CI, and never emits JSON.
+`reanchor --json` lists proposals; `reanchor --apply --id N --json` emits the
+result of the apply (`fixed`, `skipped`, `refused`). `--apply` is
+human-review-only and never CI. `orphan --json` covers the list, `--apply` and
+`--fix-renames`: `orphan --apply --id N --json` emits `orphaned` (true),
+`scar_id`, `path` and `reason`.
+
+On every early exit of `reanchor` and `orphan` (no `.scars/`, git unavailable,
+`--apply` without `--id`, an id that is not eligible, a refused transition)
+`--json` prints `{"error": "<message>"}` and the exit code is non-zero. The
+guaranteed keys above are those of a successful run, so a consumer checks for
+`error` first.
 
 ### 9.7 A demotion says why
 

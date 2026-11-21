@@ -119,10 +119,10 @@ def test_status_terminal_shows_every_section_with_hostile_values(repo, term):
 
     assert main(["status"]) == 0
     out = term()
-    assert "  challenged deadend #2 challenged [red]one" in out
-    assert re.search(r"REVIEW DUE deadend #1 review_after 2020-01-01", out)
-    assert re.search(r"REVIEW DUE deadend #1 fired 1 times since its last revision", out)
-    assert "orphaned deadend #3 orphaned [dim] title" in out
+    assert "  [challenged deadend #2] challenged [red]one" in out
+    assert re.search(r"REVIEW DUE \[deadend #1\] review_after 2020-01-01", out)
+    assert re.search(r"REVIEW DUE \[deadend #1\] fired 1 times since its last revision", out)
+    assert "orphaned [deadend #3] orphaned [dim] title" in out
     assert "orphan-detected [#5]" in out and "app/[gone]/x.tsx" in out
     assert "partial-rot [#4]" in out and BRACKET_PATH in out
     assert "WARNING: 1 unparseable (can NEVER fire): 0009-[broken].deadend.md" in out
@@ -133,7 +133,7 @@ def test_status_and_why_terminal_keep_a_title_that_ends_in_a_backslash(repo, ter
     (repo / ".scars" / "0001-a.deadend.md").write_text(
         _scar(id=1, title=ENDS_IN_BACKSLASH, paths=("src/",), status="challenged"))
     assert main(["status"]) == 0
-    assert f"challenged deadend #1 {ENDS_IN_BACKSLASH}" in term()
+    assert f"[challenged deadend #1] {ENDS_IN_BACKSLASH}" in term()
     assert main(["why", "src/a.py"]) == 0
     assert f"#1 \u2014 {ENDS_IN_BACKSLASH}" in term()
 
@@ -160,7 +160,7 @@ def test_lint_terminal_shows_partial_rot_reverse_hint_and_firing_review(repo, te
     assert main(["lint"]) == 0
     out = term()
     assert "HINT partial-rot: scar #4" in out and BRACKET_PATH in out
-    assert "HINT: scar #3 marked orphaned but anchors live again" in out
+    assert "HINT: scar #3 is marked orphaned but its anchors live again" in out
     assert "WARNING firing-review: scar #1" in out
     assert "fired 1 times since its last revision" in out
     assert "lint: " in out and "firing-review" in out
@@ -385,7 +385,7 @@ def test_reanchor_terminal_lists_a_proposal(tmp_path, monkeypatch, term):
     assert main(["reanchor"]) == 0
     out = term()
     assert re.search(r"reanchor \[#24\] path src/old_module.py -> src/new_module.py "
-                     r"\(\w+\)", out)
+                     r"\(\w+, signal [\d.]+\) ", out)
     assert re.search(r"\d+ proposal\(s\), \d+ pattern diagnostic\(s\)", out)
     assert f.exists()
 
@@ -519,7 +519,8 @@ def test_promote_terminal_warns_when_the_reviewer_differs_only_by_case(repo, ter
         .replace("status: active\n", "status: candidate\n"))
     assert main(["promote", "tried-x", "--reviewer", "Kibukx"]) == 0
     out = term()
-    assert "warning: --reviewer differs from git user.name only by case" in out
+    assert ("warning: --reviewer 'Kibukx' differs from git user.name 'kibukx' "
+            "only by case") in out
 
 
 def _harvest_history(repo):

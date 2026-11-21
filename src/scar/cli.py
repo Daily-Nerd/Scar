@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
 from typing import Callable
@@ -57,10 +58,27 @@ from .violation_evidence import is_violation_summary
 from . import clock, config, output, signedpromote
 
 
-def _require_store(start: Path | None = None) -> ScarStore | None:
+NO_STORE_MESSAGE = "no .scars/ directory found (walked up to repo root). Run: scar init"
+
+
+def _refuse(args, message: str) -> int:
+    """An early exit that has no result to report. Under --json it is still
+    JSON, `{"error": message}` (SPEC section 9), so a consumer that asked for
+    machine output never has to parse prose. Returns the exit code."""
+    if getattr(args, "json", False):
+        print(json.dumps({"error": message}, indent=2))
+    else:
+        print(message)
+    return 1
+
+
+def _require_store(start: Path | None = None, *, json_flag: bool = False) -> ScarStore | None:
     store = ScarStore.discover(start or Path.cwd())
     if store is None:
-        print("no .scars/ directory found (walked up to repo root). Run: scar init")
+        if json_flag:
+            print(json.dumps({"error": NO_STORE_MESSAGE}, indent=2))
+        else:
+            print(NO_STORE_MESSAGE)
     return store
 
 
@@ -198,6 +216,60 @@ def _type_label(t: str):
     return output.styled(_TYPE_STYLE.get(t, "white"), t)
 
 
+def _styled_line(line: str, styles=()) -> output.Markup:
+    """One line of a builder as rich text. The words are the builder's, none
+    added and none dropped; a known leading label (after any indent) gets a
+    style. The line is data, never markup (scar 31)."""
+    body = line.lstrip()
+    for label, style in styles:
+        if body.startswith(label):
+            return output.block([line[:len(line) - len(body)],
+                                 output.styled(style, label), body[len(label):]], sep="")
+    return output.plain(line)
+
+
+# One owner of what a command says (#429). A builder returns a `_Report`: the
+# lines before a table, the table's rows as structured fields, and the lines
+# after it. The plain renderer formats each row into its line; the terminal
+# renderer puts the SAME rows into a table. Neither reads anything the report
+# did not return, so a field cannot reach one surface and miss the other.
+@dataclass(frozen=True)
+class _Report:
+    before: tuple[str, ...] = ()
+    rows: tuple = ()
+    after: tuple[str, ...] = ()
+
+    def plain_lines(self) -> list[str]:
+        return [*self.before, *(r.line() for r in self.rows), *self.after]
+
+
+@dataclass(frozen=True)
+class _FindingRow:
+    file: str
+    level: str
+    message: str
+
+    def cells(self) -> tuple[str, ...]:
+        return (self.file, self.level, self.message)
+
+    def line(self) -> str:
+        return f"{self.file}: {self.level}: {self.message}"
+
+
+@dataclass(frozen=True)
+class _ActiveRow:
+    type: str
+    id: int
+    severity: str
+    title: str
+
+    def cells(self) -> tuple[str, ...]:
+        return (self.type, f"#{self.id}", self.severity, self.title)
+
+    def line(self) -> str:
+        return f"  [{self.type} #{self.id} | {self.severity}] {self.title}"
+
+
 def _init_rich(data: dict) -> None:
     fmt = output.fmt
     lines = [fmt("initialized [bold]{}[/] (README.md, template.md, candidates/)",
@@ -218,21 +290,37 @@ def _init_rich(data: dict) -> None:
     output.show(output.panel(output.block(lines), title="scar init", border_style="green"))
 
 
-def _promote_rich(data: dict) -> None:
-    fmt = output.fmt
-    lines = [fmt("[green]promoted[/] -> [bold]{}[/]", data["promoted"])]
-    lines.append(fmt("signed: a person's presence was proven") if data.get("signed")
-                 else fmt("[yellow]not signed:[/] no org in .scars/config.json"))
+def _promote_report(data: dict) -> _Report:
+    """The lines `scar promote` reports, from its data. The plain and the
+    terminal renderer both read this list (#429); the terminal only styles."""
+    lines = [f"promoted -> {data['promoted']}",
+             "  signed: a person's presence was proven" if data.get("signed")
+             else "  not signed: no org in .scars/config.json"]
     if data["reviewer_from_git"]:
-        lines.append(fmt("reviewer: {} [dim](from git config)[/]", data["reviewer"]))
-    if data["born_orphan"]:
-        lines.append(fmt("[yellow]advisory:[/] this scar's anchors resolve to nothing in the "
-                         "current tree (born orphan-detected) \u2014 confirm the anchors are right"))
+        lines.append(f"  reviewer: {data['reviewer']} (from git config)")
     if data.get("reviewer_case_warning"):
-        lines.append(fmt("[yellow]warning:[/] --reviewer differs from git user.name only "
-                         "by case \u2014 pick one spelling or author identity drifts (#182)"))
-    output.show(output.panel(output.block(lines), title="scar promote",
-                             border_style="green"))
+        lines.append(f"  warning: --reviewer '{data['reviewer_given']}' differs from git "
+                     f"user.name '{data['git_user_name']}' only by case \u2014 pick one "
+                     "spelling or author identity drifts (#182)")
+    if data["born_orphan"]:
+        lines.append("  advisory: this scar's anchors resolve to nothing in the current "
+                     "tree (born orphan-detected) \u2014 confirm the anchors are right")
+    return _Report(before=tuple(lines))
+
+
+_PROMOTE_STYLES = (("promoted", "green"), ("not signed:", "yellow"),
+                   ("advisory:", "yellow"), ("warning:", "yellow"))
+
+
+def _promote_plain(data: dict) -> None:
+    for line in _promote_report(data).plain_lines():
+        print(line)
+
+
+def _promote_rich(data: dict) -> None:
+    output.show(output.panel(
+        output.block(_styled_line(ln, _PROMOTE_STYLES) for ln in _promote_report(data).before),
+        title="scar promote", border_style="green", fit=True))
 
 
 def _harvest_rich(repo_name: str, total: int, result: dict) -> None:
@@ -273,90 +361,145 @@ def _agent_doctor_rich(lines) -> None:
     output.show(output.panel(body, title="scar agent doctor", border_style="cyan"))
 
 
-def _status_rich(data: dict) -> None:
-    fmt, ref = output.fmt, output.ref
+def _status_report(data: dict) -> _Report:
+    """The lines `scar status` reports, from its data (#429)."""
     c = data["counts"]
-    output.show(output.panel(
-        fmt("[bold]{}[/]\n{} active · {} candidate(s) pending review",
-            data["scars_dir"], c["active"], c["candidates"]),
-        title="scar status", fit=True))
-
-    if data["active"]:
-        output.show(output.table(
-            "Active scars", ["type", ("id", {"justify": "right"}), "severity", "title"],
-            [[_type_label(s["type"]), fmt("#{}", s["id"]), s["severity"], s["title"]]
-             for s in data["active"]],
-            show_edge=False, expand=False))
+    head = (f"{data['scars_dir']}: {c['active']} active, "
+            f"{c['candidates']} candidate(s) pending review")
+    lines = [head]
+    rows = tuple(_ActiveRow(s["type"], s["id"], s["severity"], s["title"])
+                 for s in data["active"])
     for s in data["challenged"]:
-        output.say(fmt("  [dim]challenged[/] {} #{} {}",
-                       _type_label(s["type"]), s["id"], s["title"]))
+        lines.append(f"  [challenged {s['type']} #{s['id']}] {s['title']}")
     for name in data["candidates"]:
-        output.say(fmt("  [cyan]candidate:[/] {}", name))
+        lines.append(f"  candidate: {name}")
     for s in data["review_due"]:
-        output.say(fmt("  [yellow]REVIEW DUE[/] {} #{} review_after {}",
-                       _type_label(s["type"]), s["id"], s["review_after"]))
-
+        lines.append(f"  REVIEW DUE [{s['type']} #{s['id']}] review_after "
+                     f"{s['review_after']} \u2014 re-verify, then update the date or archive")
     for r in data["firing_review"]:
-        output.say(fmt("  [yellow]REVIEW DUE[/] {} #{} {}",
-                       _type_label(r["type"]), r["id"], r["reason"]))
-
-    output.say(fmt("  [bold]{}[/] orphan-detected · [bold]{}[/] orphaned (persisted) · "
-                   "[bold]{}[/] partial-rot",
-                   c["orphan_detected"], c["orphaned"], c["partial_rot"]))
+        lines.append(f"  REVIEW DUE [{r['type']} #{r['id']}] {r['reason']}")
+    lines.append(f"  {c['orphan_detected']} orphan-detected (firing, anchors gone), "
+                 f"{c['orphaned']} orphaned (persisted), "
+                 f"{c['partial_rot']} partial-rot (firing, \u22651 anchor dead)")
     for o in data["orphan_detected"]:
-        output.say(fmt("    [red]orphan-detected[/] {} {}", ref(o["scar_id"]), o["reason"]))
+        lines.append(f"    orphan-detected [#{o['scar_id']}] {o['reason']}")
     for s in data["orphaned"]:
-        output.say(fmt("    [dim]orphaned[/] {} #{} {}",
-                       _type_label(s["type"]), s["id"], s["title"]))
+        lines.append(f"    orphaned [{s['type']} #{s['id']}] {s['title']}")
     for pr in data["partial_rot"]:
-        output.say(fmt("    [yellow]partial-rot[/] {} {}", ref(pr["scar_id"]), pr["reason"]))
+        lines.append(f"    partial-rot [#{pr['scar_id']}] {pr['reason']}")
     if data["broken"]:
-        output.say(fmt("  [bold red]WARNING:[/] {} unparseable (can NEVER fire): {}",
-                       len(data["broken"]), ", ".join(data["broken"])))
+        lines.append(f"  WARNING: {len(data['broken'])} unparseable (can NEVER fire): "
+                     + ", ".join(data["broken"]))
+    return _Report(before=(head,), rows=rows, after=tuple(lines[1:]))
+
+
+_STATUS_STYLES = (("[challenged", "dim"), ("candidate:", "cyan"), ("REVIEW DUE", "yellow"),
+                  ("orphan-detected", "red"), ("orphaned", "dim"),
+                  ("partial-rot", "yellow"), ("WARNING:", "bold red"))
+
+
+def _status_plain(data: dict) -> None:
+    for line in _status_report(data).plain_lines():
+        print(line)
+
+
+def _status_rich(data: dict) -> None:
+    report = _status_report(data)
+    output.show(output.panel(_styled_line(report.before[0]), title="scar status", fit=True))
+    if report.rows:
+        output.show(output.table(
+            "Active scars",
+            [("type", {"overflow": "fold"}), ("id", {"justify": "right", "overflow": "fold"}),
+             ("severity", {"overflow": "fold"}), ("title", {"overflow": "fold"})],
+            [[output.styled(_TYPE_STYLE.get(r.type, "white"), r.type), *r.cells()[1:]]
+             for r in report.rows],
+            show_edge=False, expand=False))
+    for line in report.after:
+        output.say(_styled_line(line, _STATUS_STYLES))
+
+
+def _lint_report(data: dict) -> _Report:
+    """The lines `scar lint` reports, from its data (#429). Order is the
+    contract: findings, then each advisory family, then the summary."""
+    rows = tuple(_FindingRow(f["file"], f["level"], f["message"]) for f in data["findings"])
+    lines = []
+    for o in data["orphans"]:
+        lines.append(f"WARNING orphan-detected: scar #{o['scar_id']} \u2014 {o['reason']}")
+    # partial rot (#35): firing scars with a dead anchor among live ones.
+    # Advisory by default; --fail-partial-rot opts into a blocking gate.
+    # --fail-orphans does not imply it (the two gates are independent).
+    for pr in data["partial_rot"]:
+        lines.append(f"HINT partial-rot: scar #{pr['scar_id']} \u2014 {pr['reason']} "
+                     "\u2014 re-anchor to restore full coverage")
+    # revives_if (#205): an ARCHIVED scar whose resurrection condition
+    # matches the tree again. Advisory and human-gated: lint reports it
+    # and never re-arms the scar itself.
+    for r in data["revivals"]:
+        lines.append(f"HINT revives-if: scar #{r['scar_id']} is archived but its "
+                     f"revives_if predicate /{r['predicate']}/ matches the tree again "
+                     "\u2014 review for re-promotion")
+    # symbol drift (#99): a symbol anchor that still resolves by name but
+    # whose body shape changed since the evidence commit. Advisory only.
+    for d in data["symbol_drift"]:
+        lines.append(f"HINT symbol-drift: scar #{d['scar_id']} \u2014 {d['symbol']} "
+                     f"~{round(d['similarity'] * 100)}% similar since {d['sha'][:7]} "
+                     "\u2014 re-verify the scar still describes this symbol")
+    # reverse hint: persisted-orphaned scars whose anchors resolve again
+    for h in data["reverse_hints"]:
+        lines.append(f"HINT: scar #{h['id']} is marked orphaned but its anchors live "
+                     "again \u2014 consider re-activating (scar challenge/archive note)")
+    if data["symbols_unchecked"]:
+        lines.append("HINT symbols-unchecked: "
+                     + _symbols_unchecked_text(data["symbols_unchecked"]))
+    # firing-count review (#274): the count is the signal, so print it
+    # even though the scar is otherwise healthy.
+    for r in data["firing_review"]:
+        lines.append(f"WARNING firing-review: scar #{r['scar_id']} \u2014 {r['reason']}")
+    if data["shallow_clone"]:
+        lines.append("note: shallow clone \u2014 evidence-reachability check skipped "
+                     "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
+    for ue in data["unreachable_evidence"]:
+        lines.append(f"WARNING evidence-unreachable: scar #{ue['scar_id']} \u2014 commit "
+                     f"{ue['sha']} {ue['reason']}, not reachable from HEAD")
+    for row in data.get("promotion", []):
+        lines.append(f"promotion: scar #{row['scar_id']}: {row['state']}")
+    lines.append(f"lint: {data['files']} file(s), {data['failed']} with errors, "
+                 f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
+                 f"{len(data['unreachable_evidence'])} unreachable-evidence, "
+                 f"{len(data['firing_review'])} firing-review")
+    return _Report(rows=rows, after=tuple(lines))
+
+
+_LINT_STYLES = (("WARNING", "yellow"), ("HINT symbol-drift:", "magenta"),
+                ("HINT", "cyan"), ("note:", "dim"))
+
+
+def _lint_plain(data: dict) -> None:
+    for line in _lint_report(data).plain_lines():
+        print(line)
 
 
 def _lint_rich(data: dict) -> None:
-    fmt = output.fmt
-    if data["findings"]:
-        rows = []
-        for f in data["findings"]:
-            style = "red" if f["level"] == "error" else "yellow"
-            rows.append([f["file"], output.styled(style, f["level"]), f["message"]])
-        output.show(output.table("Lint findings", ["file", "level", "message"], rows,
-                                 show_edge=False))
-    for o in data["orphans"]:
-        output.say(fmt("[yellow]WARNING orphan-detected:[/] scar #{} \u2014 {}",
-                       o["scar_id"], o["reason"]))
-    for pr in data["partial_rot"]:
-        output.say(fmt("[cyan]HINT partial-rot:[/] scar #{} \u2014 {}", pr["scar_id"], pr["reason"]))
-    for d in data["symbol_drift"]:
-        output.say(fmt("[magenta]HINT symbol-drift:[/] scar #{} \u2014 {} ~{}% similar since {}",
-                       d["scar_id"], d["symbol"], round(d["similarity"] * 100), d["sha"][:7]))
-    for h in data["reverse_hints"]:
-        output.say(fmt("[cyan]HINT:[/] scar #{} marked orphaned but anchors live again",
-                       h["id"]))
-    if data["symbols_unchecked"]:
-        output.say(fmt("[cyan]HINT symbols-unchecked:[/] {}",
-                       _symbols_unchecked_text(data["symbols_unchecked"])))
-    for r in data["firing_review"]:
-        output.say(fmt("[yellow]WARNING firing-review:[/] scar #{} \u2014 {}",
-                       r["scar_id"], r["reason"]))
-    if data["shallow_clone"]:
-        output.say(fmt("[dim]note: shallow clone \u2014 evidence-reachability check skipped[/]"))
-    for ue in data["unreachable_evidence"]:
-        output.say(fmt("[yellow]WARNING evidence-unreachable:[/] scar #{} \u2014 commit {} {}",
-                       ue["scar_id"], ue["sha"], ue["reason"]))
-    for row in data.get("promotion", []):
-        verified = row["state"] == "verified"
-        output.say(fmt("{} scar #{}: {}", output.styled("green" if verified else "yellow",
-                                                         "promotion:"),
-                       row["scar_id"], row["state"]))
-    style = "red" if data["failed"] else "green"
-    output.say(fmt("{} {} file(s), {} with errors, {} orphan(s), "
-                   "{} partial-rot, {} unreachable-evidence, {} firing-review",
-                   output.styled(style, "lint:"), data["files"], data["failed"], len(data["orphans"]),
-                   len(data["partial_rot"]), len(data["unreachable_evidence"]),
-                   len(data["firing_review"])))
+    report = _lint_report(data)
+    if report.rows:
+        output.show(output.table(
+            "Lint findings",
+            [("file", {"overflow": "fold"}), ("level", {"overflow": "fold"}),
+             ("message", {"overflow": "fold"})],
+            [[r.file, output.styled("red" if r.level == "error" else "yellow", r.level),
+              r.message] for r in report.rows],
+            show_edge=False))
+    verified = {f"promotion: scar #{r['scar_id']}: {r['state']}": r["state"] == "verified"
+                for r in data.get("promotion", [])}
+    for line in report.after:
+        if line in verified:
+            output.say(_styled_line(
+                line, (("promotion:", "green" if verified[line] else "yellow"),)))
+        elif line.startswith("lint: "):
+            output.say(_styled_line(
+                line, (("lint:", "red" if data["failed"] else "green"),)))
+        else:
+            output.say(_styled_line(line, _LINT_STYLES))
 
 
 def _check_rich(label: str, hits, violations=()) -> None:
@@ -926,60 +1069,14 @@ def _cmd_lint(args) -> int:
             {"scar_id": sc.id, "file": str(f.relative_to(store.root)), "state": state}
             for f, sc, state in verify_store(store)]
 
-    def plain():
-        for rel, findings in findings_by_file:
-            for finding in findings:
-                print(f"{rel}: {finding}")
-        for of in orphans:
-            print(f"WARNING orphan-detected: scar #{of.scar_id} — {_orphan_reason(of)}")
-        # partial rot (#35): firing scars with a dead anchor among live ones.
-        # Advisory by default; --fail-partial-rot opts into a blocking gate.
-        # --fail-orphans does not imply it (the two gates are independent).
-        for pr in partial:
-            print(f"HINT partial-rot: scar #{pr.scar_id} — {_partial_rot_reason(pr)} "
-                  "— re-anchor to restore full coverage")
-        # revives_if (#205): an ARCHIVED scar whose resurrection condition
-        # matches the tree again. Advisory and human-gated — lint reports it
-        # and never re-arms the scar itself.
-        for r in revivals:
-            print(f"HINT revives-if: scar #{r.scar_id} is archived but its "
-                  f"revives_if predicate /{r.predicate}/ matches the tree again "
-                  "— review for re-promotion")
-        # symbol drift (#99): a symbol anchor that still resolves by name but
-        # whose body shape changed since the evidence commit. Advisory only.
-        for d in drift:
-            print(f"HINT symbol-drift: scar #{d.scar_id} — {_symbol_drift_reason(d)} "
-                  "— re-verify the scar still describes this symbol")
-        # reverse hint: persisted-orphaned scars whose anchors resolve again
-        for s in reverse_hints:
-            print(f"HINT: scar #{s.id} is marked orphaned but its anchors live "
-                  "again — consider re-activating (scar challenge/archive note)")
-        if symbols_unchecked:
-            print(f"HINT symbols-unchecked: {_symbols_unchecked_text(symbols_unchecked)}")
-        # firing-count review (#274): the count is the signal, so print it
-        # even though the scar is otherwise healthy.
-        for r in reviews:
-            print(f"WARNING firing-review: scar #{r.scar_id} — {r.reason()}")
-        if shallow:
-            print("note: shallow clone — evidence-reachability check skipped "
-                  "(actions/checkout defaults to depth 1; use fetch-depth: 0)")
-        for ue in unreachable:
-            print(f"WARNING evidence-unreachable: scar #{ue.scar_id} — commit "
-                  f"{ue.sha} {ue.reason}, not reachable from HEAD")
-        for row in data.get("promotion", []):
-            print(f"promotion: scar #{row['scar_id']}: {row['state']}")
-        print(f"lint: {len(files)} file(s), {failed} with errors, "
-              f"{len(orphans)} orphan(s), {len(partial)} partial-rot, "
-              f"{len(unreachable)} unreachable-evidence, "
-              f"{len(reviews)} firing-review")
-
     if getattr(args, "review_queue", False):
         # Machine path: plain markdown, never rich, and empty stdout when the
         # queue is empty so a workflow can close its issue on `-s queue.md`.
         sys.stdout.write(_review_queue_markdown(store, data))
     else:
         output.render(data=data, json_flag=getattr(args, "json", False),
-                      tty=lambda: _lint_rich(data), plain=plain)
+                      tty=lambda: _lint_rich(data),
+                      plain=lambda: _lint_plain(data))
 
     if failed:
         return 1
@@ -1041,34 +1138,9 @@ def _cmd_status(args) -> int:
         },
     }
 
-    def plain():
-        print(f"{store.scars_dir}: {len(active)} active, {len(cands)} candidate(s) pending review")
-        for f, s in active:
-            print(f"  [{s.type} #{s.id} | {s.severity}] {s.title}")
-        for f, s in challenged:
-            print(f"  [challenged {s.type} #{s.id}] {s.title}")
-        for c in cands:
-            print(f"  candidate: {c.name}")
-        for s in due:
-            print(f"  REVIEW DUE [{s.type} #{s.id}] review_after {s.review_after} — "
-                  "re-verify, then update the date or archive")
-        for r in reviews:
-            print(f"  REVIEW DUE [{r.type} #{r.scar_id}] {r.reason()}")
-        print(f"  {len(detected)} orphan-detected (firing, anchors gone), "
-              f"{len(persisted)} orphaned (persisted), "
-              f"{len(partial)} partial-rot (firing, ≥1 anchor dead)")
-        for of in detected:
-            print(f"    orphan-detected [#{of.scar_id}] {_orphan_reason(of)}")
-        for s in persisted:
-            print(f"    orphaned [{s.type} #{s.id}] {s.title}")
-        for pr in partial:
-            print(f"    partial-rot [#{pr.scar_id}] {_partial_rot_reason(pr)}")
-        if broken:
-            print(f"  WARNING: {len(broken)} unparseable (can NEVER fire): "
-                  + ", ".join(b.name for b in broken))
-
     output.render(data=data, json_flag=getattr(args, "json", False),
-                  tty=lambda: _status_rich(data), plain=plain)
+                  tty=lambda: _status_rich(data),
+                  plain=lambda: _status_plain(data))
     return 0
 
 
@@ -1214,24 +1286,12 @@ def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
     data = {"promoted": str(rel), "reviewer": reviewer or None,
             "reviewer_from_git": from_git, "born_orphan": born_orphan,
             "reviewer_case_warning": bool(case_warning),
+            "reviewer_given": args.reviewer, "git_user_name": git_name,
             "signed": org is not None}
 
-    def plain():
-        print(f"promoted -> {rel}")
-        print("  signed: a person's presence was proven" if org is not None
-              else "  not signed: no org in .scars/config.json")
-        if from_git:
-            print(f"  reviewer: {reviewer} (from git config)")
-        if case_warning:
-            print(f"  warning: --reviewer '{args.reviewer}' differs from git "
-                  f"user.name '{git_name}' only by case — pick one spelling "
-                  "or author identity drifts (#182)")
-        if born_orphan:
-            print("  advisory: this scar's anchors resolve to nothing in the current "
-                  "tree (born orphan-detected) — confirm the anchors are right")
-
     output.render(data=data, json_flag=False,
-                  tty=lambda: _promote_rich(data), plain=plain)
+                  tty=lambda: _promote_rich(data),
+                  plain=lambda: _promote_plain(data))
     return 0
 
 
@@ -1555,16 +1615,15 @@ def _cmd_orphan(args) -> int:
     --apply persists status: orphaned via store.transition() (human-only);
     --fix-renames rewrites dead-but-renamed anchor lines (also human-only,
     also opt-in — #109)."""
-    store = _require_store()
+    store = _require_store(json_flag=getattr(args, "json", False))
     if store is None:
         return 1
     ctx = _repo_context(store)
     if ctx is None:
         # Orphan detection is the whole job here; without git we cannot know the
         # tracked set. Surface it rather than report a spurious all-orphaned tree.
-        print("orphan: git unavailable (not a repository?) — cannot determine "
-              "tracked files; orphan detection skipped")
-        return 1
+        return _refuse(args, "orphan: git unavailable (not a repository?) \u2014 cannot "
+                             "determine tracked files; orphan detection skipped")
     findings = detect_orphans(store, ctx, repo=store.root)
 
     if getattr(args, "fix_renames", False):
@@ -1601,23 +1660,26 @@ def _cmd_orphan(args) -> int:
 
     # --apply: persist. Human-only (never wire into CI/lint).
     if args.id is None:
-        print("--apply requires --id N (persist one reviewed orphan at a time)")
-        return 1
+        return _refuse(args, "--apply requires --id N (persist one reviewed orphan at a time)")
     target = next((of for of in findings if of.scar_id == args.id), None)
     if target is None:
         ids = ", ".join(str(of.scar_id) for of in findings) or "(none)"
-        print(f"scar #{args.id} is not orphan-detected; detected ids: {ids}")
-        return 1
+        return _refuse(args, f"scar #{args.id} is not orphan-detected; detected ids: {ids}")
     note = f"{args.reason} [orphan: {_orphan_reason(target)}]"
     try:
         path = store.transition(args.id, "orphaned", reason=note,
                                 date=clock.today())
     except ValueError as exc:
-        print(str(exc))
-        return 1
-    print(f"orphaned -> {path.relative_to(store.root)} "
-          "(never fires again; history kept, anchors-live-again hint will surface "
-          "if the code returns)")
+        return _refuse(args, str(exc))
+    rel = path.relative_to(store.root)
+    data = {"orphaned": True, "scar_id": args.id, "path": str(rel), "reason": note}
+
+    def plain():
+        print(f"orphaned -> {rel} "
+              "(never fires again; history kept, anchors-live-again hint will surface "
+              "if the code returns)")
+
+    output.render(data=data, json_flag=getattr(args, "json", False), tty=plain, plain=plain)
     return 0
 
 
@@ -1690,35 +1752,66 @@ def _reanchor_data(proposals, pattern_diag) -> dict:
     }
 
 
-def _reanchor_plain(proposals, pattern_diag) -> None:
-    if not proposals and not pattern_diag:
-        print("no reanchor proposals")
-        return
-    for p in proposals:
-        print(f"reanchor [#{p.scar_id}] {p.anchor_kind} {p.dead_anchor} -> "
-              f"{p.proposed_anchor} ({p.confidence}, signal {p.signal}) — {p.evidence}")
-    for d in pattern_diag:
-        print(f"pattern [#{d['scar_id']}] {d['dead_anchor']}: {d['diagnostic']} "
-              "(diagnostic only — never auto-applied)")
-    print(f"{len(proposals)} proposal(s), {len(pattern_diag)} pattern diagnostic(s) — "
-          "review, then `scar reanchor --apply --id N` to persist")
+def _reanchor_report(data: dict) -> _Report:
+    """The lines `scar reanchor` reports in list mode, from its data (#429).
+    Proposals come first, one line each and in order, then the pattern
+    diagnostics, then the footer."""
+    proposals, diags = data["proposals"], data["pattern_diagnostics"]
+    if not proposals and not diags:
+        return _Report(before=("no reanchor proposals",))
+    lines = [f"reanchor [#{p['scar_id']}] {p['anchor_kind']} {p['dead_anchor']} -> "
+             f"{p['proposed_anchor']} ({p['confidence']}, signal {p['signal']}) "
+             f"\u2014 {p['evidence']}" for p in proposals]
+    lines += [f"pattern [#{d['scar_id']}] {d['dead_anchor']}: {d['diagnostic']} "
+              "(diagnostic only \u2014 never auto-applied)" for d in diags]
+    lines.append(f"{len(proposals)} proposal(s), {len(diags)} pattern diagnostic(s) "
+                 "\u2014 review, then `scar reanchor --apply --id N` to persist")
+    return _Report(before=tuple(lines))
 
 
-def _reanchor_rich(proposals, pattern_diag) -> None:
-    fmt, ref = output.fmt, output.ref
-    if not proposals and not pattern_diag:
-        output.say(fmt("[green]no reanchor proposals[/]"))
-        return
-    for p in proposals:
-        style = "green" if p.confidence == "high" else "yellow"
-        output.say(fmt("{} {} {} {} -> {} ({})", output.styled(style, "reanchor"),
-                       ref(p.scar_id), p.anchor_kind, p.dead_anchor, p.proposed_anchor,
-                       p.confidence))
-    for d in pattern_diag:
-        output.say(fmt("[dim]pattern[/] {} {}: {}", ref(d["scar_id"]), d["dead_anchor"],
-                       d["diagnostic"]))
-    output.say(fmt("[bold]{}[/] proposal(s), [bold]{}[/] pattern diagnostic(s)",
-                   len(proposals), len(pattern_diag)))
+def _reanchor_plain(data: dict) -> None:
+    for line in _reanchor_report(data).plain_lines():
+        print(line)
+
+
+def _reanchor_rich(data: dict) -> None:
+    lines = _reanchor_report(data).before
+    proposals = data["proposals"]
+    for i, line in enumerate(lines):
+        if not proposals and not data["pattern_diagnostics"]:
+            output.say(output.styled("green", line))
+        elif i < len(proposals):
+            # The first len(proposals) lines are the proposals, in order.
+            style = "green" if proposals[i]["confidence"] == "high" else "yellow"
+            output.say(_styled_line(line, (("reanchor", style),)))
+        else:
+            output.say(_styled_line(line, (("pattern", "dim"),)))
+
+
+def _reanchor_apply_report(data: dict, scar_id: int) -> _Report:
+    """The lines `scar reanchor --apply` reports, from its data (#429)."""
+    fixed, skipped = data["fixed"], data["skipped"]
+    lines = [f"fixed [#{scar_id}] {f['anchor_kind']} {f['dead_anchor']} -> "
+             f"{f['proposed_anchor']}" for f in fixed]
+    lines += [f"not fixed [#{scar_id}] {k['anchor_kind']} {k['dead_anchor']}: {k['reason']}"
+              for k in skipped]
+    lines += [f"refused [#{scar_id}] {r['reason']}" for r in data["refused"]]
+    lines.append(f"{len(fixed)} anchor(s) fixed, {len(skipped)} left unfixed \u2014 status "
+                 "unchanged (anchors-live-again hint will surface on next `scar lint`)")
+    return _Report(before=tuple(lines))
+
+
+_REANCHOR_APPLY_STYLES = (("not fixed", "yellow"), ("fixed", "green"), ("refused", "red"))
+
+
+def _reanchor_apply_plain(data: dict, scar_id: int) -> None:
+    for line in _reanchor_apply_report(data, scar_id).plain_lines():
+        print(line)
+
+
+def _reanchor_apply_rich(data: dict, scar_id: int) -> None:
+    for line in _reanchor_apply_report(data, scar_id).before:
+        output.say(_styled_line(line, _REANCHOR_APPLY_STYLES))
 
 
 def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
@@ -1750,8 +1843,7 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
             dead_anchors.append(("symbol", anchor))
 
     if scar_file is None or not dead_anchors:
-        print(f"scar #{args.id} has no reanchor proposals")
-        return 1
+        return _refuse(args, f"scar #{args.id} has no reanchor proposals")
 
     proposals, _pattern_diag = _reanchor_collect(store, ctx, repo)
     groups: dict[tuple[str, str], list] = {}
@@ -1806,28 +1898,9 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
         "refused": ([{"scar_id": args.id, "reason": refusal}] if refusal else []),
     }
 
-    def plain():
-        for k, d, n in fixed:
-            print(f"fixed [#{args.id}] {k} {d} -> {n}")
-        for k, d, r in skipped:
-            print(f"not fixed [#{args.id}] {k} {d}: {r}")
-        if refusal:
-            print(f"refused [#{args.id}] {refusal}")
-        print(f"{len(fixed)} anchor(s) fixed, {len(skipped)} left unfixed — status unchanged "
-              "(anchors-live-again hint will surface on next `scar lint`)")
-
-    def tty():
-        fmt, ref = output.fmt, output.ref
-        for k, d, n in fixed:
-            output.say(fmt("[green]fixed[/] {} {} {} -> {}", ref(args.id), k, d, n))
-        for k, d, r in skipped:
-            output.say(fmt("[yellow]not fixed[/] {} {} {}: {}", ref(args.id), k, d, r))
-        if refusal:
-            output.say(fmt("[red]refused[/] {} {}", ref(args.id), refusal))
-        output.say(fmt("[bold]{}[/] anchor(s) fixed, [bold]{}[/] left unfixed",
-                       len(fixed), len(skipped)))
-
-    output.render(data=data, json_flag=getattr(args, "json", False), tty=tty, plain=plain)
+    output.render(data=data, json_flag=getattr(args, "json", False),
+                  tty=lambda: _reanchor_apply_rich(data, args.id),
+                  plain=lambda: _reanchor_apply_plain(data, args.id))
     return 1 if refusal else 0
 
 
@@ -1836,26 +1909,25 @@ def _cmd_reanchor(args) -> int:
     orphaned/partial-rot scars — orphan recovery v1 (#111). Read-only by
     default; --apply is human-only, one reviewed scar at a time, and never
     touches status (same posture as `orphan --fix-renames`)."""
-    store = _require_store()
+    store = _require_store(json_flag=getattr(args, "json", False))
     if store is None:
         return 1
     ctx = _repo_context(store)
     if ctx is None:
-        print("reanchor: git unavailable (not a repository?) — cannot trace anchors; "
-              "reanchor skipped")
-        return 1
+        return _refuse(args, "reanchor: git unavailable (not a repository?) \u2014 cannot "
+                             "trace anchors; reanchor skipped")
 
     if args.apply:
         if args.id is None:
-            print("--apply requires --id N (persist one reviewed scar's eligible anchors at a time)")
-            return 1
+            return _refuse(args, "--apply requires --id N (persist one reviewed scar's "
+                                 "eligible anchors at a time)")
         return _reanchor_apply(store, ctx, store.root, args)
 
     proposals, pattern_diag = _reanchor_collect(store, ctx, store.root)
     data = _reanchor_data(proposals, pattern_diag)
     output.render(data=data, json_flag=getattr(args, "json", False),
-                 tty=lambda: _reanchor_rich(proposals, pattern_diag),
-                 plain=lambda: _reanchor_plain(proposals, pattern_diag))
+                  tty=lambda: _reanchor_rich(data),
+                  plain=lambda: _reanchor_plain(data))
     return 0
 
 
@@ -3759,7 +3831,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "tracked git rename target (surgical single-line edit; "
                         "explicit opt-in, never the default — #109)")
     p.add_argument("--json", action="store_true",
-                   help="emit machine-readable JSON (read mode only)")
+                   help="emit machine-readable JSON (list, --apply and --fix-renames; a refusal "
+                        "is {\"error\": ...})")
 
     p = _add(sub, "reanchor", _cmd_reanchor, help="propose new anchors for orphaned/partial-rot scars (#111)")
     p.add_argument("--id", type=int, default=None,
@@ -3768,7 +3841,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="rewrite ONE scar's single-high-confidence dead anchors "
                         "(human review only — never CI; never flips status)")
     p.add_argument("--json", action="store_true",
-                   help="emit machine-readable JSON (propose mode only)")
+                   help="emit machine-readable JSON (list and --apply; a refusal is "
+                        "{\"error\": ...})")
 
     p = _add(sub, "harvest", _cmd_harvest, help="mine git history for candidate scars")
     p.add_argument("repo", nargs="?", default=".")
