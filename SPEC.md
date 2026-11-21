@@ -735,8 +735,14 @@ is a deliberate change to the constant.
 Two frontmatter lines: `promotion_act` (the compact signed act) and
 `promotion_receipt` (the receipt id the checker returned).
 
+Both are read at column 0 only. The parser and `with_act` share one definition
+of the line, `ACT_LINE_RE` in `model.py` (`^promotion_(act|receipt):`). An
+indented line that starts with one of the two names belongs to whatever block it
+sits in: it is neither read as the act nor removed by `with_act`. No other key is
+narrowed this way.
+
 `with_act` in `signedpromote.py` sets them with a text edit of the frontmatter
-and nothing else. Every existing line of either key is removed, and the pair
+and nothing else. Every existing column-0 line of either key is removed, and the pair
 goes where the first one was. With none, it goes before `anchors:`, else at the
 end of the frontmatter. The body is never read as frontmatter. The file's line
 ending is kept.
@@ -801,14 +807,18 @@ Refusal happens before any touch (`render_check`, `preflight`,
 ### 10.10 Order of a signature
 
 1. Machine checks (`machine_checks`): both programs exist at their fixed paths,
-   git can name the root commit, the checker has a head, and this machine's key
-   is still enrolled.
+   no scar file in the store is unreadable (see step 5), git can name the root
+   commit, the checker has a head, and this machine's key is still enrolled.
 2. Render check: the signer shows the record without signing it, or refuses.
 3. The head is fetched again.
 4. Sign. This is the touch.
 5. First-acceptance check (`ingest`). The `seen` list holds the receipts of
-   every scar that parses, archived and orphaned ones included, sorted and
-   unique.
+   every scar file in the store, archived and orphaned ones included, sorted and
+   unique. Signing refuses when any scar file cannot be read: it does not parse,
+   is not valid UTF-8, or cannot be opened. The refusal names the files, says
+   nothing was signed and points at `scar lint`. It is made in step 1, before the
+   first prompt of a batch and before any touch, and made again before step 3 and
+   after step 4 (after the touch it is a spent touch and nothing is written).
 6. One write.
 
 Promote runs steps 1 and 2 for the whole batch before the first touch, then
@@ -889,8 +899,9 @@ never lint errors. Only `rechecked: true` from the checker is `verified`.
 
 ### 10.15 What this section does not claim
 
-- `seen` holds the receipts of every scar that parses. A scar file that does not
-  parse is skipped, and its receipt is not in the list.
+- `seen` holds the receipts of every scar file that can be read, and signing
+  refuses while any scar file cannot be read. A scar file in `.scars/candidates/`
+  is not part of the list: no act of a candidate exists.
 - Nothing proves that a title or body can never make `promoted_record` differ
   between parse and reserialize. `new_record_checks` guards the in-place case by
   comparing hashes with placeholder act and receipt lines, and refuses before

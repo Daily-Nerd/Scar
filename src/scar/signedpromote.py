@@ -22,8 +22,9 @@ from pathlib import Path
 
 from . import config, presence
 from .record import promoted_record, promotion_subject, record_hash
-from .model import _FRONTMATTER_RE, ParseError, Scar, parse_scar_text
-from .store import PreparedPromotion, ScarStore, act_matches_record, write_active_scar
+from .model import _FRONTMATTER_RE, ACT_LINE_RE, ParseError, Scar, parse_scar_text
+from .store import (PreparedPromotion, ScarStore, UnreadableScars, act_matches_record,
+                    read_scar_text, write_active_scar)
 
 
 class SignedPromoteError(Exception):
@@ -46,16 +47,29 @@ def subject_for(store: ScarStore, scar: Scar, name: str) -> str:
     return subject
 
 
+def seen_receipts(store: ScarStore) -> list[str]:
+    """The store's receipts for the checker's `seen` list, or a refusal that
+    names the scar files that cannot be read (#439). One owner of the
+    translation, so every signing step refuses the same way."""
+    try:
+        return store.seen_receipts()
+    except UnreadableScars as exc:
+        raise SignedPromoteError(str(exc)) from None
+
+
 def machine_checks(store: ScarStore, org: str, subject_id: int) -> dict:
     """The checks that need no record and no person, shared by promotion and
     re-signing: both programs exist at their fixed paths, the repository can
     name its root (judged with `subject_id`), the checker has a head, and this
     machine's key is still enrolled (a removed member's key can still sign, and
     the checker would only refuse it after the touch). Returns the head so the
-    render check can use it. Touches no file and asks for no signature."""
+    render check can use it. Refuses first while any scar file cannot be read
+    (see seen_receipts), so no call is made to the checker. Touches no file and
+    asks for no signature."""
     for path in (presence.SIGNER, presence.CHECKER):
         if not os.path.exists(path):
             raise SignedPromoteError(f"not installed at its fixed path: {path}")
+    seen_receipts(store)
     if promotion_subject(store.root, subject_id) is None:
         raise SignedPromoteError(
             "repository root commit unavailable, so a promotion cannot be bound to "
@@ -109,6 +123,11 @@ def sign_record(store: ScarStore, scar: Scar, org: str, name: str) -> tuple[str,
     record = promoted_record(scar)
     subject = subject_for(store, scar, name)
     try:
+        seen_receipts(store)  # backstop: refuse before the touch, not after it
+    except SignedPromoteError as exc:
+        raise SignedPromoteError(
+            f"{name}: {exc} Nothing was signed and nothing was written.") from None
+    try:
         head = presence.head(org)
     except presence.PresenceError as exc:
         raise SignedPromoteError(
@@ -126,7 +145,13 @@ def sign_record(store: ScarStore, scar: Scar, org: str, name: str) -> tuple[str,
             f"{name}: the signer gave no signature: {exc.reason}. Nothing was "
             "signed and nothing was written.") from None
     try:
-        receipt = presence.ingest(org, subject, record, jws, store.seen_receipts())
+        seen = seen_receipts(store)
+    except SignedPromoteError as exc:
+        raise SignedPromoteError(
+            f"the touch was spent, but {exc} Nothing was written: {name} is "
+            "unchanged and its id is not used up.", touch_spent=True) from None
+    try:
+        receipt = presence.ingest(org, subject, record, jws, seen)
     except presence.PresenceError as exc:
         raise SignedPromoteError(
             f"the touch was spent, but the checker did not accept the act: {exc.reason}. "
@@ -148,7 +173,6 @@ def promote_one(store: ScarStore, prepared: PreparedPromotion, org: str) -> Path
             f"written: {name} is unchanged.", touch_spent=True) from None
 
 
-_ACT_LINE_RE = re.compile(r"^\s*promotion_(?:act|receipt):")
 _ANCHORS_LINE_RE = re.compile(r"^anchors:")
 
 
@@ -157,7 +181,9 @@ def with_act(text: str, act: str, receipt: str) -> str:
     every other byte as it was. A surgical edit of the frontmatter, never a
     parse and reserialize (that would reorder and requote lines, and the record
     the person saw would no longer be the record on disk). Existing lines of
-    either key are removed and the pair goes where the first one was; with none,
+    either key are removed (a line is one only at column 0, by the model's one
+    definition of it, so an indented line of that name is left alone) and the
+    pair goes where the first one was; with none,
     before `anchors:` (where Scar.to_text writes them), else at the end of the
     frontmatter. The body is never read as frontmatter. The line ending of the
     file is kept."""
@@ -166,12 +192,12 @@ def with_act(text: str, act: str, receipt: str) -> str:
         raise ValueError("no frontmatter to put the act in")
     eol = "\r" if text.startswith("---\r\n") else ""
     lines = text[m.start(1):m.end(1)].split("\n")
-    first = next((i for i, line in enumerate(lines) if _ACT_LINE_RE.match(line)), None)
+    first = next((i for i, line in enumerate(lines) if ACT_LINE_RE.match(line)), None)
     if first is None:
         first = next((i for i, line in enumerate(lines) if _ANCHORS_LINE_RE.match(line)),
                      len(lines))
-    kept_before = sum(1 for line in lines[:first] if not _ACT_LINE_RE.match(line))
-    lines = [line for line in lines if not _ACT_LINE_RE.match(line)]
+    kept_before = sum(1 for line in lines[:first] if not ACT_LINE_RE.match(line))
+    lines = [line for line in lines if not ACT_LINE_RE.match(line)]
     lines[kept_before:kept_before] = [f"promotion_act: {act}{eol}",
                                       f"promotion_receipt: {receipt}{eol}"]
     return text[:m.start(1)] + "\n".join(lines) + text[m.end(1):]
@@ -254,7 +280,7 @@ def resign_preflight(store: ScarStore, org: str, path: Path, scar: Scar) -> str:
     """Everything that can be refused before the touch when re-signing: the
     machine checks, then `new_record_checks` on the file as it stands. Returns
     the file text the checks were made on."""
-    original = path.read_bytes().decode("utf-8")
+    original = read_scar_text(path, keep_newlines=True)
     head = machine_checks(store, org, scar.id)
     new_record_checks(store, org, path, original, head)
     return original
@@ -270,7 +296,7 @@ def resign_one(store: ScarStore, org: str, path: Path, original: str, new_text: 
     is left alone."""
     name = path.name
     jws, receipt = sign_record(store, parse_scar_text(new_text), org, name)
-    if path.read_bytes().decode("utf-8") != original:
+    if read_scar_text(path, keep_newlines=True) != original:
         raise SignedPromoteError(
             f"the touch was spent and the act was accepted, but {name} changed while it "
             f"was being signed. Nothing was written: {name} is as the other change left it.",

@@ -20,7 +20,7 @@ from typing import Callable
 from rich_argparse import RichHelpFormatter
 
 from .firing_log import read_firing_log_records
-from .lint import _is_redos_prone, lint_text, render_fit_findings
+from .lint import Finding, _is_redos_prone, lint_text, render_fit_findings
 from .record import render_fit
 from .match import (
     _armed_candidates,
@@ -32,7 +32,7 @@ from .match import (
     rank_matches_for_diff,
     rank_matches_for_paths,
 )
-from .model import Scar, parse_scar_text
+from .model import ParseError, Scar
 from .evidence import _git, unreachable_evidence
 from .orphan import (
     GitError,
@@ -52,8 +52,8 @@ from .reanchor import (
 )
 from .render import injection_context, label_line, rule_line
 from .renames import anchor_rewrite_text, apply_anchor_rewrite, apply_rename_fix
-from .store import (ScarStore, SignedRecordWouldChange, init_scars, sanitize_signal_text,
-                    slugify, with_evidence_note)
+from .store import (ScarStore, SignedRecordWouldChange, init_scars, read_scar,
+                    read_scar_text, sanitize_signal_text, slugify, with_evidence_note)
 from .violation_evidence import is_violation_summary
 from . import clock, config, output, signedpromote
 
@@ -810,7 +810,10 @@ def _cmd_lint(args) -> int:
     # cross-store duplicate-id errors below add to the same set.
     failed_files: set[str] = set()
     for f in files:
-        findings = lint_text(f.read_text(encoding="utf-8"))
+        try:
+            findings = lint_text(read_scar_text(f))
+        except ParseError as exc:  # not valid UTF-8: reported like any unparseable file
+            findings = [Finding("error", str(exc))]
         rel = str(f.relative_to(store.root))
         findings_by_file.append((rel, findings))
         if any(fi.level == "error" for fi in findings):
@@ -820,13 +823,11 @@ def _cmd_lint(args) -> int:
     # see a handle split ACROSS scars. Group every author by casefold; a fold
     # with >1 spelling gets a synthetic warning finding attached to its first
     # offending file, so plain/rich/--json renderers all inherit it for free.
-    from .lint import Finding
-    from .model import ParseError
     parsed_files: list[tuple[str, Scar]] = []
     for f in files:
         try:
             parsed_files.append((str(f.relative_to(store.root)),
-                                 parse_scar_text(f.read_text(encoding="utf-8"))))
+                                 read_scar(f)))
         except ParseError:
             continue
     # Duplicate ids: two branches that each promote a candidate both compute
@@ -869,7 +870,7 @@ def _cmd_lint(args) -> int:
     # promoted_from promote will set. Active scars are never measured.
     for f in store.candidates():
         try:
-            candidate = parse_scar_text(f.read_text(encoding="utf-8"))
+            candidate = read_scar(f)
         except ParseError:
             continue  # lint_text already reported it as an error
         fit_findings = render_fit_findings(
@@ -1274,7 +1275,7 @@ def _promote_one(store: ScarStore, target: Path, args, reviewer: str,
     # Non-blocking advisory: a freshly promoted scar whose anchors already
     # resolve to nothing is born orphan-detected. Promote still succeeds — the
     # reviewer may anchor to code that does not exist yet on purpose.
-    promoted = parse_scar_text(new_path.read_text(encoding="utf-8"))
+    promoted = read_scar(new_path)
     ctx = _repo_context(store)
     born_orphan = ctx is not None and anchors_all_dead(promoted, ctx)
     rel = new_path.relative_to(store.root)
@@ -1669,7 +1670,7 @@ def _orphan_fix_renames(store: ScarStore, findings, args) -> int:
             continue
         scar = id_to_scar[of.scar_id]
         if signedpromote.is_signed(scar):
-            original = path.read_bytes().decode("utf-8")
+            original = read_scar_text(path, keep_newlines=True)
             new_text = anchor_rewrite_text(original, "path", of.renamed)
             if new_text == original:
                 skipped.append(of.scar_id)
@@ -1979,7 +1980,7 @@ def _reanchor_apply(store: ScarStore, ctx, repo: Path, args) -> int:
     touch_spent = False
     signed = False
     if fixed and signedpromote.is_signed(scar):
-        original = scar_file.read_bytes().decode("utf-8")
+        original = read_scar_text(scar_file, keep_newlines=True)
         new_text = original
         for kind, renamed in renamed_by_kind.items():
             new_text = anchor_rewrite_text(new_text, kind, renamed)
