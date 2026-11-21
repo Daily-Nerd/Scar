@@ -434,10 +434,26 @@ def test_agents_doc_states_the_in_place_rule():
     assert "If it cannot sign, it refuses and the file is not changed." in text
 
 
-def test_agents_doc_says_every_scar_that_parses():
+def test_agents_doc_says_every_scar_file_and_the_refusal():
     text = _signing_paragraphs()
-    assert "every scar that parses" in text
-    assert "every scar, archived ones included" not in text
+    assert "every scar file, archived ones included" in text
+    assert "every scar that parses" not in text
+    assert "while a scar file cannot be read" in text
+
+
+def test_spec_says_signing_refuses_when_a_scar_file_cannot_be_read(tmp_path):
+    order = _section("Order of a signature")
+    assert "Signing refuses when any scar file cannot be read" in order
+    assert "every scar that parses" not in order
+    limits = _section("What this section does not claim")
+    assert "signing\n  refuses while any scar file cannot be read" in limits
+    assert "is skipped" not in limits
+    # The code does what the sentence says.
+    from scar.store import ScarStore, UnreadableScars, init_scars
+    init_scars(tmp_path)
+    (tmp_path / ".scars" / "0001-bad.fence.md").write_bytes(b"\xff\xfe")
+    with pytest.raises(UnreadableScars):
+        ScarStore.discover(tmp_path).seen_receipts()
 
 
 def test_every_command_in_the_signing_paragraphs_is_in_the_command_table():

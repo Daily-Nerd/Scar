@@ -23,8 +23,8 @@ from pathlib import Path
 from . import config, presence
 from .record import promoted_record, promotion_subject, record_hash
 from .model import _FRONTMATTER_RE, ParseError, Scar, parse_scar_text
-from .store import (PreparedPromotion, ScarStore, act_matches_record, read_scar_text,
-                    write_active_scar)
+from .store import (PreparedPromotion, ScarStore, UnreadableScars, act_matches_record,
+                    read_scar_text, write_active_scar)
 
 
 class SignedPromoteError(Exception):
@@ -47,16 +47,29 @@ def subject_for(store: ScarStore, scar: Scar, name: str) -> str:
     return subject
 
 
+def seen_receipts(store: ScarStore) -> list[str]:
+    """The store's receipts for the checker's `seen` list, or a refusal that
+    names the scar files that cannot be read (#439). One owner of the
+    translation, so every signing step refuses the same way."""
+    try:
+        return store.seen_receipts()
+    except UnreadableScars as exc:
+        raise SignedPromoteError(str(exc)) from None
+
+
 def machine_checks(store: ScarStore, org: str, subject_id: int) -> dict:
     """The checks that need no record and no person, shared by promotion and
     re-signing: both programs exist at their fixed paths, the repository can
     name its root (judged with `subject_id`), the checker has a head, and this
     machine's key is still enrolled (a removed member's key can still sign, and
     the checker would only refuse it after the touch). Returns the head so the
-    render check can use it. Touches no file and asks for no signature."""
+    render check can use it. Refuses first while any scar file cannot be read
+    (see seen_receipts), so no call is made to the checker. Touches no file and
+    asks for no signature."""
     for path in (presence.SIGNER, presence.CHECKER):
         if not os.path.exists(path):
             raise SignedPromoteError(f"not installed at its fixed path: {path}")
+    seen_receipts(store)
     if promotion_subject(store.root, subject_id) is None:
         raise SignedPromoteError(
             "repository root commit unavailable, so a promotion cannot be bound to "
@@ -110,6 +123,11 @@ def sign_record(store: ScarStore, scar: Scar, org: str, name: str) -> tuple[str,
     record = promoted_record(scar)
     subject = subject_for(store, scar, name)
     try:
+        seen_receipts(store)  # backstop: refuse before the touch, not after it
+    except SignedPromoteError as exc:
+        raise SignedPromoteError(
+            f"{name}: {exc} Nothing was signed and nothing was written.") from None
+    try:
         head = presence.head(org)
     except presence.PresenceError as exc:
         raise SignedPromoteError(
@@ -127,7 +145,13 @@ def sign_record(store: ScarStore, scar: Scar, org: str, name: str) -> tuple[str,
             f"{name}: the signer gave no signature: {exc.reason}. Nothing was "
             "signed and nothing was written.") from None
     try:
-        receipt = presence.ingest(org, subject, record, jws, store.seen_receipts())
+        seen = seen_receipts(store)
+    except SignedPromoteError as exc:
+        raise SignedPromoteError(
+            f"the touch was spent, but {exc} Nothing was written: {name} is "
+            "unchanged and its id is not used up.", touch_spent=True) from None
+    try:
+        receipt = presence.ingest(org, subject, record, jws, seen)
     except presence.PresenceError as exc:
         raise SignedPromoteError(
             f"the touch was spent, but the checker did not accept the act: {exc.reason}. "

@@ -167,6 +167,19 @@ def with_evidence_note(text: str, note: str) -> str:
     return scar.to_text()
 
 
+class UnreadableScars(Exception):
+    """One or more scar files in the store cannot be read (#439). `files` is
+    [(path, reason)]. Raised where a short view of the store is not safe,
+    which today is the receipts list signing hands to the checker."""
+
+    def __init__(self, files: list[tuple[Path, str]]):
+        self.files = list(files)
+        listed = "; ".join(f"{f.name} ({why})" for f, why in self.files)
+        super().__init__(
+            f"{len(self.files)} scar file(s) cannot be read: {listed}. "
+            "Fix or remove them first; `scar lint` shows each one.")
+
+
 def read_scar_text(path: Path, *, keep_newlines: bool = False) -> str:
     """The one place a scar file is read (#439). Returns the text, or raises
     ParseError when the bytes are not valid UTF-8, so a file that cannot be
@@ -380,14 +393,41 @@ class ScarStore:
                 continue
         return out
 
+    def _read_all(self) -> tuple[list[tuple[Path, Scar]], list[tuple[Path, str]]]:
+        """Every scar file read once: (parsed, unreadable). A file is
+        unreadable when it does not parse, is not valid UTF-8, or cannot be
+        opened; the reason is one short line for a message. The one place the
+        store decides which files it could not read."""
+        scars: list[tuple[Path, Scar]] = []
+        unreadable: list[tuple[Path, str]] = []
+        for f in self._scar_files():
+            try:
+                scars.append((f, read_scar(f)))
+            except ParseError as exc:
+                unreadable.append((f, str(exc)))
+            except OSError as exc:
+                unreadable.append((f, exc.strerror or type(exc).__name__))
+        return scars, unreadable
+
+    def unreadable(self) -> list[tuple[Path, str]]:
+        """The scar files this store cannot read, each with the reason:
+        unparseable, not valid UTF-8, or not openable. broken() is the subset
+        a hook can name as parse failures; this one also counts OSError."""
+        return self._read_all()[1]
+
     def seen_receipts(self) -> list[str]:
         """Receipt ids of every scar's promotion act, whatever its status
         (archived and orphaned included), for the checker's `seen` list: an act
         already used must stay refused after its scar retires, so one act
         cannot be replayed for another scar. Sorted and unique, so the checker
-        input does not depend on file order. A file that cannot be parsed is
-        skipped with the rest of parsed(): its receipt cannot be read."""
-        return sorted({s.promotion_receipt for _f, s in self.parsed() if s.promotion_receipt})
+        input does not depend on file order. Raises UnreadableScars, naming
+        them, when any scar file cannot be read (#439): a file the store cannot
+        read has no receipt it can list, and a short list is not safe to hand
+        to the checker."""
+        scars, unreadable = self._read_all()
+        if unreadable:
+            raise UnreadableScars(unreadable)
+        return sorted({s.promotion_receipt for _f, s in scars if s.promotion_receipt})
 
     def active(self) -> list[tuple[Path, Scar]]:
         return [(f, s) for f, s in self.parsed() if s.status == "active"]

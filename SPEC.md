@@ -801,14 +801,18 @@ Refusal happens before any touch (`render_check`, `preflight`,
 ### 10.10 Order of a signature
 
 1. Machine checks (`machine_checks`): both programs exist at their fixed paths,
-   git can name the root commit, the checker has a head, and this machine's key
-   is still enrolled.
+   no scar file in the store is unreadable (see step 5), git can name the root
+   commit, the checker has a head, and this machine's key is still enrolled.
 2. Render check: the signer shows the record without signing it, or refuses.
 3. The head is fetched again.
 4. Sign. This is the touch.
 5. First-acceptance check (`ingest`). The `seen` list holds the receipts of
-   every scar that parses, archived and orphaned ones included, sorted and
-   unique.
+   every scar file in the store, archived and orphaned ones included, sorted and
+   unique. Signing refuses when any scar file cannot be read: it does not parse,
+   is not valid UTF-8, or cannot be opened. The refusal names the files, says
+   nothing was signed and points at `scar lint`. It is made in step 1, before the
+   first prompt of a batch and before any touch, and made again before step 3 and
+   after step 4 (after the touch it is a spent touch and nothing is written).
 6. One write.
 
 Promote runs steps 1 and 2 for the whole batch before the first touch, then
@@ -889,8 +893,9 @@ never lint errors. Only `rechecked: true` from the checker is `verified`.
 
 ### 10.15 What this section does not claim
 
-- `seen` holds the receipts of every scar that parses. A scar file that does not
-  parse is skipped, and its receipt is not in the list.
+- `seen` holds the receipts of every scar file that can be read, and signing
+  refuses while any scar file cannot be read. A scar file in `.scars/candidates/`
+  is not part of the list: no act of a candidate exists.
 - Nothing proves that a title or body can never make `promoted_record` differ
   between parse and reserialize. `new_record_checks` guards the in-place case by
   comparing hashes with placeholder act and receipt lines, and refuses before
