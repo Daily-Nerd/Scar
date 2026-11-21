@@ -23,7 +23,8 @@ from pathlib import Path
 from . import config, presence
 from .record import promoted_record, promotion_subject, record_hash
 from .model import _FRONTMATTER_RE, ParseError, Scar, parse_scar_text
-from .store import PreparedPromotion, ScarStore, act_matches_record, write_active_scar
+from .store import (PreparedPromotion, ScarStore, act_matches_record, read_scar_text,
+                    write_active_scar)
 
 
 class SignedPromoteError(Exception):
@@ -254,7 +255,7 @@ def resign_preflight(store: ScarStore, org: str, path: Path, scar: Scar) -> str:
     """Everything that can be refused before the touch when re-signing: the
     machine checks, then `new_record_checks` on the file as it stands. Returns
     the file text the checks were made on."""
-    original = path.read_bytes().decode("utf-8")
+    original = read_scar_text(path, keep_newlines=True)
     head = machine_checks(store, org, scar.id)
     new_record_checks(store, org, path, original, head)
     return original
@@ -270,7 +271,7 @@ def resign_one(store: ScarStore, org: str, path: Path, original: str, new_text: 
     is left alone."""
     name = path.name
     jws, receipt = sign_record(store, parse_scar_text(new_text), org, name)
-    if path.read_bytes().decode("utf-8") != original:
+    if read_scar_text(path, keep_newlines=True) != original:
         raise SignedPromoteError(
             f"the touch was spent and the act was accepted, but {name} changed while it "
             f"was being signed. Nothing was written: {name} is as the other change left it.",

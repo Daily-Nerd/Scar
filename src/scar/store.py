@@ -167,6 +167,33 @@ def with_evidence_note(text: str, note: str) -> str:
     return scar.to_text()
 
 
+def read_scar_text(path: Path, *, keep_newlines: bool = False) -> str:
+    """The one place a scar file is read (#439). Returns the text, or raises
+    ParseError when the bytes are not valid UTF-8, so a file that cannot be
+    decoded is an unparseable scar like one with no frontmatter, listed where
+    those are listed. OSError is not converted: a file that cannot be opened
+    is a different case and each caller decides (the store reports it as
+    unreadable). Newlines are translated like open() does, so parse and lint see
+    what they always saw; a caller that rewrites the file passes
+    `keep_newlines` to keep the exact bytes (CRLF included)."""
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ParseError(
+            f"not valid UTF-8 (byte {exc.start}: {exc.reason}); scar can never fire"
+        ) from None
+    if not keep_newlines:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
+
+
+def read_scar(path: Path) -> Scar:
+    """The parsed scar at `path`, or ParseError (no frontmatter, or not valid
+    UTF-8). The reader every parse of a scar file goes through."""
+    return parse_scar_text(read_scar_text(path))
+
+
 def write_active_scar(path: Path, new_text: str) -> None:
     """The one in-place write of an active scar file (#412).
 
@@ -185,7 +212,7 @@ def write_active_scar(path: Path, new_text: str) -> None:
     following a symlink."""
     target = Path(os.path.realpath(path))
     try:
-        old = parse_scar_text(target.read_text(encoding="utf-8"))
+        old = read_scar(target)
     except ParseError:
         old = None
     if old is not None and act_matches_record(old):
@@ -348,7 +375,7 @@ class ScarStore:
         out = []
         for f in self._scar_files():
             try:
-                out.append((f, parse_scar_text(f.read_text(encoding="utf-8"))))
+                out.append((f, read_scar(f)))
             except (ParseError, OSError):
                 continue
         return out
@@ -382,7 +409,7 @@ class ScarStore:
         broken: list[Path] = []
         for f in self._scar_files():
             try:
-                scar = parse_scar_text(f.read_text(encoding="utf-8"))
+                scar = read_scar(f)
             except ParseError:
                 broken.append(f)
                 continue
@@ -396,7 +423,7 @@ class ScarStore:
         out = []
         for f in self._scar_files():
             try:
-                parse_scar_text(f.read_text(encoding="utf-8"))
+                read_scar(f)
             except ParseError:
                 out.append(f)
             except OSError:
@@ -429,7 +456,7 @@ class ScarStore:
         out = []
         for p in self.candidates():
             try:
-                status = parse_scar_text(p.read_text(encoding="utf-8")).status
+                status = read_scar(p).status
             except (ParseError, OSError):
                 status = "candidate"
             if status != "archived":
@@ -468,7 +495,7 @@ class ScarStore:
     def _parse_candidate_file(self, path: Path) -> Scar:
         path = self.candidate_path(path)
         try:
-            return parse_scar_text(path.read_text(encoding="utf-8"))
+            return read_scar(path)
         except (ParseError, OSError) as exc:
             raise UnparseableCandidate(f"{path.name}: unreadable ({exc})") from None
 
@@ -476,7 +503,7 @@ class ScarStore:
         ids = [scar.id for _, scar in self.active() if scar.id is not None]
         for f in self._scar_files():  # count non-active numbered scars too
             try:
-                s = parse_scar_text(f.read_text(encoding="utf-8"))
+                s = read_scar(f)
                 if s.id is not None:
                     ids.append(s.id)
             except (ParseError, OSError):
@@ -519,7 +546,7 @@ class ScarStore:
         rendering (nothing here special-cases either shape)."""
         for f, s in self.parsed():
             if s.id == scar_id:
-                write_active_scar(f, with_evidence_note(f.read_text(encoding="utf-8"), note))
+                write_active_scar(f, with_evidence_note(read_scar_text(f), note))
                 return f
         raise ValueError(f"no scar with id {scar_id}")
 
@@ -538,7 +565,10 @@ class ScarStore:
                 raise ValueError(
                     f"refusing to promote {candidate.name}: status is "
                     f"{current.status}, only candidate can be promoted") from None
-        findings = lint_text(candidate.read_text(encoding="utf-8"))
+        try:
+            findings = lint_text(read_scar_text(candidate))
+        except ParseError as exc:
+            raise ValueError(f"refusing to promote {candidate.name}: {exc}") from None
         errors = [f for f in findings if f.level == "error"]
         if errors:
             raise ValueError(f"refusing to promote, lint errors: {'; '.join(f.message for f in errors)}")
@@ -582,7 +612,7 @@ class ScarStore:
         # written, so a refusal changes no file and burns no id.
         self.check_promotable(candidate)
         candidate = self.candidate_path(candidate)
-        text = candidate.read_text(encoding="utf-8")
+        text = read_scar_text(candidate)
         scar = self.as_promoted(candidate, parse_scar_text(text))
         scar.status = "active"
         # #287: the reviewer is who VOUCHED, its own key. Never appended to

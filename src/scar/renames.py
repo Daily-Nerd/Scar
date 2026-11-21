@@ -31,7 +31,7 @@ from pathlib import Path
 
 from .evidence import _git, _is_shallow
 from .model import _strip_inline_comment, _unquote
-from .store import write_active_scar
+from .store import read_scar_text, write_active_scar
 
 # Directory anchors (trailing '/') and glob-shaped anchors are out of scope —
 # renames apply to concrete tracked files only (#109 design).
@@ -209,7 +209,7 @@ def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) 
     `anchor_rewrite_text` computes them, through the store's write gate.
     Returns True iff at least one line changed (the file is rewritten only
     then); False leaves the file byte-identical and unwritten."""
-    text = path.read_text(encoding="utf-8")
+    text = read_scar_text(path)
     new_text = anchor_rewrite_text(text, anchor_kind, renamed)
     if new_text == text:
         return False

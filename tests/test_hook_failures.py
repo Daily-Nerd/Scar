@@ -299,12 +299,17 @@ def test_a_non_string_cwd_exits_zero_and_is_recorded(repo, monkeypatch):
     assert [r["hook"] for r in _failures()] == ["session-notice"]
 
 
-def test_a_scar_file_with_invalid_utf8_does_not_break_session_start(
+def test_a_scar_file_with_invalid_utf8_is_reported_not_an_internal_failure(
         repo, monkeypatch, capsys):
+    # #439: an undecodable scar file is an unparseable scar, named in the
+    # notice like one with no frontmatter. It is no longer a crash that the
+    # dispatcher has to catch, so no failure line is recorded for it.
     (repo / ".scars" / "0001-bad.md").write_bytes(b"---\ntitle: \xff\xfe\n---\n")
     _stdin(monkeypatch, {"cwd": str(repo)})
     assert main(["hook", "session-notice"]) == 0
-    assert [r["hook"] for r in _failures()] == ["session-notice"]
+    assert _failures() == []
+    out = capsys.readouterr().out
+    assert "0001-bad.md" in out and "can never fire" in out
 
 
 def test_a_transcript_line_that_is_a_json_scalar_does_not_break_stop_drafter(
