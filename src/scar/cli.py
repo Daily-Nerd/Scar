@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
@@ -228,6 +229,48 @@ def _styled_line(line: str, styles=()) -> output.Markup:
     return output.plain(line)
 
 
+# One owner of what a command says (#429). A builder returns a `_Report`: the
+# lines before a table, the table's rows as structured fields, and the lines
+# after it. The plain renderer formats each row into its line; the terminal
+# renderer puts the SAME rows into a table. Neither reads anything the report
+# did not return, so a field cannot reach one surface and miss the other.
+@dataclass(frozen=True)
+class _Report:
+    before: tuple[str, ...] = ()
+    rows: tuple = ()
+    after: tuple[str, ...] = ()
+
+    def plain_lines(self) -> list[str]:
+        return [*self.before, *(r.line() for r in self.rows), *self.after]
+
+
+@dataclass(frozen=True)
+class _FindingRow:
+    file: str
+    level: str
+    message: str
+
+    def cells(self) -> tuple[str, ...]:
+        return (self.file, self.level, self.message)
+
+    def line(self) -> str:
+        return f"{self.file}: {self.level}: {self.message}"
+
+
+@dataclass(frozen=True)
+class _ActiveRow:
+    type: str
+    id: int
+    severity: str
+    title: str
+
+    def cells(self) -> tuple[str, ...]:
+        return (self.type, f"#{self.id}", self.severity, self.title)
+
+    def line(self) -> str:
+        return f"  [{self.type} #{self.id} | {self.severity}] {self.title}"
+
+
 def _init_rich(data: dict) -> None:
     fmt = output.fmt
     lines = [fmt("initialized [bold]{}[/] (README.md, template.md, candidates/)",
@@ -248,7 +291,7 @@ def _init_rich(data: dict) -> None:
     output.show(output.panel(output.block(lines), title="scar init", border_style="green"))
 
 
-def _promote_lines(data: dict) -> list[str]:
+def _promote_report(data: dict) -> _Report:
     """The lines `scar promote` reports, from its data. The plain and the
     terminal renderer both read this list (#429); the terminal only styles."""
     lines = [f"promoted -> {data['promoted']}",
@@ -263,7 +306,7 @@ def _promote_lines(data: dict) -> list[str]:
     if data["born_orphan"]:
         lines.append("  advisory: this scar's anchors resolve to nothing in the current "
                      "tree (born orphan-detected) \u2014 confirm the anchors are right")
-    return lines
+    return _Report(before=tuple(lines))
 
 
 _PROMOTE_STYLES = (("promoted", "green"), ("not signed:", "yellow"),
@@ -271,13 +314,13 @@ _PROMOTE_STYLES = (("promoted", "green"), ("not signed:", "yellow"),
 
 
 def _promote_plain(data: dict) -> None:
-    for line in _promote_lines(data):
+    for line in _promote_report(data).plain_lines():
         print(line)
 
 
 def _promote_rich(data: dict) -> None:
     output.show(output.panel(
-        output.block(_styled_line(ln, _PROMOTE_STYLES) for ln in _promote_lines(data)),
+        output.block(_styled_line(ln, _PROMOTE_STYLES) for ln in _promote_report(data).before),
         title="scar promote", border_style="green", fit=True))
 
 
@@ -319,13 +362,14 @@ def _agent_doctor_rich(lines) -> None:
     output.show(output.panel(body, title="scar agent doctor", border_style="cyan"))
 
 
-def _status_lines(data: dict) -> list[str]:
+def _status_report(data: dict) -> _Report:
     """The lines `scar status` reports, from its data (#429)."""
     c = data["counts"]
-    lines = [f"{data['scars_dir']}: {c['active']} active, "
-             f"{c['candidates']} candidate(s) pending review"]
-    for s in data["active"]:
-        lines.append(f"  [{s['type']} #{s['id']} | {s['severity']}] {s['title']}")
+    head = (f"{data['scars_dir']}: {c['active']} active, "
+            f"{c['candidates']} candidate(s) pending review")
+    lines = [head]
+    rows = tuple(_ActiveRow(s["type"], s["id"], s["severity"], s["title"])
+                 for s in data["active"])
     for s in data["challenged"]:
         lines.append(f"  [challenged {s['type']} #{s['id']}] {s['title']}")
     for name in data["candidates"]:
@@ -347,7 +391,7 @@ def _status_lines(data: dict) -> list[str]:
     if data["broken"]:
         lines.append(f"  WARNING: {len(data['broken'])} unparseable (can NEVER fire): "
                      + ", ".join(data["broken"]))
-    return lines
+    return _Report(before=(head,), rows=rows, after=tuple(lines[1:]))
 
 
 _STATUS_STYLES = (("[challenged", "dim"), ("candidate:", "cyan"), ("REVIEW DUE", "yellow"),
@@ -356,25 +400,30 @@ _STATUS_STYLES = (("[challenged", "dim"), ("candidate:", "cyan"), ("REVIEW DUE",
 
 
 def _status_plain(data: dict) -> None:
-    for line in _status_lines(data):
+    for line in _status_report(data).plain_lines():
         print(line)
 
 
 def _status_rich(data: dict) -> None:
-    head, *rest = _status_lines(data)
-    output.show(output.panel(_styled_line(head), title="scar status", fit=True))
-    for line in rest:
+    report = _status_report(data)
+    output.show(output.panel(_styled_line(report.before[0]), title="scar status", fit=True))
+    if report.rows:
+        output.show(output.table(
+            "Active scars",
+            [("type", {"overflow": "fold"}), ("id", {"justify": "right", "overflow": "fold"}),
+             ("severity", {"overflow": "fold"}), ("title", {"overflow": "fold"})],
+            [[output.styled(_TYPE_STYLE.get(r.type, "white"), r.type), *r.cells()[1:]]
+             for r in report.rows],
+            show_edge=False, expand=False))
+    for line in report.after:
         output.say(_styled_line(line, _STATUS_STYLES))
 
 
-def _finding_line(f: dict) -> str:
-    return f"{f['file']}: {f['level']}: {f['message']}"
-
-
-def _lint_lines(data: dict) -> list[str]:
+def _lint_report(data: dict) -> _Report:
     """The lines `scar lint` reports, from its data (#429). Order is the
     contract: findings, then each advisory family, then the summary."""
-    lines = [_finding_line(f) for f in data["findings"]]
+    rows = tuple(_FindingRow(f["file"], f["level"], f["message"]) for f in data["findings"])
+    lines = []
     for o in data["orphans"]:
         lines.append(f"WARNING orphan-detected: scar #{o['scar_id']} \u2014 {o['reason']}")
     # partial rot (#35): firing scars with a dead anchor among live ones.
@@ -419,7 +468,7 @@ def _lint_lines(data: dict) -> list[str]:
                  f"{len(data['orphans'])} orphan(s), {len(data['partial_rot'])} partial-rot, "
                  f"{len(data['unreachable_evidence'])} unreachable-evidence, "
                  f"{len(data['firing_review'])} firing-review")
-    return lines
+    return _Report(rows=rows, after=tuple(lines))
 
 
 _LINT_STYLES = (("WARNING", "yellow"), ("HINT symbol-drift:", "magenta"),
@@ -427,21 +476,24 @@ _LINT_STYLES = (("WARNING", "yellow"), ("HINT symbol-drift:", "magenta"),
 
 
 def _lint_plain(data: dict) -> None:
-    for line in _lint_lines(data):
+    for line in _lint_report(data).plain_lines():
         print(line)
 
 
 def _lint_rich(data: dict) -> None:
-    finding_levels = {_finding_line(f): f["level"] for f in data["findings"]}
+    report = _lint_report(data)
+    if report.rows:
+        output.show(output.table(
+            "Lint findings",
+            [("file", {"overflow": "fold"}), ("level", {"overflow": "fold"}),
+             ("message", {"overflow": "fold"})],
+            [[r.file, output.styled("red" if r.level == "error" else "yellow", r.level),
+              r.message] for r in report.rows],
+            show_edge=False))
     verified = {f"promotion: scar #{r['scar_id']}: {r['state']}": r["state"] == "verified"
                 for r in data.get("promotion", [])}
-    for line in _lint_lines(data):
-        if line in finding_levels:
-            level = finding_levels[line]
-            head, _sep, tail = line.partition(f": {level}: ")
-            output.say(output.block([head, ": ", output.styled(
-                "red" if level == "error" else "yellow", level), ": ", tail], sep=""))
-        elif line in verified:
+    for line in report.after:
+        if line in verified:
             output.say(_styled_line(
                 line, (("promotion:", "green" if verified[line] else "yellow"),)))
         elif line.startswith("lint: "):
@@ -1701,13 +1753,13 @@ def _reanchor_data(proposals, pattern_diag) -> dict:
     }
 
 
-def _reanchor_lines(data: dict) -> list[str]:
+def _reanchor_report(data: dict) -> _Report:
     """The lines `scar reanchor` reports in list mode, from its data (#429).
     Proposals come first, one line each and in order, then the pattern
     diagnostics, then the footer."""
     proposals, diags = data["proposals"], data["pattern_diagnostics"]
     if not proposals and not diags:
-        return ["no reanchor proposals"]
+        return _Report(before=("no reanchor proposals",))
     lines = [f"reanchor [#{p['scar_id']}] {p['anchor_kind']} {p['dead_anchor']} -> "
              f"{p['proposed_anchor']} ({p['confidence']}, signal {p['signal']}) "
              f"\u2014 {p['evidence']}" for p in proposals]
@@ -1715,16 +1767,16 @@ def _reanchor_lines(data: dict) -> list[str]:
               "(diagnostic only \u2014 never auto-applied)" for d in diags]
     lines.append(f"{len(proposals)} proposal(s), {len(diags)} pattern diagnostic(s) "
                  "\u2014 review, then `scar reanchor --apply --id N` to persist")
-    return lines
+    return _Report(before=tuple(lines))
 
 
 def _reanchor_plain(data: dict) -> None:
-    for line in _reanchor_lines(data):
+    for line in _reanchor_report(data).plain_lines():
         print(line)
 
 
 def _reanchor_rich(data: dict) -> None:
-    lines = _reanchor_lines(data)
+    lines = _reanchor_report(data).before
     proposals = data["proposals"]
     for i, line in enumerate(lines):
         if not proposals and not data["pattern_diagnostics"]:
@@ -1737,7 +1789,7 @@ def _reanchor_rich(data: dict) -> None:
             output.say(_styled_line(line, (("pattern", "dim"),)))
 
 
-def _reanchor_apply_lines(data: dict, scar_id: int) -> list[str]:
+def _reanchor_apply_report(data: dict, scar_id: int) -> _Report:
     """The lines `scar reanchor --apply` reports, from its data (#429)."""
     fixed, skipped = data["fixed"], data["skipped"]
     lines = [f"fixed [#{scar_id}] {f['anchor_kind']} {f['dead_anchor']} -> "
@@ -1747,19 +1799,19 @@ def _reanchor_apply_lines(data: dict, scar_id: int) -> list[str]:
     lines += [f"refused [#{scar_id}] {r['reason']}" for r in data["refused"]]
     lines.append(f"{len(fixed)} anchor(s) fixed, {len(skipped)} left unfixed \u2014 status "
                  "unchanged (anchors-live-again hint will surface on next `scar lint`)")
-    return lines
+    return _Report(before=tuple(lines))
 
 
 _REANCHOR_APPLY_STYLES = (("not fixed", "yellow"), ("fixed", "green"), ("refused", "red"))
 
 
 def _reanchor_apply_plain(data: dict, scar_id: int) -> None:
-    for line in _reanchor_apply_lines(data, scar_id):
+    for line in _reanchor_apply_report(data, scar_id).plain_lines():
         print(line)
 
 
 def _reanchor_apply_rich(data: dict, scar_id: int) -> None:
-    for line in _reanchor_apply_lines(data, scar_id):
+    for line in _reanchor_apply_report(data, scar_id).before:
         output.say(_styled_line(line, _REANCHOR_APPLY_STYLES))
 
 

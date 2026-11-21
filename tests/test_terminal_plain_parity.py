@@ -26,13 +26,15 @@ from scar.store import init_scars
 EM = "\u2014"
 
 
-@pytest.fixture
-def term(monkeypatch):
-    """Force the terminal branch on a console wide enough to never wrap."""
+@pytest.fixture(params=[80, 120, 1000])
+def term(monkeypatch, request):
+    """Force the terminal branch. The widths are a real terminal's (80, 120)
+    and one wide enough to never wrap: a value cut or lost at 80 columns is
+    the same bug as a line the terminal never printed."""
     buf = io.StringIO()
     monkeypatch.setattr(output, "is_tty", lambda: True)
     monkeypatch.setattr(output, "console", Console(
-        file=buf, force_terminal=True, color_system="standard", width=1000))
+        file=buf, force_terminal=True, color_system="standard", width=request.param))
     return lambda: re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
 
 
@@ -42,10 +44,45 @@ def _plain_lines(capsys, fn, *args):
     return capsys.readouterr().out.splitlines()
 
 
-def _assert_parity(plain_lines, terminal_text):
-    assert plain_lines, "the fixture data produced no plain output"
-    missing = [ln for ln in plain_lines if ln not in terminal_text]
-    assert not missing, f"the terminal dropped: {missing}"
+def _squash(text):
+    """Text with whitespace and box-drawing characters removed: what is left
+    is the words, however the terminal wrapped them or boxed them in."""
+    return re.sub(r"[\s\u2500-\u257f]+", "", text)
+
+
+def _column_streams(text):
+    """The text of each table column, top to bottom, wrapped cells joined.
+    Table rows are the lines that carry a column separator but do not start a
+    panel border."""
+    streams = []
+    for line in text.splitlines():
+        if "\u2502" not in line or line.startswith(("\u2502", "\u256d", "\u2570")):
+            continue
+        for i, part in enumerate(line.split("\u2502")):
+            if i == len(streams):
+                streams.append("")
+            streams[i] += _squash(part)
+    return streams
+
+
+def _assert_parity(report, terminal_text):
+    """Every datum the plain output shows, the terminal shows. Plain lines
+    must be in the terminal output; every field of every table row must be in
+    its column. Expected values come from the builder's own output."""
+    assert report.before or report.rows or report.after, "the data produced nothing"
+    flat = _squash(terminal_text)
+    missing = [ln for ln in (*report.before, *report.after) if _squash(ln) not in flat]
+    assert not missing, f"the terminal dropped lines: {missing}"
+    streams = _column_streams(terminal_text)
+    for row in report.rows:
+        cells = row.cells()
+        assert len(streams) >= len(cells), "the terminal drew no table for these rows"
+        for i, cell in enumerate(cells):
+            assert _squash(cell) in streams[i], f"column {i} lost {cell!r}"
+
+
+def _plain_of(report):
+    return [*report.before, *(r.line() for r in report.rows), *report.after]
 
 
 # --- reanchor, list mode ----------------------------------------------------
@@ -75,18 +112,16 @@ def test_reanchor_list_plain_is_unchanged(capsys):
     ]
 
 
-def test_reanchor_list_terminal_shows_every_plain_line(capsys, term):
-    plain = _plain_lines(capsys, cli._reanchor_plain, REANCHOR_DATA)
+def test_reanchor_list_terminal_shows_every_plain_line(term):
     cli._reanchor_rich(REANCHOR_DATA)
-    _assert_parity(plain, term())
+    _assert_parity(cli._reanchor_report(REANCHOR_DATA), term())
 
 
 def test_reanchor_list_empty_parity(capsys, term):
     empty = {"proposals": [], "pattern_diagnostics": []}
-    plain = _plain_lines(capsys, cli._reanchor_plain, empty)
-    assert plain == ["no reanchor proposals"]
+    assert _plain_lines(capsys, cli._reanchor_plain, empty) == ["no reanchor proposals"]
     cli._reanchor_rich(empty)
-    _assert_parity(plain, term())
+    _assert_parity(cli._reanchor_report(empty), term())
 
 
 # --- reanchor --apply -------------------------------------------------------
@@ -110,10 +145,9 @@ def test_reanchor_apply_plain_is_unchanged(capsys):
     ]
 
 
-def test_reanchor_apply_terminal_shows_every_plain_line(capsys, term):
-    plain = _plain_lines(capsys, cli._reanchor_apply_plain, APPLY_DATA, 7)
+def test_reanchor_apply_terminal_shows_every_plain_line(term):
     cli._reanchor_apply_rich(APPLY_DATA, 7)
-    _assert_parity(plain, term())
+    _assert_parity(cli._reanchor_apply_report(APPLY_DATA, 7), term())
 
 
 # --- lint -------------------------------------------------------------------
@@ -173,10 +207,11 @@ def test_lint_plain_is_unchanged(capsys):
     ]
 
 
-def test_lint_terminal_shows_every_plain_line(capsys, term):
-    plain = _plain_lines(capsys, cli._lint_plain, LINT_DATA)
+def test_lint_terminal_shows_every_plain_line(term):
     cli._lint_rich(LINT_DATA)
-    _assert_parity(plain, term())
+    report = cli._lint_report(LINT_DATA)
+    assert len(report.rows) == len(LINT_DATA["findings"])
+    _assert_parity(report, term())
 
 
 def test_lint_terminal_parity_on_a_clean_run(capsys, term):
@@ -188,7 +223,7 @@ def test_lint_terminal_parity_on_a_clean_run(capsys, term):
     assert plain == ["lint: 4 file(s), 0 with errors, 0 orphan(s), 0 partial-rot, "
                      "0 unreachable-evidence, 0 firing-review"]
     cli._lint_rich(clean)
-    _assert_parity(plain, term())
+    _assert_parity(cli._lint_report(clean), term())
 
 
 # --- promote ----------------------------------------------------------------
@@ -213,10 +248,9 @@ def test_promote_plain_is_unchanged(capsys):
     ]
 
 
-def test_promote_terminal_shows_every_plain_line(capsys, term):
-    plain = _plain_lines(capsys, cli._promote_plain, PROMOTE_DATA)
+def test_promote_terminal_shows_every_plain_line(term):
     cli._promote_rich(PROMOTE_DATA)
-    _assert_parity(plain, term())
+    _assert_parity(cli._promote_report(PROMOTE_DATA), term())
 
 
 def test_promote_unsigned_parity(capsys, term):
@@ -226,7 +260,7 @@ def test_promote_unsigned_parity(capsys, term):
     assert plain == ["promoted -> .scars/0003-x.deadend.md",
                      "  not signed: no org in .scars/config.json"]
     cli._promote_rich(data)
-    _assert_parity(plain, term())
+    _assert_parity(cli._promote_report(data), term())
 
 
 # --- status -----------------------------------------------------------------
@@ -268,10 +302,48 @@ def test_status_plain_is_unchanged(capsys):
     ]
 
 
-def test_status_terminal_shows_every_plain_line(capsys, term):
-    plain = _plain_lines(capsys, cli._status_plain, STATUS_DATA)
+def test_status_terminal_shows_every_plain_line(term):
     cli._status_rich(STATUS_DATA)
-    _assert_parity(plain, term())
+    report = cli._status_report(STATUS_DATA)
+    assert len(report.rows) == len(STATUS_DATA["active"])
+    _assert_parity(report, term())
+
+
+def test_a_plain_line_is_its_rows_cells_and_lines_in_order(capsys):
+    """The plain renderer prints nothing the report did not return."""
+    for report_fn, plain_fn, args in (
+            (cli._lint_report, cli._lint_plain, (LINT_DATA,)),
+            (cli._status_report, cli._status_plain, (STATUS_DATA,)),
+            (cli._promote_report, cli._promote_plain, (PROMOTE_DATA,)),
+            (cli._reanchor_report, cli._reanchor_plain, (REANCHOR_DATA,)),
+            (cli._reanchor_apply_report, cli._reanchor_apply_plain, (APPLY_DATA, 7))):
+        assert _plain_lines(capsys, plain_fn, *args) == _plain_of(report_fn(*args))
+
+
+HOSTILE = [("x[/]y see [bold] here", "a trailing backslash \\"),
+           ("[red]hot[/red] [#5]", "app/[id]/page.tsx")]
+
+
+def test_table_cells_are_data_never_markup(term):
+    findings = [{"file": f"[{i}].md", "level": "warning", "message": m}
+                for i, (m, _) in enumerate(HOSTILE)]
+    active = [{"type": "deadend", "id": i, "severity": "low", "title": t}
+              for i, (_, t) in enumerate(HOSTILE)]
+    cli._lint_rich({**LINT_DATA, "findings": findings})
+    cli._status_rich({**STATUS_DATA, "active": active})
+    out = term()
+    streams = _column_streams(out)
+    for text in ("x[/]y see [bold] here", "[red]hot[/red] [#5]", "[0].md", "[1].md",
+                 "a trailing backslash \\", "app/[id]/page.tsx"):
+        assert any(_squash(text) in st for st in streams), text
+
+
+def test_a_long_cell_is_wrapped_never_cut(term):
+    long_title = "w" * 150 + " " + "tail-marker-" + "z" * 60
+    cli._status_rich({**STATUS_DATA, "active": [
+        {"type": "deadend", "id": 1, "severity": "high", "title": long_title}]})
+    assert _squash(long_title) in "".join(_column_streams(term()))
+    assert "\u2026" not in term()
 
 
 # --- --json holds on every exit path of reanchor and orphan -----------------
