@@ -149,6 +149,79 @@ def test_altering_the_act_line_while_the_record_is_unchanged_is_refused(repo):
     assert p.read_bytes() == before
 
 
+def _moved_anchor_text(p, anchor="src/y.py"):
+    return p.read_text().replace("path: src/x.py", f"path: {anchor}")
+
+
+def _act_for(text):
+    return make_act(record_hash(parse_scar_text(text)))
+
+
+def _with_act_line(text, act):
+    old_act = parse_scar_text(text).promotion_act
+    return text.replace(old_act, act)
+
+
+def test_changed_record_with_a_new_act_made_for_it_is_written(repo):
+    p = write_scar(repo, 4)
+    moved = _moved_anchor_text(p)
+    new_text = _with_act_line(moved, _act_for(moved))
+    write_active_scar(p, new_text)
+    assert p.read_text() == new_text
+    from scar.store import act_matches_record
+    assert act_matches_record(parse_scar_text(p.read_text())) is True
+
+
+def test_changed_record_with_a_new_act_made_for_the_old_record_is_refused(repo):
+    p = write_scar(repo, 4)
+    before = p.read_bytes()
+    moved = _moved_anchor_text(p)
+    # hashes the OLD record, but is a different act text than the old one
+    for_old_record = _act_for(p.read_text()).replace(".s", ".other")
+    new_text = _with_act_line(moved, for_old_record)
+    with pytest.raises(SignedRecordWouldChange):
+        write_active_scar(p, new_text)
+    assert p.read_bytes() == before
+
+
+def test_changed_record_with_the_old_act_kept_is_refused(repo):
+    p = write_scar(repo, 4)
+    before = p.read_bytes()
+    with pytest.raises(SignedRecordWouldChange):
+        write_active_scar(p, _moved_anchor_text(p))
+    assert p.read_bytes() == before
+
+
+def test_changed_record_with_the_act_line_dropped_is_refused(repo):
+    p = write_scar(repo, 4)
+    before = p.read_bytes()
+    dropped = "\n".join(line for line in _moved_anchor_text(p).split("\n")
+                        if not line.startswith("promotion_act:"))
+    with pytest.raises(SignedRecordWouldChange):
+        write_active_scar(p, dropped)
+    assert p.read_bytes() == before
+
+
+def test_unchanged_record_with_a_different_matching_act_is_refused(repo):
+    p = write_scar(repo, 4)
+    before = p.read_bytes()
+    # same record, act text differs (other signature part) and still matches it
+    other = _act_for(p.read_text()).replace(".s", ".other")
+    new_text = _with_act_line(p.read_text(), other)
+    assert new_text != p.read_text()
+    with pytest.raises(SignedRecordWouldChange):
+        write_active_scar(p, new_text)
+    assert p.read_bytes() == before
+
+
+def test_changed_record_that_no_longer_parses_is_refused(repo):
+    p = write_scar(repo, 4)
+    before = p.read_bytes()
+    with pytest.raises(SignedRecordWouldChange):
+        write_active_scar(p, "---\nbroken: [\n---\n")
+    assert p.read_bytes() == before
+
+
 def test_unparseable_new_text_over_a_matching_act_is_refused(repo):
     p = write_scar(repo, 3)
     before = p.read_bytes()

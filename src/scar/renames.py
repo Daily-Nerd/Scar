@@ -171,26 +171,20 @@ _ANCHOR_LINE_RE = {
 }
 
 
-def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) -> bool:
-    """Surgically rewrite `- <anchor_kind>: <old>` anchor lines in the scar
-    file at *path* to `<new>` for every old->new pair in *renamed*. Every
-    other byte in the file — formatting, comments, quoting, the body — is
-    untouched.
-
-    This is a targeted substring replace confined to the exact span matched
-    by the kind-specific anchor-line regex, never a parse+reserialize
-    (landmine #4). Returns True iff at least one line was changed (file is
-    rewritten only then); False leaves the file byte-identical and unwritten
-    — including when *anchor_kind* isn't a recognized rewrite target.
-    """
+def anchor_rewrite_text(text: str, anchor_kind: str, renamed: dict[str, str]) -> str:
+    """The scar file *text* with every `- <anchor_kind>: <old>` anchor line
+    rewritten to `<new>` for each old->new pair in *renamed*, and nothing
+    written anywhere (#434). Every other byte, formatting, comments, quoting
+    and the body, is as it was: a targeted substring replace confined to the
+    exact span the kind-specific anchor-line regex matched, never a parse and
+    reserialize (landmine #4). Returns *text* itself when nothing changed,
+    including when *anchor_kind* is not a recognized rewrite target."""
     if not renamed:
-        return False
+        return text
     line_re = _ANCHOR_LINE_RE.get(anchor_kind)
     if line_re is None:
-        return False
-    text = path.read_text(encoding="utf-8")
+        return text
     lines = text.split("\n")
-    changed = False
     for i, line in enumerate(lines):
         m = line_re.match(line)
         if not m:
@@ -207,10 +201,20 @@ def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) 
         abs_start = val_start + idx
         abs_end = abs_start + len(stripped)
         lines[i] = line[:abs_start] + new_val + line[abs_end:]
-        changed = True
-    if changed:
-        write_active_scar(path, "\n".join(lines))
-    return changed
+    return "\n".join(lines)
+
+
+def apply_anchor_rewrite(path: Path, anchor_kind: str, renamed: dict[str, str]) -> bool:
+    """Rewrite the anchor lines of the scar file at *path* as
+    `anchor_rewrite_text` computes them, through the store's write gate.
+    Returns True iff at least one line changed (the file is rewritten only
+    then); False leaves the file byte-identical and unwritten."""
+    text = path.read_text(encoding="utf-8")
+    new_text = anchor_rewrite_text(text, anchor_kind, renamed)
+    if new_text == text:
+        return False
+    write_active_scar(path, new_text)
+    return True
 
 
 def apply_rename_fix(path: Path, renamed: dict[str, str]) -> bool:
