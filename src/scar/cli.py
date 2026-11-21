@@ -12,7 +12,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from pathlib import Path
 from typing import Callable
@@ -2580,7 +2579,7 @@ def _aggregate_firings(records: list[dict]) -> dict:
             "posttool_silent": bool(verdict_expected_ids) and verdicts_observed == 0,
             "injection_rate": injection_rate,
             "instrument_disconnected": instrument_disconnected,
-            "last_fired_age_days": _age_in_days(last_fired),
+            "last_fired_age_days": clock.age_in_days(last_fired),
             "total": sum(counts.values())}
 
 
@@ -2656,22 +2655,6 @@ def _compliance_lines(block: dict) -> list[str]:
         line += (f"; top scar #{top['id']} = {top['share']:.1%} of F; "
                  f"without it {top['V']}/{top['F']} = {excl}")
     return [line]
-
-
-def _age_in_days(ts: str | None) -> int | None:
-    """Whole days between a firing-log timestamp and now, or None if it can't
-    be read. scar 0012: firing-log readers need blanket guards — a corrupt ts
-    must never raise out of a reporting command."""
-    if not isinstance(ts, str):
-        return None
-    try:
-        when = datetime.fromisoformat(ts)
-    except (ValueError, TypeError):
-        return None
-    try:
-        return max(0, (datetime.now(tz=when.tzinfo) - when).days)
-    except (OverflowError, OSError, ValueError):
-        return None
 
 
 def _cmd_stats(args) -> int:
@@ -3435,7 +3418,18 @@ def _cmd_hook(args) -> int:
         from .codex import HANDLERS
     else:
         from .hooks import HANDLERS  # hot path: imports nothing beyond library
-    return HANDLERS[args.kind]()
+    from .hooks import record_hook_failure
+    # Fail open here, once, for every kind (#428). A hook must never take the
+    # user's edit or commit down with it, and handlers that catch internally
+    # only protect the part they wrap: payload parsing, store discovery and
+    # state writes sit outside those catches. Only exceptions are converted:
+    # a handler's own return value, including a real block exit code, passes
+    # through, and KeyboardInterrupt/SystemExit are not Exception subclasses.
+    try:
+        return HANDLERS[args.kind]()
+    except Exception as exc:
+        record_hook_failure(args.kind, exc)
+        return 0
 
 
 def _cmd_cascade_hook(args) -> int:

@@ -219,8 +219,11 @@ def hook_failure_summary() -> list[str]:
     lines = []
     for hook, rows in sorted(by_hook.items()):
         last = rows[-1]
+        ts = last.get("ts", "?")
+        age = clock.age_in_days(ts)
+        when = f"{age} day(s) ago, {ts}" if age is not None else ts
         lines.append(f"{hook}: {len(rows)} internal failure(s), last "
-                     f"{last.get('ts', '?')} {last['exc_type']}: "
+                     f"{when} {last['exc_type']}: "
                      f"{last.get('message', '')}")
     return lines
 
