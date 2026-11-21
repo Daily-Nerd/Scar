@@ -1,21 +1,25 @@
 ---
+id: 32
 type: landmine
 title: Scar files are read in one place; a direct read_text on a scar path brings back the crash
 severity: medium
 confidence: 0.8
 created: 2026-11-21
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/scar-files-have-one-reader.md
 anchors:
   - path: src/scar/store.py
   - pattern: "parse_scar_text\(\w+\.read_text"
-violation: "parse_scar_text\(\w+\.read_text"
 evidence:
   - issue: 439
   - url: https://github.com/Daily-Nerd/Scar/issues/439
 expires:
   condition: "scar files stop being read as UTF-8 text, or the reader moves out of store.py"
   review_after: 2027-05-21
-status: candidate
+violation: "parse_scar_text\(\w+\.read_text"
+status: active
 ---
 
 store.read_scar_text and store.read_scar are the only code that opens a scar
